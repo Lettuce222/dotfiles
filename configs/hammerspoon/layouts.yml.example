@@ -1,0 +1,109 @@
+# Hammerspoon Window Layout Configuration
+# このファイルを layouts.yml にコピーして使用してください
+# cp layouts.yml.example layouts.yml
+
+# グローバル設定
+settings:
+  # ウィンドウ間のギャップ (px)
+  gap: 0
+  # アプリ起動後の待機時間 (秒)
+  launch_wait: 1.5
+  # アニメーション時間 (秒)
+  animation_duration: 0.15
+
+# 修飾キーのエイリアス定義 (任意)
+# modifiers:
+#   hyper: ["cmd", "alt", "ctrl"]
+#   meh: ["alt", "ctrl", "shift"]
+
+# レイアウト定義
+layouts:
+  # === 全画面レイアウト ===
+
+  # Alt + 1: ターミナル全画面
+  - name: terminal-full
+    hotkey:
+      mods: alt
+      key: "1"
+    windows:
+      - app: Ghostty  # または Terminal, iTerm2, Alacritty など
+        position: {x: 0, y: 0, w: 1.0, h: 1.0}
+
+  # Alt + 2: ブラウザ全画面
+  - name: browser-full
+    hotkey:
+      mods: alt
+      key: "2"
+    windows:
+      - app: Google Chrome  # または Safari, Firefox, Arc など
+        position: {x: 0, y: 0, w: 1.0, h: 1.0}
+
+  # Alt + 3: チャット全画面
+  - name: chat-full
+    hotkey:
+      mods: alt
+      key: "3"
+    windows:
+      - app: Discord  # または Slack など
+        position: {x: 0, y: 0, w: 1.0, h: 1.0}
+
+  # === 2分割レイアウト ===
+
+  # Alt + Shift + 1: 左ブラウザ + 右ターミナル
+  - name: browser-terminal
+    hotkey:
+      mods: ["alt", "shift"]
+      key: "1"
+    windows:
+      - app: Google Chrome
+        position: {x: 0, y: 0, w: 0.5, h: 1.0}
+      - app: Ghostty
+        position: {x: 0.5, y: 0, w: 0.5, h: 1.0}
+
+  # Alt + Shift + 2: ブラウザ2ウィンドウ横並び (押すたびに組み合わせが循環)
+  - name: browser-dual
+    hotkey:
+      mods: ["alt", "shift"]
+      key: "2"
+    windows:
+      - app: Google Chrome
+        position: {x: 0, y: 0, w: 0.5, h: 1.0}
+      - app: Google Chrome
+        position: {x: 0.5, y: 0, w: 0.5, h: 1.0}
+
+  # === 3分割レイアウト ===
+
+  # Alt + Shift + 3: 3分割
+  - name: triple-view
+    hotkey:
+      mods: ["alt", "shift"]
+      key: "3"
+    windows:
+      - app: Code
+        position: {x: 0, y: 0, w: 0.33, h: 1.0}
+      - app: Google Chrome
+        position: {x: 0.33, y: 0, w: 0.34, h: 1.0}
+      - app: Ghostty
+        position: {x: 0.67, y: 0, w: 0.33, h: 1.0}
+
+  # === サイクル切り替えレイアウト ===
+  # 同じキーを押すたびに次のパターンに切り替わる
+
+  # Alt + F: 集中モード (アプリをサイクル切り替え)
+  # - name: focus-cycle
+  #   hotkey:
+  #     mods: alt
+  #     key: f
+  #   variants:
+  #     - description: "エディタ全画面"
+  #       windows:
+  #         - app: Code
+  #           position: {x: 0, y: 0, w: 1.0, h: 1.0}
+  #     - description: "ブラウザ全画面"
+  #       windows:
+  #         - app: Google Chrome
+  #           position: {x: 0, y: 0, w: 1.0, h: 1.0}
+  #     - description: "ターミナル全画面"
+  #       windows:
+  #         - app: Ghostty
+  #           position: {x: 0, y: 0, w: 1.0, h: 1.0}

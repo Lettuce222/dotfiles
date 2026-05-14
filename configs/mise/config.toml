@@ -1,0 +1,30 @@
+[tools]
+fd = "latest"
+fzf = "latest"
+nodejs = "latest"
+direnv = "latest"
+tmux = "latest"
+bat = "latest"
+rg = "latest"
+ghq = "latest"
+lazygit = "latest"
+gh = "latest"
+marksman = "latest"
+go = "latest"
+delta = "latest"
+eza = "latest"
+zoxide = "latest"
+node = "latest"
+
+# Linter/Formatter
+stylua = "latest"
+shfmt = "latest"
+shellcheck = "latest"
+taplo = "latest"
+gitleaks = "latest"
+yazi = "latest"
+
+[settings]
+paranoid = true
+minimum_release_age = "7d"
+idiomatic_version_file_enable_tools = ["ruby", "node"]

@@ -1,0 +1,24 @@
+.emacs.d/elpa
+
+.emacs.d/eln-cache/30.2-659beb9a
+.emacs.d/auto-save-list
+.emacs.d/recentf
+.emacs.d/projectile-bookmarks.eld
+.emacs.d/forge-database.sqlite
+.emacs.d/transient/
+.emacs.d/.cache/
+.emacs.d/history
+
+# Fish shell - environment-specific configurations
+configs/fish/conf.d/*.local.fish
+configs/fish/functions/local/
+configs/fish/fish_variables
+
+# Claude - local settings (machine-specific)
+configs/claude/settings.local.json
+
+# Hammerspoon - personal layout configuration
+configs/hammerspoon/layouts.yml
+
+# Karabiner - automatic backups
+configs/karabiner/automatic_backups/

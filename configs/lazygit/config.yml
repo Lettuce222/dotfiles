@@ -1,0 +1,11 @@
+promptToReturnFromSubprocess: false
+gui:
+  showIcons: true
+  language: 'en'
+  theme:
+    selectedLineBgColor:
+      - reverse
+git:
+  pagers:
+    - colorArg: always
+      pager: delta --dark --paging=never

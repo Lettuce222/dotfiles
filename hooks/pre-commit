@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Run gitleaks to prevent secrets from being committed
+gitleaks protect --staged --verbose
+
+if [ $? -ne 0 ]; then
+    echo "gitleaks detected secrets in staged changes. Commit aborted."
+    exit 1
+fi

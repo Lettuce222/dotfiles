@@ -1,0 +1,23 @@
+[user]
+	name = Lettuce222
+	email = 28910913+Lettuce222@users.noreply.github.com
+[pull]
+	rebase = false
+[commit]
+	gpgsign = true
+[tag]
+	gpgsign = true
+[core]
+	pager = delta
+[delta]
+  line-numbers = true 
+	navigate = true
+
+[interactive]
+	diffFilter = delta --color-only
+[merge]
+	conflictStyle = zdiff3
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
