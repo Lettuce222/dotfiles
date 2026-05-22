@@ -97,7 +97,7 @@
   },
   "language": "Japanese",
   "autoUpdatesChannel": "latest",
-  "tui": "default",
+  "tui": "fullscreen",
   "preferredNotifChannel": "terminal_bell",
   "teammateMode": "auto",
   "skipAutoPermissionPrompt": true
