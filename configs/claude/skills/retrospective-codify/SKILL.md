@@ -56,7 +56,8 @@ description: タスク完了時に「最初に失敗した内容」と「最終�
    - **既存と重複（提案不要）**: 既存が同じ知見を完全にカバー済み → 提案ゼロ、ただし提示フォーマットには「重複検出」行を残す（監査可能性のため）。重複検出行には根拠として既存 skill 名 + 該当節名（または行番号）を添える。
    - **判断保留**: 重複かどうか agent が判定できない → ユーザーに照合結果を見せて判断を仰ぐ
 5. **書き出し**: 選んだ形式のテンプレート（後述）に沿って artifact を生成する。
-6. **確認**: ユーザーに diff を見せて採用可否を取る。棄却された場合は skill ではなくセッション内のメモに留める。
+   - ただし skill（新規・追記いずれも）に分類された場合、本スキルでは書き出さない。`skill-creator` スキルに委譲し、そちらの draft → テスト → 評価ループに乗せる。本スキルが直接 SKILL.md を編集すると skill-creator の責務（description 最適化・eval・パッケージング）と二重管理になるため。
+6. **確認**: ユーザーに diff を見せて採用可否を取る。棄却された場合は skill ではなくセッション内のメモに留める。skill 委譲のケースでは、retrospective から渡す要旨（学び・想定 description・想定ワークフロー）を提示し、ユーザーの承認後に skill-creator を起動する。
 
 ## 分類判定
 
@@ -105,21 +106,17 @@ description: タスク完了時に「最初に失敗した内容」と「最終�
 
 `~/.claude/projects/<project-slug>/memory/` 配下に該当ファイルがあれば更新、なければ新規作成。frontmatter は `type: feedback`、本文は「ルール本体 → Why → How to apply」の 3 段構造（global 指示参照）。
 
-### 新規 skill
+### skill 新規 / 既存 skill 追記
 
-```markdown
----
-name: <kebab-case>
-description: Use when <具体的な状況> / <症状>
----
+本スキルでは SKILL.md の書式・配置・eval を扱わない。`skill-creator` スキルに委譲する。retrospective からは下記の引き継ぎ要旨だけを生成してユーザーに提示し、承認後に skill-creator を起動する。
 
-# <Title>
+引き継ぎ要旨に含める項目:
+- 学びの要約（最初の失敗 / 最終解 / 気付き）
+- 想定される skill 名（kebab-case 候補）または追記先 skill 名
+- description 草案（どんな状況で発火すべきか 1〜2 文）
+- ワークフローの骨子（手順の箇条書き、judgment が要る分岐）
 
-## 目的
-## いつ使うか
-## ワークフロー
-## 落とし穴
-```
+skill の name / description / 構成・テスト方法・description 最適化は `skill-creator` 側で確定させる。
 
 ## 具体例
 
@@ -158,7 +155,7 @@ message: Set/Map のサイズは .size プロパティを使う。
 - 最終解: 型更新・mock 更新・feature flag 追加・doc 更新を 1 チェックリスト化し、順に埋める。
 - 気付き: 単一手順では収まらず、複数の編集場所をチェックリストで管理する必要がある。
 
-→ 新規 skill `api-migration` として手順とチェックリストを切り出す。
+→ 新規 skill `api-migration` 相当が必要と判断。retrospective からは「学び要旨 + 想定 description + 手順骨子」を提示し、ユーザー承認後に `skill-creator` に委譲して作成する。SKILL.md 本体は本スキルでは書かない。
 
 ### 例 4: auto memory (feedback) への格納
 
@@ -236,4 +233,5 @@ message: Set/Map のサイズは .size プロパティを使う。
 ## 関連
 
 - `ast-grep-practice` — lint ルール化する場合の書き方とテスト
+- `skill-creator` — skill 新規 / 追記が必要と判断したときに委譲する先（SKILL.md の書式・eval・description 最適化は skill-creator 側の責務）
 - `empirical-prompt-tuning` — プロンプト開発中に使う。retrospective-codify はタスク終了後
