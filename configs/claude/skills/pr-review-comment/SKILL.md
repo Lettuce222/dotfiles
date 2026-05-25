@@ -34,6 +34,7 @@ Markdown: `![review-<種別>](URL)`
 | **liked**   | `![review-liked](https://img.shields.io/badge/review-liked-blueviolet.svg)`  | いいね                         | 良い書き方の称賛                             |
 | **thanks**  | `![review-thanks](https://img.shields.io/badge/review-thanks-yellow.svg)`    | ありがとう                     | ついで修正への感謝など                       |
 | **sorry**   | `![review-sorry](https://img.shields.io/badge/review-sorry-yellow.svg)`      | ごめん                         | 指摘が誤りだったときの撤回                   |
+| **memo**    | `![review-memo](https://img.shields.io/badge/review-memo-lightgrey)`         | 観察メモ（修正要請なし）       | 自分用備忘・気付きの共有。レビュイーに行動を求めない |
 
 書き方の決まり：
 
@@ -60,6 +61,7 @@ Markdown: `![review-<種別>](URL)`
   - `:sweat_smile:` (恥ずかしいけど指摘、自己ツッコミ)
 - **トーン補助の絵文字は本文側で添える**。バッジと同じ行に並べると視線が散るので、バッジ行は単独のまま維持する。
 - 過剰に使うとノイズになるので、1 コメントあたり 2〜4 個を目安にする。
+- **観察ラベル (`memo` / `liked` / `thanks` / `sorry`) は修正要請の語尾を含めない**。「〜していただけると嬉しいです」「〜書いてほしいです」のような action を促す表現を避け、観察した事実だけを 1〜3 行で書く。理由: これらのラベルはレビュイーに作業を求めるものではなく、行動を促す語尾が混じると意図がぶれて「結局直してほしいのか?」とノイズになる。ユーザーが新規ラベル (skill 既定外) を指定してきたときも、ラベル名から「要請系か観察系か」を判断し、観察系ならこの規約を適用する。
 
 ## suggestion ブロック（できる限り使う）
 
@@ -173,6 +175,7 @@ GitHub 上で内容を確認してください。修正が必要な箇所があ�
 **重要 (2026-05 時点の挙動)**: GitHub API の `/pulls/comments/{id}` 系エンドポイントは **submit 後のレビューコメントしか対象にしない**。pending state のコメントに対して `PATCH /pulls/comments/{id}` を叩くと **404 Not Found** が返る。同じ理由で `DELETE /pulls/comments/{id}` も pending 状態では動かないと考えるのが安全。pending 中の修正は **review 全体破棄 → 再 POST** が正攻法。
 
 - **pending review 全体の破棄 → 再作成** (推奨パス):
+
   ```fish
   # 1. 元の review を丸ごと削除
   gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews/{review_id} --method DELETE
@@ -182,7 +185,9 @@ GitHub 上で内容を確認してください。修正が必要な箇所があ�
     --method POST \
     --input /tmp/pr-review-payload-v2.json
   ```
+
   Step 3 で保存した下書き Markdown と payload JSON を元に、該当 body だけ書き換えて再投稿する。コメント本数が多い場合 (~10 件以上)、`jq` で原 payload を `--slurpfile` 経由でマージするのが楽:
+
   ```fish
   jq -n --slurpfile orig <orig.json> --slurpfile c1 <revise-1.json> \
     '{commit_id: $orig[0].commit_id, body: $orig[0].body,
@@ -192,6 +197,7 @@ GitHub 上で内容を確認してください。修正が必要な箇所があ�
 
 - **個別コメントの編集 / 削除** (submit **後** のみ):
   submit 済みのレビューコメントは `/pulls/comments/{id}` で個別操作できる。pending 段階では使えない:
+
   ```fish
   # submit 後のみ動作
   gh api repos/{owner}/{repo}/pulls/comments/{comment_id} \
