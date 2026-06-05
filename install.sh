@@ -58,8 +58,9 @@ create_symlinks() {
     for dir in "$script_dir/configs"/*; do
         if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
-            # Skip claude and hammerspoon directories (handled separately)
-            if [ "$dirname" = "claude" ] || [ "$dirname" = "hammerspoon" ]; then
+            # Skip dirs handled separately:
+            #   claude/agent -> ~/.claude & ~/.codex (per-file/per-skill), hammerspoon -> ~/.hammerspoon
+            if [ "$dirname" = "claude" ] || [ "$dirname" = "agent" ] || [ "$dirname" = "hammerspoon" ]; then
                 continue
             fi
             source_path="$script_dir/configs/$dirname"
@@ -79,9 +80,10 @@ create_claude_symlinks() {
     fi
 
     mkdir -p "$HOME/.claude"
-    mkdir -p "$HOME/.claude/hooks"
 
-    # Create symlinks for individual files (not the whole directory)
+    # Claude-specific files only (settings.json, statusline.sh, ...).
+    # Shared assets (CLAUDE.md / skills / hooks) live in configs/agent and are
+    # linked by create_shared_agent_symlinks.
     for file in "$claude_config_dir"/*; do
         if [ -f "$file" ]; then
             filename=$(basename "$file")
@@ -92,60 +94,89 @@ create_claude_symlinks() {
             fi
         fi
     done
+}
 
-    # Create symlinks for hooks directory
-    if [ -d "$claude_config_dir/hooks" ]; then
-        mkdir -p "$HOME/.claude/hooks"
-        # Skip if target resolves to the same directory (e.g., managed by home-manager)
-        resolved_target=$(cd "$HOME/.claude/hooks" 2>/dev/null && pwd -P)
-        resolved_source=$(cd "$claude_config_dir/hooks" 2>/dev/null && pwd -P)
-        if [ "$resolved_target" != "$resolved_source" ]; then
-            for file in "$claude_config_dir/hooks"/*; do
-                if [ -f "$file" ]; then
-                    filename=$(basename "$file")
-                    ln -snfv "$file" "$HOME/.claude/hooks/$filename"
-                    chmod +x "$HOME/.claude/hooks/$filename"
-                fi
-            done
-        else
-            echo "~/.claude/hooks already points to source directory, skipping symlinks."
-        fi
+# Link the shared agent assets in configs/agent into a single tool home.
+#   $1 = destination home dir (e.g. ~/.claude, ~/.codex)
+#   $2 = filename for the instructions file in that home (CLAUDE.md / AGENTS.md)
+link_agent_assets() {
+    home_dir="$1"
+    instructions_name="$2"
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    agent_dir="$script_dir/configs/agent"
+
+    mkdir -p "$home_dir"
+
+    # Instructions file: Claude reads CLAUDE.md, Codex reads AGENTS.md, one source.
+    if [ -f "$agent_dir/AGENTS.md" ]; then
+        ln -snfv "$agent_dir/AGENTS.md" "$home_dir/$instructions_name"
     fi
 
-    # Create symlinks for commands directory (slash commands)
-    if [ -d "$claude_config_dir/commands" ]; then
-        mkdir -p "$HOME/.claude/commands"
-        # Skip if target resolves to the same directory (e.g., managed by home-manager)
-        resolved_target=$(cd "$HOME/.claude/commands" 2>/dev/null && pwd -P)
-        resolved_source=$(cd "$claude_config_dir/commands" 2>/dev/null && pwd -P)
+    # Skills: link each skill dir individually so unmanaged skills
+    # (e.g. ~/.codex/skills/.system, or skills installed by other means) survive.
+    if [ -d "$agent_dir/skills" ]; then
+        mkdir -p "$home_dir/skills"
+        resolved_target=$(cd "$home_dir/skills" 2>/dev/null && pwd -P)
+        resolved_source=$(cd "$agent_dir/skills" 2>/dev/null && pwd -P)
         if [ "$resolved_target" != "$resolved_source" ]; then
-            for file in "$claude_config_dir/commands"/*; do
-                if [ -f "$file" ]; then
-                    filename=$(basename "$file")
-                    ln -snfv "$file" "$HOME/.claude/commands/$filename"
-                fi
-            done
-        else
-            echo "~/.claude/commands already points to source directory, skipping symlinks."
-        fi
-    fi
-
-    # Create symlinks for skills directory (each skill is a directory)
-    if [ -d "$claude_config_dir/skills" ]; then
-        mkdir -p "$HOME/.claude/skills"
-        resolved_target=$(cd "$HOME/.claude/skills" 2>/dev/null && pwd -P)
-        resolved_source=$(cd "$claude_config_dir/skills" 2>/dev/null && pwd -P)
-        if [ "$resolved_target" != "$resolved_source" ]; then
-            for skill_dir in "$claude_config_dir/skills"/*; do
+            for skill_dir in "$agent_dir/skills"/*; do
                 if [ -d "$skill_dir" ]; then
-                    skill_name=$(basename "$skill_dir")
-                    ln -snfv "$skill_dir" "$HOME/.claude/skills/$skill_name"
+                    ln -snfv "$skill_dir" "$home_dir/skills/$(basename "$skill_dir")"
                 fi
             done
         else
-            echo "~/.claude/skills already points to source directory, skipping symlinks."
+            echo "$home_dir/skills already points to source directory, skipping symlinks."
         fi
     fi
+
+    # Hooks: shared shell scripts (tmux window title, etc.).
+    # NOTE: this only places the scripts. Wiring them up is done per tool:
+    #   Claude -> configs/claude/settings.json (managed), Codex -> ~/.codex/config.toml (unmanaged).
+    if [ -d "$agent_dir/hooks" ]; then
+        mkdir -p "$home_dir/hooks"
+        resolved_target=$(cd "$home_dir/hooks" 2>/dev/null && pwd -P)
+        resolved_source=$(cd "$agent_dir/hooks" 2>/dev/null && pwd -P)
+        if [ "$resolved_target" != "$resolved_source" ]; then
+            for hook in "$agent_dir/hooks"/*; do
+                if [ -f "$hook" ]; then
+                    filename=$(basename "$hook")
+                    ln -snfv "$hook" "$home_dir/hooks/$filename"
+                    chmod +x "$home_dir/hooks/$filename"
+                fi
+            done
+        else
+            echo "$home_dir/hooks already points to source directory, skipping symlinks."
+        fi
+    fi
+}
+
+create_shared_agent_symlinks() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    agent_dir="$script_dir/configs/agent"
+
+    if [ ! -d "$agent_dir" ]; then
+        return 0
+    fi
+
+    link_agent_assets "$HOME/.claude" "CLAUDE.md"
+    link_agent_assets "$HOME/.codex" "AGENTS.md"
+}
+
+# Codex previously used prompt wrappers / rules that pointed into configs/codex.
+# That approach was retired in favour of native skills, so prune the leftover
+# broken symlinks (and now-empty dirs) to silence codex warnings. Idempotent.
+cleanup_codex_dangling_symlinks() {
+    for dir in "$HOME/.codex/prompts" "$HOME/.codex/rules"; do
+        [ -d "$dir" ] || continue
+        for link in "$dir"/*; do
+            # Broken symlink: is a symlink but its target no longer exists
+            if [ -L "$link" ] && [ ! -e "$link" ]; then
+                echo "Removing dangling codex symlink: $link"
+                rm -f "$link"
+            fi
+        done
+        rmdir "$dir" 2>/dev/null && echo "Removed empty dir: $dir"
+    done
 }
 
 create_hammerspoon_symlinks() {
@@ -167,6 +198,8 @@ install_fish
 set_fish_as_default_shell
 create_symlinks
 create_claude_symlinks
+create_shared_agent_symlinks
+cleanup_codex_dangling_symlinks
 create_hammerspoon_symlinks
 
 # =============================================================================
