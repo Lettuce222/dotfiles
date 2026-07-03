@@ -120,6 +120,10 @@ description: 自作した agent 向けテキスト指示（skill / slash command
 
 呼び出し側はレポートから自己申告部分を抽出し、`tool_uses` / `duration_ms` を Agent tool の usage メタから取得して評価軸表を埋める。
 
+## 評価成果物の置き場所
+
+イテレーションの成果物（シナリオ実行結果、benchmark、feedback 等）は `~/.claude/skills/` 配下に置かない。skill-creator の `<skill-name>-workspace/` 規約に従うとスキルディレクトリの隣（= skills 配下）に作られ、スキル一覧を汚すため、出力先は `~/workspace/references/skill-evals/<スキル名>/iteration-N/` を明示的に指定する。
+
 ## 環境制約
 
 新規 subagent を dispatch できない環境（既に subagent として動作している、Agent tool が無効化されている等）では、本 skill は **適用しない**。
