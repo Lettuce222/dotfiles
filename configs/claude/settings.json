@@ -4,7 +4,8 @@
     "command": "~/.claude/file-suggestion.sh"
   },
   "env": {
-    "ENABLE_TOOL_SEARCH": "true"
+    "ENABLE_TOOL_SEARCH": "true",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]"
   },
   "permissions": {
     "allow": [
@@ -32,7 +33,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "claude-opus-4-7[1m]",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -85,7 +85,8 @@
     "command": "~/.claude/statusline.sh"
   },
   "enabledPlugins": {
-    "example-skills@anthropic-agent-skills": true
+    "example-skills@anthropic-agent-skills": true,
+    "impact-review@freee-ccplugins-marketplace": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -98,8 +99,8 @@
   "language": "Japanese",
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
+  "skipWorkflowUsageWarning": true,
   "preferredNotifChannel": "terminal_bell",
   "teammateMode": "auto",
-  "skipAutoPermissionPrompt": true,
-  "skipWorkflowUsageWarning": true
+  "skipAutoPermissionPrompt": true
 }
