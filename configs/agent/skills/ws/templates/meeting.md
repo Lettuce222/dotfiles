@@ -2,7 +2,7 @@
 type: meeting
 aliases: []
 tags: []
-updated: 2026-06-05
+updated: {{date:YYYY-MM-DD}}
 ---
 
 # {{YYYY-MM-DD 会議名}}

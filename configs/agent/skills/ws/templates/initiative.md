@@ -3,7 +3,7 @@ type: initiative
 aliases: []
 tags: []
 status: active
-updated: 2026-06-08
+updated: {{date:YYYY-MM-DD}}
 ---
 
 # {{取り組み名}}

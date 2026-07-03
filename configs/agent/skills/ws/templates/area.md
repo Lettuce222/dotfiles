@@ -2,7 +2,7 @@
 type: area
 aliases: []
 tags: []
-updated: 2026-06-05
+updated: {{date:YYYY-MM-DD}}
 ---
 
 # {{分野名}}

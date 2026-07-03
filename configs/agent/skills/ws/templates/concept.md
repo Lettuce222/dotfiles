@@ -2,7 +2,7 @@
 type: concept
 aliases: []
 tags: []
-updated: 2026-06-05
+updated: {{date:YYYY-MM-DD}}
 ---
 
 # {{概念・指標名}}

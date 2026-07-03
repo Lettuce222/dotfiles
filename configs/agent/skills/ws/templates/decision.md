@@ -2,7 +2,7 @@
 type: decision
 aliases: []
 tags: []
-updated: 2026-06-05
+updated: {{date:YYYY-MM-DD}}
 ---
 
 # {{決定の名前}}
