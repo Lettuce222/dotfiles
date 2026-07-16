@@ -80,13 +80,15 @@
       }
     ]
   },
+  "enableArtifact": false,
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.sh"
   },
   "enabledPlugins": {
     "example-skills@anthropic-agent-skills": true,
-    "impact-review@freee-ccplugins-marketplace": true
+    "impact-review@freee-ccplugins-marketplace": true,
+    "brucke-atlassian@freee-ccplugins-marketplace": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -102,5 +104,6 @@
   "skipWorkflowUsageWarning": true,
   "preferredNotifChannel": "terminal_bell",
   "teammateMode": "auto",
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "fable[1m]"
 }
