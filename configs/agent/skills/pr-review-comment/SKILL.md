@@ -299,10 +299,22 @@ GitHub 上で内容を確認してください。修正が必要な箇所があ�
 
 この DELETE と再 POST（`event` なし）は次セクションの禁止事項に該当しない。もし環境の hook が許可ダイアログを出したら、修正フローの一部であることをユーザーに伝えて許可を仰ぐ。
 
+#### 既存スレッドへの reply を含めたい場合の順序
+
+ユーザーから「r<既存コメントID> にリプライして」と併せて指示された場合、**reply は pending 保持できず publish される前提**で扱う。
+
+1. 現在の pending review を DELETE
+2. **reply 本文を先にユーザーに提示し、明示承認をもらう**（publish されるため）
+3. 承認後、`POST /pulls/{pr}/comments/{id}/replies` で reply を publish
+4. その後、line コメントを新規 pending review として `POST /pulls/{pr}/reviews` で作成（reply が publish 済みなので既存 pending は無く、通常フロー通り）
+5. Step 4 の通常確認 → Step 5 で submit
+
+reply を pending review に混ぜる方法はない。行コメントと reply は必ずオペレーションを分ける。
+
 補助知識（必要になったときだけ使う）:
 
 - **submit 後の個別編集/削除**: `gh api repos/{owner}/{repo}/pulls/comments/{comment_id} --method PATCH -f body="新しい本文"`（DELETE も同様）。pending 段階では使えない
-- **既存 pending review へのコメント追加**: pending review は 1 PR につき自分用に 1 つしか持てないため、追加は `POST /repos/{owner}/{repo}/pulls/{pr_number}/comments` で payload に **`pull_request_review_id`** を指定する（`in_reply_to` ではない）。ただしこのエンドポイントは禁止事項の対象と重なるので、許可ダイアログが出たら状況を説明して許可を仰ぐ
+- **既存 pending review への後付け追加は諦める**: `POST /pulls/{pr}/comments` の `pull_request_review_id` は現行 API では `not a permitted key` で 422。`POST /pulls/{pr}/comments/{id}/replies` も、既存 pending があれば 422、無ければ即時 submit されて published 扱いになる。**pending review の中身を変えたい時は `reviews` API を DELETE → 全コメント含めて単一 POST で作り直す一択**。途中追加・部分編集の API 手段は事実上存在しない
 
 ### Step 5: submit
 
@@ -330,6 +342,7 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews/{review_id}/events \
 - `gh api .../reviews` で `event=APPROVE|COMMENT|REQUEST_CHANGES` を含むペイロード
 - `gh api .../reviews/<id>/events`（Step 5 の正規 submit もこれに該当する。実行前にユーザーの明示承認が必須）
 - `gh api .../pulls/.../comments` の単発直叩き（review を介さない line コメント。個別に通知が飛んで会話が散らかる）
+- `gh api .../pulls/{pr}/comments/{id}/replies` の直接叩き（既存 pending が無い状態で叩くと**即時 publish** されて recall 不能になる。reply は「既存スレッドへの reply を含めたい場合の順序」に沿って本文承認後に実行する）
 
 これは「うっかり submit」「会話の流れで勝手に投稿」を止めるためのガード。手順通り pending 投稿 → 本人が GitHub UI で確認 → submit を踏めば、外部に公開されるのは承認済みの submit 一回だけになる。
 
