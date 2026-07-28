@@ -4,8 +4,7 @@
     "command": "~/.claude/file-suggestion.sh"
   },
   "env": {
-    "ENABLE_TOOL_SEARCH": "true",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]"
+    "ENABLE_TOOL_SEARCH": "true"
   },
   "permissions": {
     "allow": [
@@ -104,6 +103,5 @@
   "skipWorkflowUsageWarning": true,
   "preferredNotifChannel": "terminal_bell",
   "teammateMode": "auto",
-  "skipAutoPermissionPrompt": true,
-  "model": "fable[1m]"
+  "skipAutoPermissionPrompt": true
 }
