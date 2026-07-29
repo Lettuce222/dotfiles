@@ -1,84 +1,80 @@
 ---
 name: commit-push
-description: 未コミットの変更を分析し、論理的なグループに分割してconventional commit形式でコミット・pushするスキル。「コミットして」「commit」「push」「変更をまとめて」「conventional commit」「commit-push」などのキーワードや、ユーザーがgitの変更を整理してコミット・プッシュしたい文脈で必ずトリガーすること。引数として `--no-push` が指定された場合はpushをスキップする。
+description: ローカルの未コミット変更を意図ごとに整理し、Conventional Commits形式でコミットして安全にpushする。コミットだけ行う場合は `--no-push` を受け付ける。
 ---
 
 # Commit Push
 
-未コミットの変更を分析し、論理的なグループに分割してconventional commit形式でコミットします。
+Claude と Codex のどちらでも使える、通常の commit / push の共通契約。
+変更を読み解き、レビュー可能な単位に分けて履歴へ残す。
 
-## 引数
+## インターフェース
 
-- `--no-push`: コミットのみ実行し、pushはスキップ
+- 既定: commit 後に通常の push を行う
+- `--no-push`: commit までで終了する
+- ユーザーが対象ファイル、commit 数、メッセージを指定した場合はその意図を優先する
 
-## 実行手順
+stacked PR、専門的なレビュー連携、CI 監視、複数ブランチの公開フローは、
+利用可能なら `code-flow` Plugin に委ねる。この Skill は通常の Git 操作に集中する。
 
-### Step 1: 現在の状態を確認
+## ワークフロー
 
-以下のコマンドを実行して現在の状態を把握する：
+### 1. 状態を把握する
 
-- `git status` — 変更ファイルの確認
-- `git diff HEAD` — staged + unstagedの差分
-- `git log --oneline -10` — 最近のコミット履歴（スタイル参考用）
-- `git branch -vv` — 現在のブランチとリモート状態
+次を確認し、ユーザーの変更と今回の対象を区別する。
 
-### Step 2: 変更の判定
+- `git status --short`
+- `git diff` と `git diff --staged`
+- 最近の `git log --oneline`
+- 現在の branch、upstream、ahead / behind
 
-取得した情報を分析し、以下を判定する：
+変更がなければ終了する。未解決 conflict や意図不明の大きな混在があれば、
+安全に切り分けられる情報を示して確認する。
 
-1. **変更がない場合**: 「コミットする変更がありません」と報告して終了
-2. **コンフリクトがある場合**: 「マージコンフリクトが検出されました。先に解決してください」と報告して終了
-3. **変更がある場合**: Step 3へ進む
+### 2. コミット単位を設計する
 
-### Step 3: 変更のグループ化
+同じ目的を持ち、単独でレビュー・revert できる変更をまとめる。
+実装とそのテスト、設定と対応ドキュメントなど、分離すると不完全になるものは同じ
+commit に含める。無関係な整形やユーザーの既存変更は混ぜない。
 
-変更されたファイルを以下の基準で論理的にグループ化する：
+各グループについて Conventional Commits の type と任意の scope を選ぶ。
+subject は差分の列挙ではなく、変更の意図が分かる簡潔な英語にする。
 
-- **機能単位**: 同じ機能に関連するファイルをまとめる
-- **変更タイプ**: feat/fix/chore/docs/refactor/test/style などの種類
-- **依存関係**: 一緒にコミットすべきファイル（例：実装とそのテスト）
+### 3. 安全性を確認する
 
-各グループに対して、以下を決定する：
+- status と diff から、対象外ファイルが含まれていないことを確認する
+- `.env`、credential、秘密鍵、token などの疑いがあるファイルを stage しない
+- 秘密らしい値を出力へ転載しない
+- 生成物や大容量ファイルは、リポジトリの方針と変更目的を確認する
+- hook を回避しない。失敗した場合は原因を報告し、勝手に別手段で通さない
 
-1. conventional commit タイプ（feat, fix, chore, docs, refactor, test, style, perf, ci, build）
-2. スコープ（任意、該当するモジュールや機能名）
-3. コミットメッセージ（「何を」ではなく「なぜ」を重視、英語で記述）
+### 4. Commit する
 
-### Step 4: コミットの実行
+グループごとに対象パスを明示して stage し、staged diff を再確認してから
+`<type>(<scope>): <subject>` 形式で commit する。scope が不要なら省く。
 
-各グループに対して：
+commit 後に、作成した commit と残っている変更を確認する。
 
-1. 対象ファイルを `git add` でステージング
-2. conventional commit形式でコミット作成
-   - フォーマット: `<type>(<scope>): <description>`
-   - 例: `feat(nvim): add LSP configuration for TypeScript`
-3. 各コミット後に結果を報告
+### 5. Push する
 
-### Step 5: プッシュ（--no-pushでない場合）
+`--no-push` なら commit 結果だけを報告して終了する。
+それ以外は通常の push を使い、upstream がなければ現在の branch に設定する。
 
-引数に `--no-push` が含まれている場合はこのステップをスキップし、「コミット完了。--no-pushが指定されたためpushはスキップしました」と報告して終了する。
+force push、履歴の書き換え、別 branch への付け替えはこの Skill の範囲外。
+必要なら操作と影響を分けてユーザーへ確認する。
 
-`--no-push` がない場合：
+## 完了報告
 
-1. `git push` を実行（リモートブランチ未設定の場合は `-u origin <branch>` を使用）
+次を簡潔に報告する。
 
-## 安全性ルール
+- 作成した commit の hash と subject
+- push 先、または `--no-push` により省略したこと
+- commit せず残した変更と理由
+- 実行した検証、または未実施の検証
 
-- **force push禁止**: 通常のpushのみ使用
-- **機密ファイルの検出**: `.env`, credentials, secrets, `*_key*`, `*.pem` などを検出したら警告し、除外を提案
+## 安全境界
 
-## 出力フォーマット
-
-各コミット完了時：
-
-```
-✓ コミット作成: feat(nvim): add LSP configuration for TypeScript
-  2 files changed, 45 insertions(+), 3 deletions(-)
-```
-
-プッシュ完了時：
-
-```
-✓ origin/main にプッシュ完了
-  2 commits pushed
-```
+- ユーザーの変更を破棄・上書きしない。
+- `git add .` のような広い指定より、確認済みの対象パスを使う。
+- force push や destructive な履歴操作を行わない。
+- Plugin のインストール状態やキャッシュは変更しない。
