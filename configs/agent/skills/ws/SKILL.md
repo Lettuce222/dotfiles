@@ -1,293 +1,37 @@
 ---
 name: ws
-description: 仕事の「全体観」を蓄える個人 Vault（~/workspace の Obsidian markdown）を参照・記録・整理し、タスクを管理するスキル。PR レビューの背景・残タスク・全体ゴールを取り出す、仕事上の概念や判断の背景を引く、イニシアチブの現状を把握する、知見やタスクを Vault に残す、Vault をお掃除する、外部タスク管理と同期するとき必ず使う。「全体観」「Vault」「ナレッジ」「メモに残して」「これ記録して」「タスク追加して」「パタン」「お掃除」「orient」「unfold」が合図。また、ユーザーが仕事のテーマ（戦略・組織・指標・概念・取り組み・チーム運営など）について思考の過程をストリームで語ったあとの「まとめて」「整理して」「思考を整理したい」は、inline 要約ではなく Vault への capture の入口なので必ずトリガーする。ただし作業成果物に対する依頼（「このコードをまとめて」「このファイルを整理して」「PR の説明をまとめて」「ドキュメントを整形して」「議事録を Slack 用にまとめて」など）は対象外で、トリガーしない。一般に、Vault に残すことではなくチャット・外部ドキュメント・コードへ出すことが目的の整形は対象外。特定リポジトリ固有の作業 tips も auto-memory の領分なので対象外。
+description: Manage durable cross-project work knowledge and tasks in the ~/workspace Obsidian Vault. Use to orient from existing context, capture durable knowledge, manage tasks, sync external task state, unfold next steps, or clean up the Vault. Do not use for repository-local implementation tips or one-off output formatting.
 ---
 
-# ws — 仕事用ナレッジ Vault & タスク管理
+# ws
 
-## これは何か
+Treat `~/workspace` as the single source of truth for durable, cross-project work knowledge and tasks.
 
-`~/workspace` に置いた **Obsidian Vault**（標準 markdown + frontmatter）に、仕事の「全体観」を蓄える。Andrej Karpathy の LLM Wiki の発想を、**人間が Obsidian で読むこと**を第一に据えて実装したもの。知識（Wiki）とタスクが同じ Vault に同居し、`[[wikilink]]` で相互に繋がる。
+## Choose one operation
 
-この Vault は単なる記憶装置ではなく、Christopher Alexander の全体性（wholeness）やパタンランゲージの発想に沿って、仕事の「中心」を見つけ、弱い中心を補い、全体を壊さず強める次の一手を選ぶための作業環境として扱う。
+- `orient`: retrieve relevant goals, decisions, people, initiatives, and open tasks.
+- `capture`: turn durable work context into the appropriate note type and links.
+- `task`: create, update, complete, or list Vault tasks.
+- `sync`: reconcile Vault tasks with an external task system without inventing mappings.
+- `unfold`: derive the next concrete actions from current goals and constraints.
+- `cleanup`: inspect health and repair structure without changing meaning.
 
-タスク管理では、**initiative は全体観、daily は実行フォーカス**に責務を分ける。Vault に残るタスクはすべて本人が取り組むものとし、daily は `scheduled date` / `due date` / `start date` だけで今日のタスクを出す。Daily 表示用の専用タグは使わない。
+## Boundaries
 
-設計の背骨を理解しておくと判断がぶれない:
+- Keep repository-local operating tips in that repository's instructions or runtime memory.
+- Keep one-off summaries, code edits, PR descriptions, and external-document formatting out of the Vault unless the user explicitly wants durable capture.
+- Do not duplicate the same knowledge in runtime memory and the Vault.
+- When another workflow requires a proposal or approval before writing, preserve that approval boundary.
+- A direct request to save durable knowledge authorizes the scoped Vault write; ambiguous requests should produce a proposal first.
 
-- **人間が第一の読み手。** ノートは人間が読める日本語の散文で書く。LLM もそれを食えるが、逆（LLM 向けに圧縮したメモ）は人間が読めない。だから散文を基準にする。AI からしか取り出せない状態は作らない。
-- **入口は MOC（Map of Content）。** `HOME.md` を最上位の地図とし、分野ごとに `MOC-*.md` を置く。人間はここを眺めて全体観を掴み、エージェントはここを起点に `[[リンク]]` を辿って目的のノートに到達する。
-- **グラフは `[[wikilink]]` で育つ。** Obsidian のグラフビューは frontmatter の tag ではなくノート本文の `[[リンク]]` から構築される。関連する概念・人・取り組みは本文で積極的に `[[ ]]` で結ぶ。これが「連想でたどり直せる」状態を作る。
-- **分野は重なる（semilattice）。** 仕事はツリーではない（Alexander "A City is Not a Tree"）。ノートは複数の MOC から収録されてよく、MOC は容れ物ではなく**視点（view）**。1ノート1親を強制せず、重なり自体を情報として扱う。新しい切り口が会話に繰り返し現れたら、既存ノートへのリンクを束ね直すだけの MOC を作ってよい（実体は1つ、リンクはタダ）。ただし完全グラフは地図にならない。HOME に並ぶ MOC の数は人間が一覧できる範囲に保つ。
-- **知識の実体は Vault に1箇所だけ。** ランタイム固有の memory は Vault へのポインタを持つことはあっても、知識の実体は Vault に置く。二重管理を避ける。
-- **Vault as Living Structure.** 取り出し・記録・整理のたびに「何が中心か」「何が中心を支えているか」「どこが弱いか」「次の小さな一手で全体をどう強めるか」を見る。情報量を増やすより、関係が読める構造を育てる。
-- **パタンは生成的な仕事の型。** 繰り返し現れる仕事の問題は `pattern` として、Context / Forces / Pattern / How to Apply まで書く。単なる tips や手順メモではなく、同じ状況で次の判断を生む知識として残す。
-- **文字数はコスト、密度が価値。** Vault の読み手は人間。読者の状態を変えない文は削り、新事実・判断・根拠・未解決論点・次アクション・リンク関係のどれかを増やす文だけ書く。
+## Progressive references
 
-## Vault の場所
+Read only the relevant section of [`references/operations.md`](references/operations.md):
 
-解決順:
+- structure and note types: `rg -n '^## (Vault の場所|ディレクトリ構造|ノートの型)' references/operations.md`
+- orient/capture: `rg -n '^### [12]\\.' references/operations.md`
+- task/sync: `rg -n '^### [34]\\.' references/operations.md`
+- unfold/cleanup: `rg -n '^### [56]\\.' references/operations.md`
+- placement boundaries: `rg -n '^## (何を Vault|やらないこと)' references/operations.md`
 
-1. 環境変数 `$WORK_VAULT` があればそれ
-2. なければ `~/workspace`
-
-このスキルの操作は**どのディレクトリから起動されても**この Vault を対象にする（cwd は無関係）。同様に、このスキルが同梱する `scripts/`・`templates/` は**この SKILL.md と同じディレクトリ**（スキルディレクトリ）にあり、絶対パスで参照する。Vault 直下にも `scripts/`・`templates/` が存在するので混同しない（Vault 側の `templates/` はノート作成の雛形、スキル側はその供給元とヘルスチェックスクリプト置き場）。
-
-スキルが呼ばれたら最初に Vault ルートの `HOME.md` の有無を確認する。無ければ（=初回起動）、以下を行い一言で報告してから元の依頼の操作に進む（純粋に追加するだけの安全な操作なので確認は取らない）:
-
-1. スキルディレクトリの `templates/` を Vault 直下の `templates/` へコピーする（コピーするテンプレ本体の `{{...}}` は雛形として残す。置換するのは手順 2 で生成するノートだけ）。
-2. `templates/HOME.md` と `templates/MOC-実行バックログ.md` から Vault 直下に `HOME.md` と `MOC-実行バックログ.md`（daily 雛形が参照する）を生成する。frontmatter の `updated` は当日の日付にし、`{{...}}` プレースホルダは残さない。「ノートの型」節の雛形展開ルール（「例:」行や例示リンクの実値化・削除）も、生成対象テンプレに該当箇所がある場合のみ適用する（説明文まで消さない）。
-3. `HOME.md` の `## 分野（MOC）` に `[[MOC-実行バックログ]]` を追記し、HOME から到達可能にする（雛形の説明文は残したまま、その下に 1 行足す）。
-4. `daily/`・`initiatives/`・`meetings/`・`concepts/`・`patterns/`・`decisions/`・`people/`・`references/`・`_archive/` の空ディレクトリを作る。
-
-## ディレクトリ構造
-
-トップ直下は入口だけにする:
-
-```text
-~/workspace/
-  HOME.md
-  MOC-*.md
-  initiatives/
-  meetings/
-  concepts/
-  patterns/
-  decisions/
-  people/
-  references/
-  daily/
-  templates/
-  _archive/
-```
-
-実体ノートは型別ディレクトリに置く。会議だけは増えやすいので年で1段だけ分ける。例外として、未整理の受け皿 `inbox-*.md` は一時的にトップ直下へ置いてよい（cleanup 時に中身を該当ノートへ取り込み `_archive/` へ退避する前提の仮置き）。
-
-| type | 配置 |
-|---|---|
-| `area` | `HOME.md` または `MOC-*.md`（トップ直下） |
-| `initiative` | `initiatives/initiative-*.md` |
-| `meeting` | `meetings/YYYY/meeting-YYYY-MM-DD-*.md` |
-| `concept` | `concepts/concept-*.md` |
-| `pattern` | `patterns/pattern-*.md` |
-| `decision` | `decisions/decision-*.md` |
-| `person` | `people/person-*.md` |
-| `reference` | `references/reference-*.md` |
-| `daily` | `daily/YYYY-MM-DD.md` |
-
-このディレクトリは一覧性のためだけに使う。分類は `type` と `tags`、到達は MOC と `[[リンク]]` で表現する。分野別・initiative 別の深いフォルダは作らない（会議・人・決定・参考資料は複数の取り組みにまたがるため）。
-
-`[[リンク]]` は相対パスではなくファイル名 stem で張る。したがって Vault 全体で同じ stem の `.md` を作らない（例: `initiatives/foo.md` と `references/foo.md` を共存させない）。
-
-## ノートの型（frontmatter `type`）
-
-フォルダ階層は浅く保ち、分類は `type` と `tags`、到達は MOC と `[[リンク]]` で表現する（フォルダで木構造に押し込むと多重分類できず破綻するため）。
-
-| type | 役割 | ファイル名例 |
-|---|---|---|
-| `area` | 分野の入口 = MOC。人間が眺める地図 | `MOC-仕事の進め方.md` |
-| `concept` | 概念・手法・用語の意味と背景 | `concepts/concept-意思決定基準.md` |
-| `pattern` | 繰り返し使える仕事の型。文脈・力・解法・適用手順 | `patterns/pattern-PRレビュー前に中心を確認する.md` |
-| `person` | 人。スタンス・関心・発言の集約 | `people/person-yamada.md` |
-| `initiative` | 取り組み。目的・背景・残タスク・現状・リンク | `initiatives/initiative-会議運用改善.md` |
-| `meeting` | 会議・1on1 の記録。**発言の一次ソース** | `meetings/2026/meeting-2026-06-03-定例.md` |
-| `decision` | 決定とその理由 | `decisions/decision-運用方針.md` |
-| `reference` | 外部資料や関連ドキュメントへのポインタ | `references/reference-運用ガイド.md` |
-| `daily` | 自分の実行フォーカス + メモ inbox（`daily/` 配下）。全 initiative のタスク一覧にはしない | `daily/2026-06-05.md` |
-
-frontmatter は最小限に保つ（増やすほど記入負担と陳腐化リスクが上がる）:
-
-```yaml
----
-type: initiative          # 上表のいずれか
-aliases: [略称, 英語名]    # 表記揺れ吸収（任意）
-tags: [仕事の進め方]
-updated: 2026-06-05
-status: active            # initiative のみ: active | paused | done
----
-```
-
-ノートを新規作成・編集するときは **Vault の** `templates/<type>.md`（初回起動時にスキルディレクトリからコピーされたもの。ユーザーが Obsidian 上で育てている可能性があるので Vault 側を正とする）を雛形にし、各型の構成（見出し）を踏襲する。新規ノートは上記の型別ディレクトリに作成し、`updated` は編集のたびに当日の日付へ更新する。雛形を展開するときは `{{date}}` 系プレースホルダは当日の日付、`{{この note のパス}}` は作成先の実パス、`{{取り組み名}}` などの見出しプレースホルダは実際の値に置換し、`{{...}}` を残さない（Templater 未導入でも読める状態にする）。同様に、テンプレ内の「例:」で始まる行やサンプル行（未解決トピック表の `例: 主要論点`、`- [ ] 例: ...` のチェックボックスなど）は実値に置換するか削除し、実体でない例示を新規ノートに残さない。
-
-## 6つの操作
-
-ユーザーの意図に応じて以下を実行する。明示的にコマンド名を言われなくてよい。
-
-### 1. orient（取り出す / 全体観）
-
-「今のこの PR の背景は」「この概念なんで重要なんだっけ」「○○の取り組み今どうなってる」のように、**全体観を取り出したい**とき。
-
-1. 対象ノートが名指しされていればそのノートを直接読んでよい。名指しのノートが見つからなければ alias や近い stem をファイル検索（利用可能なら `rg --files`）で一度だけ探し、それでも無ければ手順 5 に従って「無い」と明示する（近縁ノートに勝手にすり替えない）。名指しが無ければ関連しそうな MOC（`area` 型）を同様に見つけて読む。見当がつかなければ `HOME.md` から辿る。どの入口から入っても手順 2 以降（リンク辿り・要約）は同様に行う。
-2. MOC 内の `[[リンク]]` から関連ノート（initiative / concept / pattern / person / meeting / decision）を読む。多ければ frontmatter（`type`/`tags`）で grep して候補を絞ってから本文を読む。
-3. **目的・現状・未解決トピック・関連知識**を簡潔に要約して返す。PR レビューなら「何を達成したくて、今どこで、あと何が残っているか」を含める。対象が複数の MOC から収録されているなら、**どの視点の重なりに位置するか**も一言添える（例:「PR計測は開発生産性と予算配分が出会う場所」。重なり自体が情報）。単一 MOC 起点で読み終えず、対象ノートの backlink から他の視点を確認する。
-4. 「全体を見て判断したい」「中心はどこか」のように**全体の構造そのものが問われている文脈**では、以下も返す。「今どうなってる?」のような単純な状況確認では省いてよく、「次何やるべき?」のように**次の一手の生成が主目的**なら orient ではなく操作 5 の unfold として扱う:
-   - **強い中心**: 今もっとも重要な initiative / concept / decision
-   - **支える中心**: それを支える人・会議・決定・参考資料・パタン
-   - **弱い中心**: 欠けている根拠、合意、リンク、タスク、説明
-   - **次の構造保存的な一手**: 既存の全体を壊さず強める最小アクション
-5. Vault に**情報が無い**ことが分かったら、それも明示する（「何があって何がないかをハッキリさせる」のがこの Vault の価値）。憶測で埋めない。
-
-orient は**読むだけ**。勝手にノートを書き換えない。
-
-### 2. capture（記録）
-
-会話の中で「Vault に残す価値がある知見」を検知したら、または「これ記録して」と言われたら。
-
-- **明示依頼なら即書く。** 書き先（追記先ノート・新規作成）の判断もエージェントが行い、書いた後に何をどこへ書いたかを報告する。そうでなくエージェントが自発的に気づいた場合は、**何を・どのノートに書くかを一度提案し、承認を得てから書く**（誤記録や重複は Vault の信頼性を損なうため）。ただし「まとめて」「整理して」は明示依頼であっても後述の**思考整理モード**として扱い、承認を得てから書く（何をどこに書くかの判断がエージェント側に大きく委ねられるため）。
-- 既存ノートに収まるなら追記、新概念なら新規作成（`templates/<type>.md` ベース）。新規作成先は `type` に対応する型別ディレクトリにする。
-- 記録前に「この知識は何の中心を強めるか」を判断する。単発の事実なら既存ノートへ、繰り返し使える仕事の型なら `pattern` ノートへ、決定なら `decision` へ置く。
-- `pattern` にする場合は、最低限 Context / Forces / Pattern / How to Apply を書く。名前だけの tips ノートは作らない。
-- **`[[リンク]]` を張る。** 関連する人・概念・取り組み・会議を本文で `[[ ]]` で結ぶ。リンク先が未作成でもよい（後で作る印になる）。既存リンクだけで今回の文脈が十分に表現されている場合は、重複リンクを追加しない。
-- **backlink を対称に保つ。** ノート A から B へリンクを足したら、B の「## Backlinks」節にも A を加える。この対称性がグラフを生かす。backlink を調べるときは Vault 全体を `[[ノート名]]` で全文検索（利用可能なら `rg`）して求める（Obsidian の自動 backlink 表示には依存しない）。
-- 関係する MOC に新ノートへの `[[リンク]]` を加え、`HOME.md` から到達可能にする。複数の視点に関係するなら**複数の MOC へ**加える（どれか1つに絞らない）。
-- 機微な一次情報（個人の評価に関わる発言・未公開数値など）は、ユーザー本人が「残す」と判断したものだけ書く。
-
-#### 思考整理モード（stream-of-thought capture）
-
-ユーザーが**仕事のテーマについて自分の思考の過程をストリームで語り**、最後に「まとめて」「整理して」「これまでの話をまとめて」「思考を整理したい」と頼んだら、それは inline の会話要約ではなく、**Vault への capture の入口**として扱う。
-
-会話履歴に流して終わると、せっかく進んだ思考が Vault の外に残り、次に同じテーマを取り出したときに過去の到達点を引き継げない。Vault as Living Structure を劣化させるので避ける。
-
-判別の目安（ひとつでも当てはまれば思考整理モードに入る）:
-
-- 話題が特定リポジトリの作業ではなく、戦略・組織・指標・概念・取り組み・チーム運営など、**仕事の全体観**に属している
-- ユーザーが長文で思考を吐き出している（推敲されていない口語、考えながら書いた跡がある）
-- 「まとめて」「整理して」「思考を吐き出す」「考えが進んできた」のような語が含まれる
-
-会議で話された内容そのものは meeting ノート（一次ソース）の領分。「今日の 1on1 の話をまとめて」のような依頼は meeting 記録として capture し、そこから抽出されたユーザー自身の考え・判断だけを思考整理モードで concept / initiative へ反映する（両方必要なら meeting に記録した上で該当ノートへ `[[リンク]]` する）。
-
-このときの動き:
-
-1. **既存ノートを先に探す**。話題のキーワード（例: 「開発生産性」「リードタイム」「AI 活用」など）で Vault ルート直下の `concepts/`・`initiatives/`・`patterns/`・`MOC-*.md`・`inbox-*.md`（未整理の受け皿。進行中の思考がここにあることが多い）をファイル検索し、明らかに関連しそうなものを2〜3個まで読む。**inline 要約より先に Vault を見る**のがポイント（既存の到達点に積み上げるため）。
-2. **inline で論点を整理して返す**。レベル分け、トレードオフ、未解決の問いなど、構造を見せる。これは「会話としての応答」と「ノート化前の素材」を兼ねる。
-3. **同時に capture 提案を1〜2行で添える**。「これは `[[concept-開発生産性のレベル]]` の『レベル2 への移行』節に追記、`[[initiative-AI開発マニア制度]]` の『未解決トピック』にも反映するのがよさそう」のように、**どの既存ノートのどの節に何を書くか**を具体的に提案する。新規ノートが必要なら型（concept / initiative / pattern / decision）と仮タイトルも示す。
-4. **承認を得てから書く**。capture の通常ルール（`[[リンク]]`、backlink 対称性、関係 MOC への収録）に従う。複数の中心が交差するテーマなら複数 MOC に収録してよい（semilattice の正常状態）。
-5. **「inline でいい」と言われたら強制しない**。Vault 化はユーザーの判断。提案だけ残して終わる。
-
-この入口ルールは「ユーザーが頭の中で考え終わった成果物を Vault に残す」ためのものなので、ストリーム途中の単なる発話には適用しない。「まとめて」「整理して」のような**区切りの合図**が出てから動く。
-
-### 3. task（タスク CRUD）
-
-タスクは独立ファイルにしない。
-
-#### initiative の役割
-
-initiative には以下を置く（見出しは `templates/initiative.md` 由来）:
-
-- `## 現状`: 今どこまで進んでいるか。sync（操作 4）の反映先でもある。
-- `## 未解決トピック`: 何が未解決か、次に何を決めるか。
-- `## 分解メモ`: タスク化前の候補。
-- `## タスク`: 自分が取り組む Obsidian Tasks のチェックボックス。
-
-#### daily の役割
-
-daily は今日の実行フォーカスだけを見る場所。Tasks クエリは `scheduled date` / `due date` / `start date` だけで絞る。専用タグでは絞らない。
-
-タスクは該当 initiative の `## タスク` に Obsidian Tasks 記法で置く:
-
-```markdown
-- [ ] 次回レビューの観点を整理する ⏳ 2026-06-10 ⏫
-```
-
-追加時のルール:
-
-- **該当 initiative が Vault に無い場合**は、勝手に作らずに「`templates/initiative.md` から `initiatives/initiative-○○.md` を新規作成してタスクを置く」ことを一度提案し、承認を得てから作成する（capture の自発記録と同じ作法。誤った取り組みノートの乱立を防ぐ）。
-- **相対日付**（「来週火曜」「明後日」など）は当日の日付を基準に YYYY-MM-DD へ解決する。「来週」は翌週の月曜〜日曜を指す（週は月曜始まり）。口語との対応は「着手・着手予定」→ `⏳`、「締切・期限」→ `📅`、「開始可能」→ `🛫`。
-- **priority 記号はユーザーが優先度に言及したときだけ付ける**。指定が無ければ無印のまま置く。
-- 新規チェックボックスは `## タスク` 節の既存チェックボックス群の末尾に追記する（テンプレ由来の Tasks クエリブロックがあればその後ろに置く）。
-- タスク追加のために daily ノートを作る必要はない（daily の Tasks クエリが initiative 側から日付で拾う）。ユーザーが「今日のフォーカスを見たい」文脈で当日の `daily/YYYY-MM-DD.md` が無ければ、Vault の `templates/daily.md` から作る。
-
-Tasks プラグインの主なメタデータ:
-
-| 記号 | 意味 |
-|---|---|
-| `⏳ YYYY-MM-DD` | scheduled date（着手予定日） |
-| `📅 YYYY-MM-DD` | due date（締切） |
-| `🛫 YYYY-MM-DD` | start date |
-| `🔺` `⏫` `🔼` `🔽` `⏬` | priority（highest → lowest） |
-| `✅ YYYY-MM-DD` | done date（完了時に付与。チェックは `- [x]`） |
-
-完了時は `- [ ]` を `- [x]` にし `✅ <当日>` を付ける。勝手に整形しすぎない。
-
-**完了マークを付けられるのは、ユーザーがそのタスクの完了を明言したときだけ。** エージェントが依頼された成果物を作り終えても、それだけでは完了ではない（本当に完了したかはユーザーにしか判断できない）。作業後に付けたくなったら「完了マークを付けますか?」と確認し、承認されてから付ける。作業ログの追記や関連ノートの更新は確認不要でよい。
-
-### 4. sync（外部タスク管理との同期）
-
-外部タスク管理と Vault を同期したいとき。同期の目的は、**外部タスクの状態を initiative の全体観に反映すること**であり、daily に複製タスクを増やすことではない。
-
-#### 外部タスク管理 → Vault
-
-1. **先に対象を確定する（取得はその後）。** 探索順: (a) Vault ルートの `AGENTS.md` の `## 外部タスク同期` 節 → (b) 対象 initiative ノートの外部参照 → (c) 見つからなければ、クエリを推測で組み立てずに対象（プロジェクト・フィルタ・担当者）をユーザーに確認する（誤った対象を同期すると Vault の信頼性が下がるため）。ただし「自分の」の解決だけは例外で、認証ユーザーを機械的に返せる手段（例: Jira の `currentUser()` JQL、ユーザー情報 API）があればユーザーに聞かずそれで確定してよい。確認した内容は次回のために AGENTS.md の同節へ残すことを提案する。なお (c) でユーザーに聞くのは**対象が絞れないときだけ**: 担当者が「自分」で機械解決でき、プロジェクト・フィルタの指定が特に無い汎用リクエスト（例:「自分のタスク全部」）は、聞かずに手順 2 の既定スコープで進めてよい（実行前に条件を見せるため、ずれていればユーザーがその場で正せる）。
-2. 対象確定後、利用可能な外部タスク管理の読み取りツール（MCP 等）で、外部タスクの ID / 要約 / 状態 / 担当 / 更新日時 / リンクを取得する。スコープの指定が無ければ既定は**未完了タスクのみ・全プロジェクト・更新日時降順**（Jira なら例: `assignee = currentUser() AND resolution = EMPTY ORDER BY updated DESC`）とし、実行前に使う条件を一言ユーザーに見せる。
-3. どの initiative のどの未解決トピックに対応するかを判断する。対象 initiative が特定されない汎用リクエスト（例:「自分の Jira タスク全部」）では、各タスクを既存 initiative の未解決トピックに対応付け、対応先が見つからないタスクは一覧で提示して帰属先（既存 initiative / 新規 initiative / 同期対象外）をユーザーに確認する。
-4. 外部タスクの状態を該当 initiative の `## 現状` / `## 未解決トピック` に短く反映する（複製タスクは作らない）。対応が確定したタスクの反映は非破壊の短い加筆なので承認なしで直接行ってよい。複数 initiative にわたる大幅な書き換えを伴うときだけ、一覧で提案して承認を得る。
-5. 根拠が会議・決定・参考資料に由来する場合は、該当ノートへ `[[wikilink]]` を張る。
-
-#### Meeting → 外部タスク管理
-
-1. 議事録のアクションアイテムを、initiative の未解決トピックに対応付ける。
-2. 外部タスクの要約 / 説明 / 受け入れ条件 / 担当 / 期限を作る。
-3. 具体的なプロジェクト・ラベル・クエリなどは Vault ルートの `AGENTS.md`（`## 外部タスク同期` 節）または関連する Vault ノートの指示に従う。
-4. 作成後、必要なら initiative に外部タスク ID を短く残す。
-5. 議事録のアクションアイテムにもタスク ID を追記する。
-
-外部タスクの作成・更新ツールやブラウザ操作が利用できない場合は、タスク作成用の要約 / 説明 / 受け入れ条件を生成し、ユーザーが登録できる形で渡す。
-
-### 5. unfold（次の一手を生成）
-
-「次に何をするべきか」「この取り組みをどう進めるか」「全体を見て進めたい」のように、現在の全体から次の一手を選びたいとき。orient との違いは主目的: 現状の説明が欲しいなら orient、次の一手の提案が欲しいなら unfold。迷ったら unfold として扱ってよい（unfold は orient 相当の読み込みを含む）。
-
-1. 関連する MOC / initiative / concept / pattern / decision を読む。対象が Vault に無ければ、orient と同じく「無い」ことを明示し、憶測で埋めずにユーザーに前提を確認する。
-2. 強い中心・支える中心・弱い中心を短く整理する。
-3. 取りうる次の一手を 2〜3 個出し、それぞれがどの中心を強めるかを明示する。
-4. **次の構造保存的な一手**を1つ選ぶ。選定理由は「全体を一番強める」「いまの弱い中心を補う」「既存の合意や流れを壊さない」の観点で述べる。
-5. 実行が決まったら、必要に応じて initiative の `## 分解メモ` / `## タスク`、`decision`、`pattern` に記録する。記録は capture / task のルールに従う。
-
-### 6. cleanup（お掃除）
-
-「お掃除して」「Vault 整理して」と言われたとき。判断不要な静的検査はスクリプトに寄せ、統廃合の判断はエージェントが行う（プロジェクトの設計原則: 機械判定できるルールは linter 側へ）。
-
-1. **スキルディレクトリの** `scripts/ws-healthcheck.py` を絶対パスで実行する（例: `python3 <スキルディレクトリ>/scripts/ws-healthcheck.py`。`<スキルディレクトリ>` はこの SKILL.md が置かれているディレクトリ。必要なら `--vault <path>`）。Vault 直下の `scripts/` とは別物なので混同しない。JSON で以下を報告する:
-   - **unresolved_link**: 実体の無い `[[リンク]]`。Obsidian では未作成ノートへの forward link は正常な運用（これから作る印）なので、エラーではなく「typo の疑い or 作りかけ stub」の気づきとして扱う
-   - **orphan**: どこからも `[[リンク]]` されていないノート
-   - **unreachable**: `HOME.md` から `[[リンク]]` を辿って到達できないノート
-   - **missing_frontmatter**: `type` / `updated` 欠落
-   - **duplicate_note_key**: `[[リンク]]` 解決に使うファイル名 stem の重複
-   - **unexpected_root_note**: トップ直下に `HOME.md` / `MOC-*.md` 以外のノートがある
-   - **misplaced_note**: frontmatter `type` と推奨ディレクトリが一致しない
-   - **stale_initiative**: `status: active` だが `updated` が古い（既定 30 日）
-   - **low_information_density**: 長いのに、新事実・判断・根拠・未解決論点・次アクション・リンク関係の信号が薄い文章
-2. スクリプトの出力をもとに、**エージェントが判断する**統廃合・整理を提案する: 似た2ノートの統合、古い initiative の `status` 見直し、MOC への未収録ノートの追加、など。トップ直下の `inbox-*.md` が unexpected_root_note として検出されたら、置き場所の移動ではなく「中身を該当 concept / initiative / meeting へ取り込んで `_archive/` へ退避する」再分類を提案する（inbox は仮置きが前提のため）。ただし**同一ノートが複数の MOC に収録されているのは semilattice の正常状態**であり、統合・解消の対象にしない。視点を多く共有する MOC 同士も、切り口が違うなら統合しない。
-3. 静的検査に加えて wholeness review を行う。対象は **healthcheck が指摘したノート + 各 MOC から辿れる主要な initiative / concept** に絞る（全ノート走査はしない。読む文字数を最小にする原則に合わせる）。型別ディレクトリ以外の補助ディレクトリ（例: スライドや成果物の置き場）への orphan / unreachable 指摘はノート体系の外なので、統廃合対象にせず気づきとしてだけ報告する。観点:
-   - **中心の欠落**: ノートに「何を良くしたいか」が一文で書かれているか
-   - **型の混線**: concept / initiative / decision / pattern が混ざっていないか
-   - **関係の弱さ**: 重要な会議・決定・人・参考資料へリンクされているか
-   - **到達の経路**: HOME → MOC → initiative/concept/pattern → meeting/decision/reference が自然につながるか。経路は複数あってよい（ツリーの一意経路を求めない）
-   - **未完成の扱い**: 作りかけ stub と typo を区別できるか
-   - **文章密度**: 読んだ後に何が分かる・決められる・動けるようになったかが明確か
-4. **削除はしない。退避する。** 不要と判断したノートは `_archive/` へ `git mv` 相当の移動（Vault は git 管理外なので単純 `mv`）。これで履歴が無くても復旧余地が残る。
-5. 破壊的な変更（移動・統合・大幅書き換え）は必ず一覧で提案し、承認を得てから実行する。
-
-## 何を Vault に置き、何を置かないか
-
-- **置く**: 特定リポジトリに紐付かない仕事の知識（概念の背景、人のスタンス、取り組みの全体像、発言の出典、決定の理由、関連事例）とタスク。
-- **置かない**: 特定リポジトリで作業するエージェントが起動直後に知るべき即時 tips（例:「configs/ を編集しろ」）。これはランタイム固有の memory か各リポの `AGENTS.md` / `CLAUDE.md` の領分。Vault と混同しない。
-
-## やらないこと
-
-- **`_archive/` 以外のノートを削除しない。** お掃除は退避であって削除ではない。
-- **orient で勝手に書き込まない。** 取り出しと記録は別操作。
-- **frontmatter を増やしすぎない。** 上記の最小セットを基本とし、必要が出てから足す。
-- **相対パスリンクではなくファイル名 stem の `[[wikilink]]` を使う。** Obsidian のグラフと補完を生かすため。同じ stem の `.md` は作らない。
-- **ノートの所属 MOC を1つに正規化しない。** 分野は重なる（semilattice）。複数 MOC からの収録は重複ではなく正常状態。
-- **タスクを独立ファイルにしない。** initiative 内の必要最小限のチェックボックスに留める。
-- **タスクを勝手に完了にしない。** 完了判断はユーザーのもの。成果物を作っただけで `- [x]` にせず、確認してから付ける。
-- **daily に全タスクを出さない。** daily は日付メタデータで今日のタスクだけを見る場所。専用タグで絞らない。
-- **説明を増やしすぎない。** 人間が読む文字数を最小にする。
-- **読者の状態を変えない文を書かない。** 抽象的な一般論だけの段落は、判断・根拠・次アクション・リンク関係へ変換する。
-
-## 補足: 将来の拡張（今はやらない）
-
-- capture の自動フック（session_end 等で inbox へ）: 同期 capture で型が固まってから検討。
-- お掃除のスケジュール実行: 手動で頻度感を掴んでから `/schedule` 等で週次化を検討。
-
-これらは Vault の信頼性（何があるか明確）が安定してから足す。早すぎる自動化はノイズを生む。
+Use the existing templates under `templates/`. Run `scripts/ws-healthcheck.py` for structural health checks rather than recreating its logic.
