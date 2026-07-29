@@ -85,9 +85,7 @@
     "command": "~/.claude/statusline.sh"
   },
   "enabledPlugins": {
-    "example-skills@anthropic-agent-skills": true,
-    "impact-review@freee-ccplugins-marketplace": true,
-    "brucke-atlassian@freee-ccplugins-marketplace": true
+    "example-skills@anthropic-agent-skills": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
