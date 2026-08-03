@@ -1,0 +1,31 @@
+# herdr configuration
+#
+# 既定値の全文は `herdr --default-config` で出る。ここには既定から変える項目だけを置く。
+# 変更の反映: `herdr server reload-config`
+#
+# NOTE: ~/.config/herdr/ にはherdrのruntime state (herdr.sock, herdr-server.log,
+# session.json) が同居する。install.shはこのdirectoryを丸ごとlinkせず、
+# ファイル単位でlinkする。
+
+[experimental]
+# prefix mode中だけmacOSの入力ソースをASCII配列へ切り替え、抜けたら戻す。
+# CJK IMEを有効にしたままでも prefix+... が届く。macOS専用、Linuxでは無視される。
+switch_ascii_input_source_in_prefix = true
+
+# 自前でcursorを描くTUIに対し、外側terminalへcursor位置を伝える。
+# 日本語入力の変換候補ウィンドウがcursorを追従するようになる。
+# trade-off: cursorを隠すだけで描き直さないapp (vimのnormal mode等) では
+# 余分なcursorが見える。次のallow-listでagentのpaneだけに限定する。
+reveal_hidden_cursor_for_cjk_ime = true
+cjk_ime_agents = ["claude", "codex"]
+
+# 背景workspaceのagent状態変化を通知する。`blocked`に気づくためのherdrの中核機能。
+# 好みで有効にする。
+#   delivery = "system"   OS通知サービスに直接出す
+#   delivery = "terminal" 外側terminal (Ghostty) 経由でdesktop通知
+#   delivery = "herdr"    アプリ内toast
+# [ui.toast]
+# delivery = "system"
+
+# [ui.sound]
+# enabled = true

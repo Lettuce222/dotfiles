@@ -14,7 +14,7 @@
 
 1. `configs/{app}/`に設定を置く。
 2. `install.sh`のsymlink loopが対象を拾うことを確認する。
-3. `claude`、`agent`、`hammerspoon`は特殊扱いなので専用処理を確認する。
+3. `claude`、`agent`、`hammerspoon`、`herdr`は特殊扱いなので専用処理を確認する。
 4. `install.sh`を再実行し、冪等性とlink先を検証する。
 
 ## OS固有処理

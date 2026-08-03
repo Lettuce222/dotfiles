@@ -59,8 +59,9 @@ create_symlinks() {
         if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
             # Skip dirs handled separately:
-            #   claude/agent -> ~/.claude & ~/.codex (per-file/per-skill), hammerspoon -> ~/.hammerspoon
-            if [ "$dirname" = "claude" ] || [ "$dirname" = "agent" ] || [ "$dirname" = "hammerspoon" ]; then
+            #   claude/agent -> ~/.claude & ~/.codex (per-file/per-skill), hammerspoon -> ~/.hammerspoon,
+            #   herdr -> ~/.config/herdr (per-file; the dir also holds herdr's runtime state)
+            if [ "$dirname" = "claude" ] || [ "$dirname" = "agent" ] || [ "$dirname" = "hammerspoon" ] || [ "$dirname" = "herdr" ]; then
                 continue
             fi
             source_path="$script_dir/configs/$dirname"
@@ -191,6 +192,26 @@ create_hammerspoon_symlinks() {
     ln -snfv "$hammerspoon_config_dir" "$HOME/.hammerspoon"
 }
 
+create_herdr_symlinks() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    herdr_config_dir="$script_dir/configs/herdr"
+
+    if [ ! -d "$herdr_config_dir" ]; then
+        return 0
+    fi
+
+    mkdir -p "$HOME/.config/herdr"
+
+    # Per-file, not per-directory: ~/.config/herdr also holds herdr's runtime
+    # state (herdr.sock, herdr-server.log, session.json). Linking the whole
+    # directory would make herdr write those into this repo.
+    for file in "$herdr_config_dir"/*; do
+        if [ -f "$file" ]; then
+            ln -snfv "$file" "$HOME/.config/herdr/$(basename "$file")"
+        fi
+    done
+}
+
 # Phase 1 実行
 echo "=== Phase 1: Setting up Homebrew, fish, and symlinks ==="
 install_homebrew
@@ -201,6 +222,7 @@ create_claude_symlinks
 create_shared_agent_symlinks
 cleanup_codex_dangling_symlinks
 create_hammerspoon_symlinks
+create_herdr_symlinks
 
 # =============================================================================
 # Phase 2: fish で実行（mise, apps, macOS設定）
