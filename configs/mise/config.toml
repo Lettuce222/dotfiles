@@ -15,6 +15,7 @@ delta = "latest"
 eza = "latest"
 zoxide = "latest"
 node = "latest"
+python = "latest"
 
 # Linter/Formatter
 stylua = "latest"
@@ -23,8 +24,10 @@ shellcheck = "latest"
 taplo = "latest"
 gitleaks = "latest"
 yazi = "latest"
+yq = "latest"
 
 [settings]
 paranoid = true
 minimum_release_age = "7d"
 idiomatic_version_file_enable_tools = ["ruby", "node"]
+python.default_packages_file = "~/.config/mise/default-python-packages"
