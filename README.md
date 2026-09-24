@@ -32,9 +32,10 @@ cd "$(ghq root)/github.com/Lettuce222/dotfiles" && ./install.sh
 - git: バージョン管理
 - gh: GitHub CLI
 - ghostty: ターミナル
+- herdr: AIエージェント向けターミナルワークスペースマネージャー
 - hammerspoon: ウィンドウマネージャー
 - karabiner: キーボードカスタマイズ
 - lazygit: Git TUI
 - mise: ランタイムマネージャー
 - nvim: エディタ
-- tmux: ターミナルマルチプレクサ
+- tmux: 明示的に起動する予備のターミナルマルチプレクサ

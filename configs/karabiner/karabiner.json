@@ -1044,41 +1044,6 @@
                                 "type": "basic"
                             }
                         ]
-                    },
-                    {
-                        "description": "ターミナルで Ctrl+Space (tmux prefix) を押したら日本語IMEをOFFにしてから送出する",
-                        "manipulators": [
-                            {
-                                "conditions": [
-                                    {
-                                        "bundle_identifiers": [
-                                            "^com\\.apple\\.Terminal$",
-                                            "^com\\.googlecode\\.iterm2$",
-                                            "^io\\.alacritty$",
-                                            "^org\\.alacritty$",
-                                            "^net\\.kovidgoyal\\.kitty$",
-                                            "^com\\.github\\.wez\\.wezterm$",
-                                            "^com\\.mitchellh\\.ghostty$"
-                                        ],
-                                        "type": "frontmost_application_if"
-                                    }
-                                ],
-                                "from": {
-                                    "key_code": "spacebar",
-                                    "modifiers": {
-                                        "mandatory": ["control"]
-                                    }
-                                },
-                                "to": [
-                                    { "key_code": "japanese_eisuu" },
-                                    {
-                                        "key_code": "spacebar",
-                                        "modifiers": ["left_control"]
-                                    }
-                                ],
-                                "type": "basic"
-                            }
-                        ]
                     }
                 ]
             },

@@ -1,3 +1,4 @@
+onboarding = false
 # herdr configuration
 #
 # 既定値の全文は `herdr --default-config` で出る。ここには既定から変える項目だけを置く。
@@ -6,6 +7,15 @@
 # NOTE: ~/.config/herdr/ にはherdrのruntime state (herdr.sock, herdr-server.log,
 # session.json) が同居する。install.shはこのdirectoryを丸ごとlinkせず、
 # ファイル単位でlinkする。
+
+[theme]
+# tmux / Ghosttyと同じTokyo Night系の見た目に揃える。
+name = "tokyo-night"
+
+[keys]
+# tmuxで使っていたprefixをHerdrでも引き継ぐ。
+# `prefix+...` の既定bindingはすべてCtrl+Space起点になる。
+prefix = "ctrl+space"
 
 [experimental]
 # prefix mode中だけmacOSの入力ソースをASCII配列へ切り替え、抜けたら戻す。
@@ -29,3 +39,7 @@ cjk_ime_agents = ["claude", "codex"]
 
 # [ui.sound]
 # enabled = true
+
+pane_history = false
+[ui]
+show_agent_labels_on_pane_borders = false
