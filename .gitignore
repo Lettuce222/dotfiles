@@ -22,3 +22,6 @@ configs/hammerspoon/layouts.yml
 
 # Karabiner - automatic backups
 configs/karabiner/automatic_backups/
+
+# Backup files
+*.bak
