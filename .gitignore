@@ -10,7 +10,7 @@
 .emacs.d/history
 
 # Fish shell - environment-specific configurations
-configs/fish/conf.d/*.local.fish
+configs/fish/**/*.local.fish
 configs/fish/functions/local/
 configs/fish/fish_variables
 

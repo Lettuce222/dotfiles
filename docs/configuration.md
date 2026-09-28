@@ -4,7 +4,7 @@
 
 機械固有の値はcommitせず、local設定へ分離する。
 
-- Fish: `configs/fish/conf.d/*.local.fish`
+- Fish: `configs/fish/**/*.local.fish`（補完はファイル名がコマンド名と一致する必要があるため、`conf.d/*.local.fish`内で読み込む）
 - Fish function: `configs/fish/functions/local/*`
 - Claude Code: `configs/claude/settings.local.json`
 
