@@ -30,6 +30,16 @@
       "Bash(cat*|*pbcopy)",
       "Bash(ghq get:*)"
     ],
+    "deny": [
+      "Bash(printenv*)",
+      "Bash(env*)",
+      "Bash(export*)",
+      "Bash(set*)",
+      "Bash(echo $*)",
+      "Bash(cat .env*)",
+      "Bash(**/env)",
+      "Bash(**/printenv)"
+    ],
     "defaultMode": "auto"
   },
   "hooks": {
