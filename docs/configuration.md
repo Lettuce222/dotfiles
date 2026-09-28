@@ -6,7 +6,7 @@
 
 - Fish: `configs/fish/**/*.local.fish`（補完はファイル名がコマンド名と一致する必要があるため、`conf.d/*.local.fish`内で読み込む）
 - Fish function: `configs/fish/functions/local/*`
-- Claude Code: `configs/claude/settings.local.json`
+- Claude Code: `configs/claude/settings.local.json`（Claude Codeはuser scopeのlocal設定を読まないため、fishの`claude`関数が`--settings`で渡す。`extraKnownMarketplaces`を書くと登録済みmarketplaceの解決が壊れるので書かない）
 
 新しいlocal設定パターンを追加するときは`.gitignore`も更新する。
 
