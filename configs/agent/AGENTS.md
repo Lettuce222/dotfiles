@@ -14,5 +14,4 @@
 ## Context Boundaries
 
 - Do not store company-, organization-, project-, team-, person-, ticket-, internal-URL-, query-, or unreleased-work context in dotfiles-managed agent configuration.
-- Put durable cross-project work knowledge and tasks in `~/workspace`; use the `ws` skill when that Vault is the intended source of truth.
-- Keep repository-local operating tips in that repository's instructions or runtime memory rather than duplicating them in the Vault.
+- Keep repository-local operating tips in that repository's instructions or runtime memory.

@@ -117,4 +117,3 @@ gh auth status
 ## 関連
 
 - `commit-push` — 修正のコミット / プッシュをまとめて行うとき
-- `ast-grep-practice` — 落ちている原因が lint ルールで防げるものなら、再発防止を ast-grep ルールに落とす
