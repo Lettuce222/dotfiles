@@ -66,6 +66,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/textlint-markdown.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

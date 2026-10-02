@@ -23,5 +23,8 @@ configs/hammerspoon/layouts.yml
 # Karabiner - automatic backups
 configs/karabiner/automatic_backups/
 
+# textlint - npm packages (installed by install.sh)
+configs/textlint/node_modules/
+
 # Backup files
 *.bak

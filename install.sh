@@ -254,6 +254,15 @@ fish -c '
         mise install
     end
 
+    function install_textlint
+        # Packages for the agent textlint hook (configs/agent/hooks/textlint-markdown.sh)
+        echo "Installing textlint packages..."
+        # npm ci --prefix misreads the lockfile, so run it inside the directory.
+        pushd ~/.config/textlint
+        mise exec -- npm ci
+        popd
+    end
+
     function configure_macos
         echo "Configuring macOS keyboard settings..."
         defaults write -g KeyRepeat -int 1
@@ -347,6 +356,7 @@ fish -c '
     # Phase 2 実行
     install_udev_gothic_nf
     install_mise
+    install_textlint
     install_apps
     configure_macos
 
