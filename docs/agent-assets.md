@@ -37,9 +37,3 @@ Claude Code固有ファイルは`configs/claude/`に置く。Codexの`config.tom
 - 未installの機械ではhookは何もしない
 
 `textlint-mcp.sh`はClaude Codeの`PreToolUse`（全MCP tool）で、tool inputのうち本文らしいkey（`body`、`description`、`comment`、`text`など）の日本語をtextlintにかける。指摘があればexit 2で送信を止める。特定のserviceやtool名には依存させない。コードが入る`content`は対象外にする。`AGENTS.md`の「まず.mdに下書きする」ルールを機械的に担保するためのhook。
-
-### Herdr統合
-
-`herdr integration install claude`は`~/.claude/hooks/herdr-agent-state.sh`を置き、`settings.json`のkey順を全て並べ替えたうえでhook pathを絶対pathで埋める。絶対pathはUbuntu側では存在しないpathになる。
-
-再実行したら`SessionStart` hookのcommandを`bash ~/.claude/hooks/herdr-agent-state.sh session`へ戻し、key順の並べ替えはrevertする。hook script自体はherdr管理でdotfiles管理外なので、新しい機械では`herdr integration install claude`を実行する。

@@ -32,7 +32,6 @@ cd "$(ghq root)/github.com/Lettuce222/dotfiles" && ./install.sh
 - git: バージョン管理
 - gh: GitHub CLI
 - ghostty: ターミナル
-- herdr: AIエージェント向けターミナルワークスペースマネージャー
 - hammerspoon: ウィンドウマネージャー
 - karabiner: キーボードカスタマイズ
 - lazygit: Git TUI
