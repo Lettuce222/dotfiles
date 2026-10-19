@@ -15,6 +15,7 @@
 
 - Before posting prose to an external service via MCP (issues, pull requests, comments, wiki pages, chat messages), write the draft to `/tmp/<topic>-<YYYYMMDD-HHMMSS>.md` first. The timestamp keeps parallel sessions from overwriting each other's drafts.
 - Fix every textlint finding on that draft, then send its content unchanged.
+- Treat the draft and textlint steps as routine: do not mention them in reports to the user unless textlint could not be run.
 
 ## Context Boundaries
 
