@@ -59,7 +59,7 @@ create_symlinks() {
         if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
             # Skip dirs handled separately:
-            #   claude/agent -> ~/.claude & ~/.codex (per-file/per-skill), hammerspoon -> ~/.hammerspoon
+            #   claude/agent -> ~/.claude (per-file/per-skill), hammerspoon -> ~/.hammerspoon
             if [ "$dirname" = "claude" ] || [ "$dirname" = "agent" ] || [ "$dirname" = "hammerspoon" ]; then
                 continue
             fi
@@ -96,9 +96,9 @@ create_claude_symlinks() {
     done
 }
 
-# Link the shared agent assets in configs/agent into a single tool home.
-#   $1 = destination home dir (e.g. ~/.claude, ~/.codex)
-#   $2 = filename for the instructions file in that home (CLAUDE.md / AGENTS.md)
+# Link the agent assets in configs/agent into a single tool home.
+#   $1 = destination home dir (e.g. ~/.claude)
+#   $2 = filename for the instructions file in that home (e.g. CLAUDE.md)
 link_agent_assets() {
     home_dir="$1"
     instructions_name="$2"
@@ -107,13 +107,13 @@ link_agent_assets() {
 
     mkdir -p "$home_dir"
 
-    # Instructions file: Claude reads CLAUDE.md, Codex reads AGENTS.md, one source.
+    # Instructions file: one source, linked under the name the tool reads.
     if [ -f "$agent_dir/AGENTS.md" ]; then
         ln -snfv "$agent_dir/AGENTS.md" "$home_dir/$instructions_name"
     fi
 
     # Skills: link each skill dir individually so unmanaged skills
-    # (e.g. ~/.codex/skills/.system, or skills installed by other means) survive.
+    # (e.g. plugin skills, or skills installed by other means) survive.
     if [ -d "$agent_dir/skills" ]; then
         mkdir -p "$home_dir/skills"
         resolved_target=$(cd "$home_dir/skills" 2>/dev/null && pwd -P)
@@ -130,8 +130,8 @@ link_agent_assets() {
     fi
 
     # Hooks: shared shell scripts (tmux window title, etc.).
-    # NOTE: this only places the scripts. Wiring them up is done per tool:
-    #   Claude -> configs/claude/settings.json (managed), Codex -> ~/.codex/config.toml (unmanaged).
+    # NOTE: this only places the scripts. Wiring them up is done in
+    # configs/claude/settings.json.
     if [ -d "$agent_dir/hooks" ]; then
         mkdir -p "$home_dir/hooks"
         resolved_target=$(cd "$home_dir/hooks" 2>/dev/null && pwd -P)
@@ -159,24 +159,33 @@ create_shared_agent_symlinks() {
     fi
 
     link_agent_assets "$HOME/.claude" "CLAUDE.md"
-    link_agent_assets "$HOME/.codex" "AGENTS.md"
 }
 
-# Codex previously used prompt wrappers / rules that pointed into configs/codex.
-# That approach was retired in favour of native skills, so prune the leftover
-# broken symlinks (and now-empty dirs) to silence codex warnings. Idempotent.
-cleanup_codex_dangling_symlinks() {
-    for dir in "$HOME/.codex/prompts" "$HOME/.codex/rules"; do
-        [ -d "$dir" ] || continue
-        for link in "$dir"/*; do
-            # Broken symlink: is a symlink but its target no longer exists
-            if [ -L "$link" ] && [ ! -e "$link" ]; then
-                echo "Removing dangling codex symlink: $link"
+# dotfiles no longer manages Codex. Remove the symlinks it used to place under
+# ~/.codex (AGENTS.md, skills, hooks, prompts, rules) and leave everything
+# Codex owns untouched. Idempotent.
+cleanup_codex_symlinks() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    codex_home="$HOME/.codex"
+
+    [ -d "$codex_home" ] || return 0
+
+    for link in "$codex_home/AGENTS.md" \
+        "$codex_home/skills"/* "$codex_home/hooks"/* \
+        "$codex_home/prompts"/* "$codex_home/rules"/*; do
+        [ -L "$link" ] || continue
+        case "$(readlink "$link")" in
+            "$script_dir"/configs/*)
+                echo "Removing codex symlink: $link"
                 rm -f "$link"
-            fi
-        done
+                ;;
+        esac
+    done
+
+    for dir in "$codex_home/hooks" "$codex_home/prompts" "$codex_home/rules"; do
         rmdir "$dir" 2>/dev/null && echo "Removed empty dir: $dir"
     done
+    return 0
 }
 
 create_hammerspoon_symlinks() {
@@ -199,7 +208,7 @@ set_fish_as_default_shell
 create_symlinks
 create_claude_symlinks
 create_shared_agent_symlinks
-cleanup_codex_dangling_symlinks
+cleanup_codex_symlinks
 create_hammerspoon_symlinks
 
 # =============================================================================
