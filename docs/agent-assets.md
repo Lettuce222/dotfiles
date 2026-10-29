@@ -34,3 +34,14 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 未installの機械ではhookは何もしない
 
 `textlint-mcp.sh`はClaude Codeの`PreToolUse`（全MCP tool）で、tool inputのうち本文らしいkey（`body`、`description`、`comment`、`text`など）の日本語をtextlintにかける。指摘があればexit 2で送信を止める。特定のserviceやtool名には依存させない。コードが入る`content`は対象外にする。`AGENTS.md`の「まず.mdに下書きする」ルールを機械的に担保するためのhook。
+
+## 窓口（hub）とworker
+
+`configs/tmux/scripts/agent-hub/`に、tmux上でClaude Codeを窓口とworkerに分けて動かす仕組みを置く。
+
+- `prefix + a`（`hub.fish`）: 窓口のClaude（セッション名`hub`）へ移動する。無ければ起動する。
+- `prefix + A`（`pick.fish`）: 窓口とworkerのwindowを一覧から選んで移動する。
+- `spawn.fish`: 窓口が呼ぶ。`<repo>.worktrees/<task>`にworktreeを作り、workerを別windowで起動する。
+- `hub-rules.md`、`worker-rules.md`: それぞれの`--append-system-prompt-file`に渡す役割定義。
+
+窓口とworkerはどちらもauto modeで起動する。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの作るPRは必ずdraftにする。
