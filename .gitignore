@@ -26,5 +26,8 @@ configs/karabiner/automatic_backups/
 # textlint - npm packages (installed by install.sh)
 configs/textlint/node_modules/
 
+# Python bytecode (tests under configs/)
+__pycache__/
+
 # Backup files
 *.bak
