@@ -6,7 +6,7 @@ set -l rows
 for line in (tmux list-windows -a -F '#{window_id}	#{@agent-hub}	#{@agent-hub-worker}	#{window_name}	#{pane_current_path}')
     set -l f (string split \t -- $line)
     if test "$f[2]" = 1; or test -n "$f[3]"
-        set -a rows (string join \t -- $f[1] $f[4] (string replace -- $HOME '~' $f[5]))
+        set -a rows (string join \t -- $f[1] $f[4] (string replace -r -- '^'(string escape --style=regex -- $HOME)'(?=/|$)' '~' $f[5]))
     end
 end
 
