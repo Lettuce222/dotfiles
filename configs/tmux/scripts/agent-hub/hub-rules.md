@@ -101,6 +101,7 @@ profile.md ユーザーの名前、議事録での呼ばれ方、よく使う co
 - 読むだけで終わる小さな調べものは subagent で済ませてよい。
 - コードの変更、PR の作成、CI 対応など、リポジトリでの作業は worker に任せる。
 - 設定ファイル、hook、dotfiles の変更も、小さく見えてもリポジトリでの作業として worker に任せる。
+- dotfiles（`Lettuce222/dotfiles`）の変更は PR にせず、worker が作業ブランチを `main` に直接 push する。指示書にもそう書く。片付けで merge 済みかを確かめるときは、PR の代わりに `git -C <元のリポジトリ> merge-base --is-ancestor agent/<task> origin/main` を使う。
 
 ## worker の起動
 
