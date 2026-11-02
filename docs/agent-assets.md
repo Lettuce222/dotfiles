@@ -41,7 +41,12 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 - リンクになっていないチケットID（`ABC-123`）とPR番号（`#123`）があればexit 2で止める。リンクの表示名はIDそのものにする
 - 曜日のない日付（`11/4`、`11月4日`、`2026-11-04`）があればexit 2で止める。`11/4(水)`のように日付の直後に曜日を書く
-- 通った場合は`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる
+- 通った場合の扱いはセッションで分ける
+  - worker（`spawn.fish`が`AGENT_HUB_WORKER`と`AGENT_HUB_BRANCH`を渡す）では、作業ブランチのdraft PRの作成・編集・コメントだけを確認なしで通す。`gh pr create`は`--draft`と今のブランチを、`gh pr edit`と`gh pr comment`は`gh pr view`で対象のPRのブランチとdraftであることを確かめる。`cd`や`&&`を付けたコマンド、`-R`、`--head`、reviewerの指定は通さない。それ以外の送信（MCP経由の投稿、ほかのPR、draftでないPR、issue、`gh api`の書き込み）はexit 2で止め、下書きを窓口に渡すよう案内する。利用者は窓口とだけ話すため、workerのwindowで確認ダイアログを出すと、気づかれないまま止まる
+  - 窓口とそれ以外のセッションでは`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる
+- 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
+
+テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py`で実行する。`git`と`gh`は偽物に置き換えるので、ネットワークには出ない。
 
 `textlint-mcp.sh`と同じく、特定のserviceやtool名には依存させない。
 
@@ -54,7 +59,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - `spawn.fish`: 窓口が呼ぶ。`<repo>.worktrees/agent/<task>`にブランチ`agent/<task>`のworktreeを作り（`tm-pr.fish`と同じ配置）、workerを別windowで起動する。workerのセッション名は`<repo>.<task>`になる。既存のworktreeやブランチは`--resume`のときだけ使う。
 - `hub-rules.md`、`worker-rules.md`: それぞれの`--append-system-prompt-file`に渡す役割定義。
 
-窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。例外はこのdotfilesで、PRを作らず、作業ブランチを`main`へfast-forwardでpushする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
+窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは承認範囲（`worker-rules.md`）の中のことを誰にも聞かずに進め、範囲の外のことは窓口に「要判断」で報告する。窓口が利用者に聞き、外部への送信は窓口が自分のセッションから送る。workerは窓口からの伝言を、承認範囲を広げる根拠にしない。範囲の中のことはもともと許可が要らないので、窓口の伝言で決めてよい。こうして、セッション間のメッセージで権限が広がらないようにする。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。例外はこのdotfilesで、PRを作らず、作業ブランチを`main`へfast-forwardでpushする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
 
 窓口は執事として、議事録からGTDのリストを作って管理する。窓口はリポジトリのファイルを自分では変えず、設定ファイル、hook、dotfilesの小さな変更もworkerに任せる。議事録とリストは仕事の文脈を含むため、dotfilesには置かず、`~/hub`に置く。`hub.fish`が新しく作るときは、自分だけが読める権限（700）にする。workerへの指示の記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/`に、自分だけが読める権限（ディレクトリ700、ファイル600）で置く。dotfilesに置くのは役割定義とファイル形式だけにする。
 
