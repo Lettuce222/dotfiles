@@ -153,8 +153,11 @@ if string match -q -r '^(/private)?/tmp/agent-hub-[^/]*$' -- (path resolve -- $p
     rm -f -- $prompt_file
 end
 
+# AGENT_HUB_WORKER と AGENT_HUB_BRANCH は worker の印で、hook（external-post-guard.py）も読む。
+# worker から送ってよい外部への書き込みを、作業ブランチの draft PR に絞るため
 set -l window_id (tmux new-window -d -P -F '#{window_id}' -n "$repo:$task" -c $worktree_dir \
     -e AGENT_HUB_WORKER=$worker_name \
+    -e AGENT_HUB_BRANCH=$branch \
     -e AGENT_HUB_RULES=$script_dir/worker-rules.md \
     -e AGENT_HUB_PROMPT=$initial_prompt \
     -e AGENT_HUB_ENV=$script_dir/agent-env.fish \
