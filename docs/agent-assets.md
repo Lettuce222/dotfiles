@@ -57,3 +57,17 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。例外はこのdotfilesで、PRを作らず、作業ブランチを`main`へfast-forwardでpushする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
 
 窓口は執事として、議事録からGTDのリストを作って管理する。窓口はリポジトリのファイルを自分では変えず、設定ファイル、hook、dotfilesの小さな変更もworkerに任せる。議事録とリストは仕事の文脈を含むため、dotfilesには置かず、`~/hub`に置く。`hub.fish`が新しく作るときは、自分だけが読める権限（700）にする。workerへの指示の記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/`に、自分だけが読める権限（ディレクトリ700、ファイル600）で置く。dotfilesに置くのは役割定義とファイル形式だけにする。
+
+### ダッシュボード
+
+`dash.py`は、窓口の状況と資料をブラウザで見るためのローカルのwebページ。Pythonの標準ライブラリだけで動き、モデルのトークンを使わない。fishの`hub-dash`で起動し、ブラウザで開く。すでに起動していれば開くだけにする。
+
+- Overview: `~/hub/gtd/`からDOING、次にやること、待ち、今日と昨日の完了、プロジェクトを出す。`note::`は資料へ、`worker::`と`record::`はworker一覧へ、`link::`は外部へリンクする。
+- 資料: `notes/`、`minutes/`、`gtd/`のmarkdownを整形して表示する。
+- Workers: 記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）ごとに、指示の全文、worktree、ブランチ、tmuxのwindowの有無、`gh`で取ったPRとCIの状態を出す。
+
+ページは数秒ごとに読み直す（`--interval`で変える）。`gh`の結果は60秒ごとに裏で取り直す。
+
+資料には仕事の内容が入るため、`127.0.0.1`だけで待ち受け、Hostヘッダーが`127.0.0.1`か`localhost`でない要求は断る。読むだけで、`~/hub`も記録ファイルも書き換えない。ポートは`AGENT_HUB_DASH_PORT`（既定8765）、窓口の作業場所は`AGENT_HUB_HOME`で変える。
+
+markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py`で実行する。
