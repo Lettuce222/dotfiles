@@ -13,7 +13,7 @@ Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置い�
 - `configs/agent/hooks/*.sh`
   - `~/.claude/hooks/`
 
-`settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。
+`settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`install.sh`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
 
 ## なぜ個別symlinkか
 

@@ -5,7 +5,7 @@
 
 # worker の報告先になるセッション名。spawn.fish と同じ変数を読む
 set -l hub_name (test -n "$AGENT_HUB_NAME"; and echo $AGENT_HUB_NAME; or echo hub)
-# fish 経由で起動し、claude 関数（per-machine の settings.local.json を渡す）を通す。
+# fish 経由で起動し、agent-env.fish で作業場所の環境を取り込む。
 # 起動直後に hub-rules.md の「起動したとき」の手順を実行させる
 set -l script_dir (path resolve -- (status dirname))
 set -l hub_command fish -c (string join ' ' -- \

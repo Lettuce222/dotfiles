@@ -94,12 +94,16 @@ create_claude_symlinks() {
 
     mkdir -p "$HOME/.claude"
 
-    # Claude-specific files only (settings.json, statusline.sh, ...).
+    # Claude-specific files only (statusline.sh, ...).
     # Shared assets (CLAUDE.md / skills / hooks) live in configs/agent and are
     # linked by create_shared_agent_symlinks.
+    # settings*.json are merged into a real file by generate_claude_settings.
     for file in "$claude_config_dir"/*; do
         if [ -f "$file" ]; then
             filename=$(basename "$file")
+            case "$filename" in
+                settings.json|settings.local.json) continue ;;
+            esac
             ln -snfv "$file" "$HOME/.claude/$filename"
             # Make shell scripts executable
             if [ "${filename##*.}" = "sh" ]; then
@@ -107,6 +111,84 @@ create_claude_symlinks() {
             fi
         fi
     done
+}
+
+# Write ~/.claude/settings.json as a real file merged from the tracked
+# configs/claude/settings.json and the gitignored settings.local.json.
+# Claude Code reads user settings only from ~/.claude/settings.json and also
+# writes to it (`claude plugin enable`, /config, /model). A symlink would send
+# those writes, including work-only plugins, into the tracked file.
+# Merge rules follow Claude Code's own: objects merge by key, arrays
+# concatenate without duplicates, and local scalars win.
+# A snapshot of the last generated file detects writes made since then; the
+# changed file is backed up before it is overwritten.
+generate_claude_settings() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    base="$script_dir/configs/claude/settings.json"
+    local_file="$script_dir/configs/claude/settings.local.json"
+    dest="$HOME/.claude/settings.json"
+    snapshot="$HOME/.claude/settings.json.generated"
+
+    [ -f "$base" ] || return 0
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "python3 is not installed; skipping $dest" >&2
+        return 1
+    fi
+
+    tmp=$(mktemp "${TMPDIR:-/tmp}/claude-settings.XXXXXX") || return 1
+    if ! python3 -I - "$base" "$local_file" >"$tmp" <<'EOF'
+import json
+import os
+import sys
+
+
+def merge(a, b):
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = dict(a)
+        for key, value in b.items():
+            out[key] = merge(a[key], value) if key in a else value
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        return a + [item for item in b if item not in a]
+    return b
+
+
+base_path, local_path = sys.argv[1], sys.argv[2]
+with open(base_path) as f:
+    settings = json.load(f)
+if os.path.isfile(local_path):
+    with open(local_path) as f:
+        settings = merge(settings, json.load(f))
+json.dump(settings, sys.stdout, indent=2, ensure_ascii=False)
+sys.stdout.write("\n")
+EOF
+    then
+        echo "Failed to merge Claude settings; leaving $dest unchanged" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+
+    if [ -L "$dest" ]; then
+        # Migrate from the old symlink layout.
+        rm -f "$dest"
+    elif [ -f "$dest" ] && ! cmp -s "$dest" "$tmp"; then
+        if [ ! -f "$snapshot" ] || ! cmp -s "$dest" "$snapshot"; then
+            backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
+            cp "$dest" "$backup"
+            echo "WARNING: $dest was changed outside install.sh (e.g. by claude plugin enable)." >&2
+            echo "  Backed up to $backup. Move what you need into configs/claude/settings.local.json." >&2
+        fi
+    fi
+
+    mv "$tmp" "$dest"
+    cp "$dest" "$snapshot"
+    echo "Generated $dest"
+
+    # ~/.claude/settings.local.json is not a user settings file; drop the old link.
+    old_local="$HOME/.claude/settings.local.json"
+    if [ -L "$old_local" ] && [ "$(readlink "$old_local")" = "$local_file" ]; then
+        rm -f "$old_local"
+    fi
 }
 
 # Link the agent assets in configs/agent into a single tool home.
@@ -221,6 +303,7 @@ install_fish
 set_fish_as_default_shell
 create_symlinks
 create_claude_symlinks
+generate_claude_settings
 create_shared_agent_symlinks
 cleanup_codex_symlinks
 create_hammerspoon_symlinks
