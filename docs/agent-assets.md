@@ -2,7 +2,7 @@
 
 AI agentはClaude Codeだけを管理する。指示、skill、hookは`configs/agent/`を単一ソースにする。
 
-Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置いたdotfiles向けsymlinkだけを削除する。
+Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置いたdotfiles向けsymlinkを削除し、空の`hooks/`、`prompts/`、`rules/`も削除する。`~/.codex/config.toml`や`~/.codex/hooks.json`からdotfilesのhookを呼んでいるマシンでは、その配線を手で外す。
 
 ## 配置
 
