@@ -17,7 +17,7 @@ Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置い�
 
 ## なぜ個別symlinkか
 
-`~/.claude/skills/`には、pluginや別の方法で導入したskillが同居する。ディレクトリ全体をsymlinkせず、dotfiles管理対象だけを個別にlinkする。
+`~/.claude/skills/`には、別の方法で導入したskillが同居する。ディレクトリ全体をsymlinkせず、dotfiles管理対象だけを個別にlinkする。
 
 `~/.claude/`のhistory、sessions、cacheなどの動的ファイルは管理しない。
 

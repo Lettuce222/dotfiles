@@ -113,7 +113,7 @@ link_agent_assets() {
     fi
 
     # Skills: link each skill dir individually so unmanaged skills
-    # (e.g. plugin skills, or skills installed by other means) survive.
+    # (skills installed by other means) survive.
     if [ -d "$agent_dir/skills" ]; then
         mkdir -p "$home_dir/skills"
         resolved_target=$(cd "$home_dir/skills" 2>/dev/null && pwd -P)
@@ -129,7 +129,7 @@ link_agent_assets() {
         fi
     fi
 
-    # Hooks: shared shell scripts (tmux window title, etc.).
+    # Hooks: shell scripts (tmux window title, etc.).
     # NOTE: this only places the scripts. Wiring them up is done in
     # configs/claude/settings.json.
     if [ -d "$agent_dir/hooks" ]; then
