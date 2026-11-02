@@ -79,10 +79,35 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 - Overview: `~/hub/gtd/`からDOING、次にやること、待ち、今日と昨日の完了、プロジェクトを出す。`note::`は資料へ、`worker::`と`record::`はworker一覧へ、`link::`は外部へリンクする。
 - 資料: `notes/`、`minutes/`、`gtd/`のmarkdownを整形して表示する。
-- Workers: 記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）ごとに、指示の全文、worktree、ブランチ、tmuxのwindowの有無、`gh`で取ったPRとCIの状態を出す。
+- Workers: 記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）ごとに、指示の全文、worktree、ブランチ、tmuxのwindowの有無、`gh`で取ったPRとCIの状態、未対応の報告の件数を出す。
+- 受信箱: workerの報告（`$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md`）を出す。まだ答えていない要判断とブロックを上に並べ、そこから答えられる。Overviewにも未対応の件数を出す。
 
 ページは数秒ごとに読み直す（`--interval`で変える）。`gh`の結果は60秒ごとに裏で取り直す。
 
-資料には仕事の内容が入るため、`127.0.0.1`だけで待ち受け、Hostヘッダーが`127.0.0.1`か`localhost`でない要求は断る。読むだけで、`~/hub`も記録ファイルも書き換えない。ポートは`AGENT_HUB_DASH_PORT`（既定8765）、窓口の作業場所は`AGENT_HUB_HOME`で変える。
+資料には仕事の内容が入るため、`127.0.0.1`だけで待ち受け、Hostヘッダーが`127.0.0.1`か`localhost`でない要求は断る。`~/hub`と記録ファイルは読むだけで、書き換えない。
+
+#### 受信箱と回答
+
+workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内容を報告のファイルへ追記する（`worker-rules.md`）。ファイルはworkerごとに1つで、各項目は次の見出しで始まり、次の見出しまでが本文になる。報告の時刻が、そのworkerの中での報告のIDになる。本文の行頭の`##`は`report.sh`が字下げする。
+
+```
+## 2026-11-02 10:00:00 要判断
+## 2026-11-02 10:05:00 回答 2026-11-02 10:00:00
+## 2026-11-02 10:06:00 対応済み 2026-11-02 10:00:00
+```
+
+要判断とブロックは、`回答`か`対応済み`が付くか、後から同じworkerの`完了`が届くと対応済みになる。本文の`選択肢: <文>`の行は、その文を送るボタンになる。
+
+受信箱で答えると、`dash.py`はworkerのwindowのpaneへ`tmux send-keys`で`[ダッシュボードから回答 <報告の時刻>] <答え>`を打ち込んでEnterを送り、報告のファイルに`回答`を追記する。workerはユーザーの入力として受け取り、窓口へ`[回答受領]`をSendMessageで知らせる。窓口はそれを見てGTDを更新する。送らずに`対応済み`にするだけのボタンもある。
+
+ダッシュボードで書き込みを受けるのはこの口だけなので、次のように守る。
+
+- 待ち受けは`127.0.0.1`のまま。答えは`POST /inbox/answer`だけで受け、GETでは何も変えない。
+- 起動ごとに`secrets.token_urlsafe(32)`でトークンを作り、受信箱のフォームに埋める。POSTはトークンの一致（`hmac.compare_digest`）、許可したHost、同じOriginを必須にし、`Sec-Fetch-Site`が付いていれば`same-origin`に限る。CSPの`form-action 'self'`も付ける。
+- 送り先は、記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）があり、`@agent-hub-worker`の印が付いたtmuxのwindowがあるworkerに限る。セッション名は英数字と`._-`だけを受け付ける。まだ答えていない報告にだけ答えられ、同じ報告へ二度は送らない。
+- 答えは1000文字まで。改行とタブは空白に変え、ほかの制御文字（ESCなど）とUnicodeの双方向制御文字は落とす。`send-keys -l`で文字として送る。フォームの本体は16KiBまで。
+- workerが許可などの確認画面を出しているとき（window名の🔴や、画面の確認の文言）は、文字とEnterで選択肢を選んでしまうので送らない。
+
+報告のファイルには報告の本文が入るため、ディレクトリは700、ファイルは600で作る。ポートは`AGENT_HUB_DASH_PORT`（既定8765）、窓口の作業場所は`AGENT_HUB_HOME`で変える。
 
 markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py`で実行する。

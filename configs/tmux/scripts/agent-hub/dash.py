@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""窓口（hub）の状況と資料をブラウザで見るための、読み取り専用のローカル web ダッシュボード。
+"""窓口（hub）の状況と資料をブラウザで見るための、ローカル web ダッシュボード。
 
 - 127.0.0.1 だけで待ち受ける。Host ヘッダーも確かめ、DNS rebinding で外のページから読まれないようにする
-- ~/hub（AGENT_HUB_HOME）と記録ファイル（$XDG_STATE_HOME/agent-hub）を読むだけで、書き換えない
+- ~/hub（AGENT_HUB_HOME）と記録ファイル（$XDG_STATE_HOME/agent-hub）は読むだけで、書き換えない
+- 書き込むのは受信箱だけ。worker の報告（$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md）に答えると、
+  その worker の tmux pane へ send-keys で送り、報告のファイルに「回答」を追記する。
+  POST は起動ごとに作るトークンと同じ origin を必須にし、送り先は記録ファイルがある worker の window に限る
 - Python の標準ライブラリだけで動かす。markdown の整形は、手元の資料が読める程度の GFM の一部を自前で扱う
   （外部パッケージを入れずに macOS と Ubuntu の両方で `python3` だけで起動できるようにするため）
 
@@ -13,14 +16,17 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hmac
 import html
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -387,12 +393,14 @@ def github_repo(remote_url: str) -> str:
 
 
 def tmux_windows() -> dict[str, dict]:
-    out = run(["tmux", "list-windows", "-a", "-F", "#{window_id}\t#{@agent-hub-worker}\t#{window_name}\t#{session_name}"])
+    """@agent-hub-worker の印が付いた window を worker のセッション名ごとに返す。pane は window の現在の pane。"""
+    fmt = "#{window_id}\t#{@agent-hub-worker}\t#{window_name}\t#{session_name}\t#{pane_id}"
+    out = run(["tmux", "list-windows", "-a", "-F", fmt])
     windows = {}
     for line in (out or "").splitlines():
         parts = line.split("\t")
-        if len(parts) == 4 and parts[1]:
-            windows[parts[1]] = {"id": parts[0], "name": parts[2], "session": parts[3]}
+        if len(parts) == 5 and parts[1]:
+            windows[parts[1]] = {"id": parts[0], "name": parts[2], "session": parts[3], "pane": parts[4]}
     return windows
 
 
@@ -495,6 +503,206 @@ def load_workers(gtd: dict[str, list[Item]]) -> list[Worker]:
 
 
 # ---------------------------------------------------------------------------
+# 受信箱（worker の報告と、ダッシュボードからの回答）
+#
+# 報告のファイルは worker ごとに 1 つで、worker（report.sh）とダッシュボードが追記する。各項目は
+#   ## <YYYY-MM-DD HH:MM:SS> <完了|要判断|ブロック>
+#   ## <YYYY-MM-DD HH:MM:SS> <回答|対応済み> <答えた報告の時刻>
+# の見出しで始まり、次の見出しまでが本文。報告の時刻が、その worker の中での報告の ID になる。
+
+TS = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d"
+REPORT_HEAD_RE = re.compile(rf"^## ({TS}) (完了|要判断|ブロック|回答|対応済み)(?: ({TS}))?\s*$")
+REPORT_KINDS = ("完了", "要判断", "ブロック")
+ASK_KINDS = ("要判断", "ブロック")
+ANSWER_KINDS = ("回答", "対応済み")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+CHOICE_RE = re.compile(r"^\s*(?:[-*]\s+)?選択肢[:：]\s*(.+?)\s*$")
+MAX_ANSWER = 1000
+MAX_FORM_BYTES = 16 * 1024
+ANSWER_PREFIX = "[ダッシュボードから回答 {ref}] "
+# Unicode の双方向制御文字。表示と実際の並びを食い違わせられるので落とす
+BIDI_CONTROLS = set("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f")
+# 許可などの確認画面。ここに文字と Enter を送ると選択肢を選んでしまうので、送らない
+DIALOG_RE = re.compile(r"Do you want to|Esc to cancel|❯\s*\d+\.\s|\(y/n\)", re.IGNORECASE)
+
+
+def reports_dir() -> Path:
+    return state_dir() / "reports"
+
+
+@dataclass
+class Report:
+    worker: str
+    ts: str
+    kind: str
+    body: str
+    ref: str = ""
+    answers: list["Report"] = field(default_factory=list)
+    superseded: bool = False  # 後に同じ worker から完了が届いた
+
+    @property
+    def summary(self) -> str:
+        return next((l.strip() for l in self.body.splitlines() if l.strip()), "")
+
+    @property
+    def is_open(self) -> bool:
+        return self.kind in ASK_KINDS and not self.answers and not self.superseded
+
+    @property
+    def choices(self) -> list[str]:
+        out = []
+        for line in self.body.splitlines():
+            m = CHOICE_RE.match(line)
+            if m and len(m.group(1)) <= MAX_ANSWER:
+                out.append(m.group(1))
+        return out
+
+
+def parse_reports(text: str, worker: str) -> list[Report]:
+    """報告と回答を出てきた順に返す。回答は答えた報告の answers にもつなぐ。"""
+    entries: list[Report] = []
+    body: list[str] = []
+
+    def flush():
+        if entries:
+            entries[-1].body = "\n".join(body).strip("\n")
+        body.clear()
+
+    for line in text.splitlines():
+        m = REPORT_HEAD_RE.match(line)
+        if m:
+            flush()
+            entries.append(Report(worker, m.group(1), m.group(2), "", m.group(3) or ""))
+        elif entries:
+            body.append(line)
+    flush()
+
+    by_ts: dict[str, Report] = {}
+    for e in entries:
+        if e.kind in REPORT_KINDS:
+            if e.kind == "完了":
+                for prev in by_ts.values():
+                    prev.superseded = True
+            by_ts[e.ts] = e
+        elif e.kind in ANSWER_KINDS and e.ref in by_ts:
+            by_ts[e.ref].answers.append(e)
+    return entries
+
+
+def record_names() -> set[str]:
+    """記録ファイルがある worker のセッション名。送り先はこの中に限る。"""
+    try:
+        return {p.stem for p in state_dir().glob("*.md") if p.is_file() and NAME_RE.match(p.stem)}
+    except OSError:
+        return set()
+
+
+def load_reports() -> list[Report]:
+    out: list[Report] = []
+    try:
+        paths = sorted(reports_dir().glob("*.md"))
+    except OSError:
+        return out
+    for path in paths:
+        if not NAME_RE.match(path.stem):
+            continue
+        try:
+            out.extend(parse_reports(path.read_text(encoding="utf-8", errors="replace"), path.stem))
+        except OSError:
+            continue
+    return out
+
+
+def clean_answer(text: str) -> str:
+    """改行とタブは空白に、ほかの制御文字と双方向制御文字は落とす。"""
+    text = re.sub(r"[\r\n\t]+", " ", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cc" and ch not in BIDI_CONTROLS)
+    return text.strip()
+
+
+def append_report(path: Path, kind: str, ref: str, body: str) -> None:
+    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"\n## {now} {kind} {ref}\n\n{body}\n"
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(entry)
+
+
+def capture_pane(pane: str) -> str:
+    return run(["tmux", "capture-pane", "-p", "-t", pane]) or ""
+
+
+def send_to_pane(pane: str, text: str) -> bool:
+    """文字列をそのまま打ち込んでから Enter を送る。続けて送ると貼り付けと見なされ、改行になることがあるので間を置く。"""
+    if run(["tmux", "send-keys", "-t", pane, "-l", "--", text]) is None:
+        return False
+    time.sleep(0.3)
+    return run(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
+
+
+def looks_like_dialog(window: dict) -> bool:
+    if "🔴" in window.get("name", ""):
+        return True
+    lines = [l for l in capture_pane(window["pane"]).splitlines() if l.strip()]
+    return bool(DIALOG_RE.search("\n".join(lines[-15:])))
+
+
+ANSWER_MESSAGES = {
+    "sent": ("送りました。worker の画面で受け取られたか確かめてください", "good"),
+    "resolved": ("送らずに対応済みにしました", "good"),
+    "unknown": ("記録ファイルにない worker には送れません", "bad"),
+    "stale": ("その報告は見つからないか、すでに対応済みです", "bad"),
+    "empty": ("答えが空です", "bad"),
+    "toolong": (f"答えは {MAX_ANSWER} 文字までです", "bad"),
+    "nowindow": ("worker の window がありません。window で答えるか、対応済みにしてください", "bad"),
+    "dialog": ("worker が確認画面を出しているので送りませんでした。window で答えてください", "bad"),
+    "sendfail": ("tmux で送れませんでした", "bad"),
+    "writefail": ("送りましたが、報告のファイルに書き込めませんでした", "bad"),
+}
+
+ANSWER_LOCK = threading.Lock()
+
+
+def answer_report(worker: str, ref: str, action: str, text: str) -> str:
+    """報告に答える。結果を ANSWER_MESSAGES のキーで返す。"""
+    with ANSWER_LOCK:  # 同じ報告へ二重に送らない
+        if not NAME_RE.match(worker) or worker not in record_names():
+            return "unknown"
+        path = reports_dir() / f"{worker}.md"
+        try:
+            reports = parse_reports(path.read_text(encoding="utf-8", errors="replace"), worker)
+        except OSError:
+            return "stale"
+        if not any(r.ts == ref and r.is_open for r in reports):
+            return "stale"
+        if action == "resolve":
+            try:
+                append_report(path, "対応済み", ref, "（ダッシュボードで、送らずに対応済みにした）")
+            except OSError:
+                return "writefail"
+            return "resolved"
+        if action != "send":
+            return "stale"
+        text = clean_answer(text)
+        if not text:
+            return "empty"
+        if len(text) > MAX_ANSWER:
+            return "toolong"
+        window = tmux_windows().get(worker)
+        if not window:
+            return "nowindow"
+        if looks_like_dialog(window):
+            return "dialog"
+        if not send_to_pane(window["pane"], ANSWER_PREFIX.format(ref=ref) + text):
+            return "sendfail"
+        try:
+            append_report(path, "回答", ref, text)
+        except OSError:
+            return "writefail"
+        return "sent"
+
+
+# ---------------------------------------------------------------------------
 # 画面
 
 def worker_anchor(name: str) -> str:
@@ -578,7 +786,9 @@ def page_overview() -> tuple[str, str]:
     done_yesterday = [it for it in gtd["done"] if closed_on(it) == yesterday.isoformat()]
 
     alive = sum(1 for w in tmux_windows())
+    asks = sum(1 for r in load_reports() if r.is_open)
     stats = [
+        ("受信箱（未対応）", asks, "/inbox"),
         ("DOING", len(doing), "#doing"),
         ("次にやること", len(nexts), "#next"),
         ("待ち", len(waiting), "#waiting"),
@@ -587,7 +797,8 @@ def page_overview() -> tuple[str, str]:
         ("今日の完了", len(done_today), "#done"),
     ]
     cards = "".join(
-        f'<a class="stat" href="{href}"><span class="num">{n}</span><span class="label">{esc(label)}</span></a>'
+        f'<a class="stat{" alert" if href == "/inbox" and n else ""}" href="{href}">'
+        f'<span class="num">{n}</span><span class="label">{esc(label)}</span></a>'
         for label, n, href in stats
     )
 
@@ -695,6 +906,10 @@ def page_workers() -> tuple[str, str]:
     gtd = load_gtd(hub_home())
     workers = load_workers(gtd)
     today = dt.date.today()
+    open_by_worker: dict[str, int] = {}
+    for r in load_reports():
+        if r.is_open:
+            open_by_worker[r.worker] = open_by_worker.get(r.worker, 0) + 1
     if not workers:
         return "Workers", f'<p class="muted">記録ファイルがありません（{esc(state_dir())}）</p>'
     cards = []
@@ -706,6 +921,9 @@ def page_workers() -> tuple[str, str]:
             status = chip("window なし", "muted")
         wt = w.worktree.replace(str(Path.home()), "~") if w.worktree else "?"
         wt_state = "" if w.worktree and Path(w.worktree).is_dir() else ' <span class="muted">（削除済み）</span>'
+        asks = open_by_worker.get(w.name, 0)
+        if asks:
+            status += " " + chip(f"未対応の報告 {asks}", "bad", f"/inbox#{report_anchor(w.name, '')}")
         item = ""
         if w.item:
             item = f'<ul class="items">{render_item(w.item, today)}</ul><p class="muted">gtd/{esc(w.item.file)}.md</p>'
@@ -723,6 +941,82 @@ def page_workers() -> tuple[str, str]:
   <details id="d-{anchor}"><summary>指示の全文</summary><article class="md">{Renderer().render(w.text)}</article></details>
 </section>""")
     return "Workers", "".join(cards)
+
+
+def report_anchor(worker: str, ts: str) -> str:
+    # リダイレクトの Location にも入るので ASCII だけにする
+    return "r-" + re.sub(r"[^A-Za-z0-9_-]", "_", f"{worker}-{ts}" if ts else worker)
+
+
+KIND_CLASS = {"要判断": "warn", "ブロック": "bad", "完了": "good", "回答": "accent", "対応済み": "muted"}
+
+
+def answer_form(r: Report, token: str, window: dict | None) -> str:
+    hidden = (
+        f'<input type="hidden" name="token" value="{esc(token)}">'
+        f'<input type="hidden" name="worker" value="{esc(r.worker)}">'
+        f'<input type="hidden" name="ref" value="{esc(r.ts)}">'
+    )
+    resolve = '<button class="ghost" name="action" value="resolve">送らずに対応済みにする</button>'
+    if not window:
+        note = '<p class="muted small">worker の window が無いので送れません。</p>'
+        return f'<form class="answer" method="post" action="/inbox/answer">{hidden}{note}<div class="row">{resolve}</div></form>'
+    choices = "".join(
+        f'<button class="choice" name="choice" value="{esc(c)}">{esc(c)}</button>' for c in r.choices
+    )
+    return f"""<form class="answer" method="post" action="/inbox/answer">{hidden}
+{f'<div class="row">{choices}</div>' if choices else ''}
+<textarea name="text" maxlength="{MAX_ANSWER}" rows="2" placeholder="worker への答え（改行は空白になります）"></textarea>
+<div class="row"><button name="action" value="send">送る</button>{resolve}
+<span class="muted small">送り先: {esc(window['session'])}:{esc(window['name'])}</span></div></form>"""
+
+
+def render_report(r: Report) -> str:
+    head = f'{chip(r.kind, KIND_CLASS.get(r.kind, ""))} <a href="/workers#{worker_anchor(r.worker)}">{esc(r.worker)}</a> <span class="muted small">{esc(r.ts)}</span>'
+    return f'<div class="rhead">{head}</div>'
+
+
+def page_inbox(token: str, flash: str = "") -> tuple[str, str]:
+    reports = load_reports()
+    windows = tmux_windows()
+    open_reports = sorted((r for r in reports if r.is_open), key=lambda r: r.ts, reverse=True)
+    parts = []
+    if flash in ANSWER_MESSAGES:
+        msg, cls = ANSWER_MESSAGES[flash]
+        parts.append(f'<p class="flash {cls}">{esc(msg)}</p>')
+    cards = []
+    for r in open_reports:
+        cards.append(
+            f'<section class="report open" id="{report_anchor(r.worker, r.ts)}">{render_report(r)}'
+            f'<article class="md">{Renderer().render(r.body)}</article>'
+            f"{answer_form(r, token, windows.get(r.worker))}</section>"
+        )
+    parts.append(f"<h2>未対応の要判断・ブロック（{len(open_reports)}）</h2>")
+    parts.append("".join(cards) or '<p class="muted">未対応の報告はありません</p>')
+
+    history = sorted(reports, key=lambda r: r.ts, reverse=True)[:50]
+    rows = []
+    for r in history:
+        if r.kind in ANSWER_KINDS:
+            text = f'<span class="muted">→ {esc(r.ref)} の報告へ</span> {Renderer().inline(r.body)}'
+        else:
+            state = ""
+            if r.kind in ASK_KINDS:
+                state = chip("未対応", "bad") if r.is_open else chip("対応済み", "muted")
+            text = f"{Renderer().inline(r.summary)} {state}"
+        details = ""
+        if r.kind in REPORT_KINDS:
+            details = (
+                f'<details id="d-{report_anchor(r.worker, r.ts)}"><summary>本文</summary>'
+                f'<article class="md">{Renderer().render(r.body)}</article></details>'
+            )
+        rows.append(f'<li class="item">{render_report(r)}<div class="rbody">{text}</div>{details}</li>')
+    parts.append("<h2>最近の報告と回答</h2>")
+    parts.append(f'<ul class="items">{"".join(rows)}</ul>' if rows else f'<p class="muted">報告はありません（{esc(reports_dir())}）</p>')
+    # Workers の「未対応の報告」から飛ぶための印
+    for name in sorted({r.worker for r in open_reports}):
+        parts.insert(0, f'<span id="{report_anchor(name, "")}"></span>')
+    return "受信箱", "".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +1081,21 @@ ul.files li{margin:.15em 0}
 .md .al-center{text-align:center}.md .al-right{text-align:right}
 .md .done{color:var(--muted);text-decoration:line-through}
 .md li{margin:.15em 0}
+.stat.alert{border-color:var(--bad)}
+.stat.alert .num{color:var(--bad)}
+.report{border:1px solid var(--line);border-radius:8px;padding:.6em 1em;margin:1em 0;background:var(--card)}
+.report.open{border-left:4px solid var(--warn)}
+.rhead{display:flex;gap:.5em;align-items:center;flex-wrap:wrap}
+.rbody{margin:.2em 0 0 .2em}
+form.answer{margin-top:.6em;display:flex;flex-direction:column;gap:.4em}
+form.answer .row{display:flex;flex-wrap:wrap;gap:.4em;align-items:center}
+form.answer textarea{width:100%;font:inherit;padding:.4em;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+form.answer button{font:inherit;padding:.2em .9em;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer}
+form.answer button.choice{background:var(--bg);color:var(--accent)}
+form.answer button.ghost{background:none;border-color:var(--line);color:var(--muted)}
+.flash{padding:.5em .8em;border:1px solid var(--line);border-radius:6px}
+.flash.good{border-color:var(--good);color:var(--good)}
+.flash.bad{border-color:var(--bad);color:var(--bad)}
 """
 
 # 一定間隔で同じ URL を取り直し、<main> の中身が変わっていたら差し替える。
@@ -801,6 +1110,10 @@ APP_JS = """
   show('更新 ' + new Date().toLocaleTimeString());
   async function tick() {
     if (document.hidden) return;
+    // 答えを書いている途中なら差し替えない（入力が消えるので）
+    const active = document.activeElement;
+    if ((active && main.contains(active) && active.closest('form')) ||
+        [...main.querySelectorAll('textarea')].some(t => t.value)) return;
     try {
       const res = await fetch(location.pathname + location.search, {headers: {'X-Partial': '1'}, cache: 'no-store'});
       if (!res.ok) { show('取得失敗 ' + res.status); return; }
@@ -814,12 +1127,18 @@ APP_JS = """
       show('更新 ' + new Date().toLocaleTimeString());
     } catch (e) { show('サーバーに接続できません'); }
   }
+  // 二度押しで同じ答えを二回送らない
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (form.dataset.sent) { e.preventDefault(); return; }
+    form.dataset.sent = '1';
+  });
   setInterval(tick, interval);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
 })();
 """
 
-NAV = (("/", "Overview"), ("/docs", "資料"), ("/workers", "Workers"))
+NAV = (("/", "Overview"), ("/inbox", "受信箱"), ("/docs", "資料"), ("/workers", "Workers"))
 
 
 def layout(title: str, body: str, path: str, interval: int) -> str:
@@ -839,6 +1158,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "hub-dash"
     interval = 10
     allowed_hosts: set[str] = set()
+    token = ""  # 起動ごとに作る。答えの POST にはこれが要る
 
     def log_message(self, fmt, *args):  # アクセスログは出さない（資料の名前が端末に残らないように）
         pass
@@ -850,15 +1170,63 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # no-referrer にすると POST の Origin が null になり、同じ origin か確かめられないので same-origin にする
+        self.send_header("Referrer-Policy", "same-origin")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+            "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
+
+    def redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def forbidden(self, reason: str) -> None:
+        self.send(HTTPStatus.FORBIDDEN, reason, "text/plain; charset=utf-8")
+
+    def do_POST(self):
+        if self.headers.get("Host", "") not in self.allowed_hosts:
+            return self.forbidden("forbidden host")
+        # ほかのサイトのページから送らせない。ブラウザは POST に必ず Origin を付ける
+        if self.headers.get("Origin", "") not in {f"http://{h}" for h in self.allowed_hosts}:
+            return self.forbidden("forbidden origin")
+        if self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin":
+            return self.forbidden("forbidden origin")
+        if urllib.parse.urlsplit(self.path).path != "/inbox/answer":
+            return self.send(HTTPStatus.NOT_FOUND, "not found", "text/plain; charset=utf-8")
+        if not self.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
+            return self.send(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported media type", "text/plain; charset=utf-8")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self.send(HTTPStatus.LENGTH_REQUIRED, "length required", "text/plain; charset=utf-8")
+        if length < 0 or length > MAX_FORM_BYTES:
+            return self.send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too large", "text/plain; charset=utf-8")
+        raw = self.rfile.read(length).decode("utf-8", errors="replace")
+        try:
+            form = urllib.parse.parse_qs(raw, keep_blank_values=True, max_num_fields=10)
+        except ValueError:
+            return self.send(HTTPStatus.BAD_REQUEST, "bad form", "text/plain; charset=utf-8")
+        def field_(key: str) -> str:
+            return form.get(key, [""])[0]
+
+        if not self.token or not hmac.compare_digest(field_("token").encode(), self.token.encode()):
+            return self.forbidden("invalid token: ページを読み直してください")
+        worker, ref = field_("worker"), field_("ref")
+        if "choice" in form:
+            result = answer_report(worker, ref, "send", field_("choice"))
+        else:
+            result = answer_report(worker, ref, field_("action"), field_("text"))
+        anchor = "" if result in ("sent", "resolved") else f"#{report_anchor(worker, ref)}"
+        self.redirect(f"/inbox?r={result}{anchor}")
 
     def do_HEAD(self):
         self.do_GET()
@@ -884,6 +1252,8 @@ class Handler(BaseHTTPRequestHandler):
                 page = page_doc(query.get("path", [""])[0])
             elif url.path == "/workers":
                 page = page_workers()
+            elif url.path == "/inbox":
+                page = page_inbox(self.token, query.get("r", [""])[0])
             else:
                 page = None
         except Exception as e:  # 読み込み中のファイルなどで落ちても、次の更新で直るようにする
@@ -915,6 +1285,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Handler.interval = max(2, args.interval)
     Handler.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}
+    Handler.token = secrets.token_urlsafe(32)
     url = f"http://127.0.0.1:{args.port}/"
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
