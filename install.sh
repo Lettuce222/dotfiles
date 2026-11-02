@@ -4,6 +4,19 @@
 # Phase 1: sh で実行（Homebrew, fish, symlinks）
 # =============================================================================
 
+# Symlinks point at this checkout, so running from a git worktree would rewire
+# $HOME to a directory that disappears when the worktree is removed.
+refuse_worktree_checkout() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    command -v git >/dev/null 2>&1 || return 0
+    git_dir=$(git -C "$script_dir" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0
+    common_dir=$(git -C "$script_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+    if [ "$git_dir" != "$common_dir" ]; then
+        echo "install.sh must be run from the main checkout, not a git worktree: $script_dir" >&2
+        exit 1
+    fi
+}
+
 install_homebrew() {
     if ! command -v brew >/dev/null 2>&1; then
         echo "Homebrew is not installed. Installing Homebrew..."
@@ -201,6 +214,7 @@ create_hammerspoon_symlinks() {
 }
 
 # Phase 1 実行
+refuse_worktree_checkout
 echo "=== Phase 1: Setting up Homebrew, fish, and symlinks ==="
 install_homebrew
 install_fish
