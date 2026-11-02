@@ -5,7 +5,7 @@ description: ローカルの未コミット変更を意図ごとに整理し、C
 
 # Commit Push
 
-通常の commit / push の共通契約。
+通常の commit / push の手順。
 変更を読み解き、レビュー可能な単位に分けて履歴へ残す。
 
 ## インターフェース
