@@ -50,6 +50,16 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `textlint-mcp.sh`と同じく、特定のserviceやtool名には依存させない。
 
+### tmuxのサーバーを守る
+
+`tmux-socket-guard.py`はClaude Codeの`PreToolUse`（`Bash`）で、いつも使っているtmuxサーバーを止めるコマンドをexit 2で止める。tmuxの中では環境変数`TMUX`が`TMUX_TMPDIR`より優先されるので、テストで`TMUX_TMPDIR`を変えても本物のサーバーに届く。別のサーバーを確実に選べるのは`-L`と`-S`だけ。
+
+- `-L`も`-S`も付けない`tmux kill-server`は、どのセッションでも止める
+- `TMUX_TMPDIR`や`unset TMUX`でサーバーを分けようとしているのに、`-L`も`-S`も付けないtmuxを実行するコマンドも止める
+- 見るのはコマンドラインだけで、実行するスクリプトの中のtmuxは見えない。workerには`worker-rules.md`で同じ決まりを伝える
+
+実行ビットに頼らないよう、`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_tmux_socket_guard.py`で実行する。
+
 ## 窓口（hub）とworker
 
 `configs/tmux/scripts/agent-hub/`に、tmux上でClaude Codeを窓口とworkerに分けて動かす仕組みを置く。
