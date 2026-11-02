@@ -49,9 +49,11 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `configs/tmux/scripts/agent-hub/`に、tmux上でClaude Codeを窓口とworkerに分けて動かす仕組みを置く。
 
-- `prefix + a`（`hub.fish`）: 窓口のClaude（セッション名`hub`）へ移動する。無ければ起動する。
+- `hub`コマンド（`configs/fish/functions/hub.fish`）、`prefix + a`（`hub.fish`）: 窓口のClaudeへ移動する。無ければtmux session `hub`の中に、`~/hub`（`AGENT_HUB_HOME`で変更可）で起動する。tmuxの中と外のどちらから呼んでも、同じ1つの窓口に行き着く。
 - `prefix + A`（`pick.fish`）: 窓口とworkerのwindowを一覧から選んで移動する。
-- `spawn.fish`: 窓口が呼ぶ。`<repo>.worktrees/<task>`にworktreeを作り、workerを別windowで起動する。
+- `spawn.fish`: 窓口が呼ぶ。`<repo>.worktrees/agent/<task>`にブランチ`agent/<task>`のworktreeを作り（`tm-pr.fish`と同じ配置）、workerを別windowで起動する。workerのセッション名は`<repo>.<task>`になる。既存のworktreeやブランチは`--resume`のときだけ使う。
 - `hub-rules.md`、`worker-rules.md`: それぞれの`--append-system-prompt-file`に渡す役割定義。
 
-窓口とworkerはどちらもauto modeで起動する。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの作るPRは必ずdraftにする。
+窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
+
+窓口は執事として、議事録からGTDのリストを作って管理する。議事録とリストは仕事の文脈を含むため、dotfilesには置かず、`~/hub`に置く。`hub.fish`が新しく作るときは、自分だけが読める権限（700）にする。workerへの指示の記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/`に、自分だけが読める権限（ディレクトリ700、ファイル600）で置く。dotfilesに置くのは役割定義とファイル形式だけにする。
