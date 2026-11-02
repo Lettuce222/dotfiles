@@ -56,4 +56,4 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
 
-窓口は執事として、議事録からGTDのリストを作って管理する。議事録とリストは仕事の文脈を含むため、dotfilesには置かず、`~/hub`に置く。`hub.fish`が新しく作るときは、自分だけが読める権限（700）にする。workerへの指示の記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/`に、自分だけが読める権限（ディレクトリ700、ファイル600）で置く。dotfilesに置くのは役割定義とファイル形式だけにする。
+窓口は執事として、議事録からGTDのリストを作って管理する。窓口はリポジトリのファイルを自分では変えず、設定ファイル、hook、dotfilesの小さな変更もworkerに任せる。議事録とリストは仕事の文脈を含むため、dotfilesには置かず、`~/hub`に置く。`hub.fish`が新しく作るときは、自分だけが読める権限（700）にする。workerへの指示の記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/`に、自分だけが読める権限（ディレクトリ700、ファイル600）で置く。dotfilesに置くのは役割定義とファイル形式だけにする。
