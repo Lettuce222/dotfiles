@@ -17,6 +17,106 @@ refuse_worktree_checkout() {
     fi
 }
 
+# -----------------------------------------------------------------------------
+# --links-only: place symlinks and generate settings without installing
+# anything. It is safe to run unattended: it never touches the network, never
+# asks for a password, and only changes things under $HOME. Anything that is
+# not a symlink is left in place and reported instead of being replaced.
+# Without --links-only these helpers behave exactly as the full install did.
+# -----------------------------------------------------------------------------
+LINKS_ONLY=0
+DRY_RUN=0
+LINK_CHANGES=""
+LINK_SKIPS=""
+
+record_change() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        LINK_CHANGES="${LINK_CHANGES}(dry-run) $1
+"
+    else
+        LINK_CHANGES="${LINK_CHANGES}$1
+"
+    fi
+}
+
+record_skip() {
+    LINK_SKIPS="${LINK_SKIPS}skip: $1
+"
+}
+
+# Run a command that changes $HOME, unless this is a dry run.
+run_change() {
+    [ "$DRY_RUN" -eq 1 ] || "$@"
+}
+
+ensure_dir() {
+    if [ "$LINKS_ONLY" -eq 0 ]; then
+        mkdir -p "$1"
+        return
+    fi
+    [ -d "$1" ] && return 0
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        record_skip "$1 exists and is not a directory; left it in place"
+        return 1
+    fi
+    record_change "mkdir $1"
+    run_change mkdir -p "$1"
+}
+
+# Point $2 at $1.
+place_link() {
+    if [ "$LINKS_ONLY" -eq 0 ]; then
+        ln -snfv "$1" "$2"
+        return
+    fi
+    if [ -L "$2" ]; then
+        link_current=$(readlink "$2")
+        [ "$link_current" = "$1" ] && return 0
+        record_change "relink $2 -> $1 (was $link_current)"
+        run_change ln -snf "$1" "$2"
+    elif [ -e "$2" ]; then
+        record_skip "$2 is not a symlink; left it in place instead of linking $1"
+    else
+        record_change "link $2 -> $1"
+        run_change ln -sn "$1" "$2"
+    fi
+}
+
+# chmod +x the linked script. $1 = link, $2 = its source.
+make_executable() {
+    if [ "$LINKS_ONLY" -eq 0 ]; then
+        chmod +x "$1"
+        return
+    fi
+    [ -x "$2" ] && return 0
+    record_change "chmod +x $2"
+    run_change chmod +x "$2"
+}
+
+print_link_summary() {
+    if [ -n "$LINK_CHANGES" ]; then
+        printf '%s' "$LINK_CHANGES"
+    elif [ "$DRY_RUN" -eq 1 ]; then
+        echo "(dry-run) 変更なし"
+    else
+        echo "変更なし"
+    fi
+    printf '%s' "$LINK_SKIPS"
+}
+
+usage() {
+    cat <<'USAGE'
+Usage: ./install.sh [--links-only] [--dry-run]
+
+  (no options)  Full setup: Homebrew, fish, login shell, symlinks, mise, apps,
+                macOS defaults.
+  --links-only  Only place the symlinks and generate ~/.claude/settings.json.
+                Never installs anything, asks for a password, or replaces a
+                file that is not a symlink. Prints one line per change.
+  --dry-run     Like --links-only, but changes nothing and prints the plan.
+USAGE
+}
+
 install_homebrew() {
     if ! command -v brew >/dev/null 2>&1; then
         echo "Homebrew is not installed. Installing Homebrew..."
@@ -66,7 +166,7 @@ create_symlinks() {
         return 1
     fi
 
-    mkdir -p "$HOME/.config"
+    ensure_dir "$HOME/.config"
 
     for dir in "$script_dir/configs"/*; do
         if [ -d "$dir" ]; then
@@ -79,7 +179,7 @@ create_symlinks() {
             source_path="$script_dir/configs/$dirname"
             target_path="$HOME/.config/$dirname"
 
-            ln -snfv "$source_path" "$target_path"
+            place_link "$source_path" "$target_path"
         fi
     done
 }
@@ -92,7 +192,7 @@ create_claude_symlinks() {
         return 0
     fi
 
-    mkdir -p "$HOME/.claude"
+    ensure_dir "$HOME/.claude"
 
     # Claude-specific files only (statusline.sh, ...).
     # Shared assets (CLAUDE.md / skills / hooks) live in configs/agent and are
@@ -104,10 +204,10 @@ create_claude_symlinks() {
             case "$filename" in
                 settings.json|settings.local.json) continue ;;
             esac
-            ln -snfv "$file" "$HOME/.claude/$filename"
+            place_link "$file" "$HOME/.claude/$filename"
             # Make shell scripts executable
             if [ "${filename##*.}" = "sh" ]; then
-                chmod +x "$HOME/.claude/$filename"
+                make_executable "$HOME/.claude/$filename" "$file"
             fi
         fi
     done
@@ -168,6 +268,12 @@ EOF
         return 1
     fi
 
+    if [ "$LINKS_ONLY" -eq 1 ]; then
+        update_claude_settings_safely "$tmp" "$dest" "$snapshot" "$local_file"
+        rm -f "$tmp"
+        return 0
+    fi
+
     if [ -L "$dest" ]; then
         # Migrate from the old symlink layout.
         rm -f "$dest"
@@ -191,6 +297,105 @@ EOF
     fi
 }
 
+# Print what changes from settings file $1 to $2, one line per JSON path.
+summarize_settings_diff() {
+    python3 -I - "$1" "$2" <<'EOF'
+import json
+import sys
+
+LIMIT = 20
+
+
+def load(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def short(value):
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def walk(old, new, path, out):
+    if isinstance(old, dict) and isinstance(new, dict):
+        for key in new:
+            sub = f"{path}.{key}" if path else key
+            if key not in old:
+                out.append(f"+ {sub}: {short(new[key])}")
+            else:
+                walk(old[key], new[key], sub, out)
+        for key in old:
+            if key not in new:
+                out.append(f"- {path}.{key}" if path else f"- {key}")
+    elif isinstance(old, list) and isinstance(new, list):
+        out.extend(f"+ {path}[]: {short(item)}" for item in new if item not in old)
+        out.extend(f"- {path}[]: {short(item)}" for item in old if item not in new)
+        if not out and old != new:
+            out.append(f"~ {path}: reordered")
+    elif old != new:
+        out.append(f"~ {path}: {short(old)} -> {short(new)}")
+
+
+old, new = load(sys.argv[1]), load(sys.argv[2])
+lines = []
+if old is None:
+    lines.append("~ (current file is not valid JSON)")
+else:
+    walk(old, new, "", lines)
+for line in lines[:LIMIT]:
+    print(f"    {line}")
+if len(lines) > LIMIT:
+    print(f"    ... and {len(lines) - LIMIT} more")
+EOF
+}
+
+# --links-only part of generate_claude_settings.
+#   $1 = merged settings, $2 = ~/.claude/settings.json, $3 = snapshot,
+#   $4 = configs/claude/settings.local.json
+# Rewrites $2 only when it still holds what install.sh last generated, so
+# changes made by `claude plugin enable` or /config are never overwritten.
+update_claude_settings_safely() {
+    new="$1"
+    dest="$2"
+    snapshot="$3"
+    local_file="$4"
+
+    if [ -L "$dest" ]; then
+        record_change "replace symlink $dest with generated settings"
+        run_change rm -f "$dest"
+        run_change cp -p "$new" "$dest"
+        run_change cp -p "$new" "$snapshot"
+    elif [ -e "$dest" ] && [ ! -f "$dest" ]; then
+        record_skip "$dest is not a regular file; left it in place"
+    elif [ ! -e "$dest" ]; then
+        record_change "write $dest"
+        run_change cp -p "$new" "$dest"
+        run_change cp -p "$new" "$snapshot"
+    elif cmp -s "$dest" "$new"; then
+        if [ ! -f "$snapshot" ] || ! cmp -s "$dest" "$snapshot"; then
+            record_change "update snapshot $snapshot"
+            run_change cp -p "$new" "$snapshot"
+        fi
+    elif [ -f "$snapshot" ] && cmp -s "$dest" "$snapshot"; then
+        record_change "rewrite $dest:
+$(summarize_settings_diff "$dest" "$new")"
+        run_change cp -p "$new" "$dest"
+        run_change cp -p "$new" "$snapshot"
+    else
+        record_skip "$dest was changed outside install.sh (e.g. by claude plugin enable); not overwriting it. Move the change into configs/claude/settings.local.json, or run ./install.sh to back it up and regenerate. Regenerating would change:
+$(summarize_settings_diff "$dest" "$new")"
+    fi
+
+    old_local="$HOME/.claude/settings.local.json"
+    if [ -L "$old_local" ] && [ "$(readlink "$old_local")" = "$local_file" ]; then
+        record_change "remove $old_local"
+        run_change rm -f "$old_local"
+    fi
+}
+
 # Link the agent assets in configs/agent into a single tool home.
 #   $1 = destination home dir (e.g. ~/.claude)
 #   $2 = filename for the instructions file in that home (e.g. CLAUDE.md)
@@ -200,27 +405,27 @@ link_agent_assets() {
     script_dir=$(cd "$(dirname "$0")" && pwd)
     agent_dir="$script_dir/configs/agent"
 
-    mkdir -p "$home_dir"
+    ensure_dir "$home_dir"
 
     # Instructions file: one source, linked under the name the tool reads.
     if [ -f "$agent_dir/AGENTS.md" ]; then
-        ln -snfv "$agent_dir/AGENTS.md" "$home_dir/$instructions_name"
+        place_link "$agent_dir/AGENTS.md" "$home_dir/$instructions_name"
     fi
 
     # Skills: link each skill dir individually so unmanaged skills
     # (skills installed by other means) survive.
     if [ -d "$agent_dir/skills" ]; then
-        mkdir -p "$home_dir/skills"
+        ensure_dir "$home_dir/skills"
         resolved_target=$(cd "$home_dir/skills" 2>/dev/null && pwd -P)
         resolved_source=$(cd "$agent_dir/skills" 2>/dev/null && pwd -P)
         if [ "$resolved_target" != "$resolved_source" ]; then
             for skill_dir in "$agent_dir/skills"/*; do
                 if [ -d "$skill_dir" ]; then
-                    ln -snfv "$skill_dir" "$home_dir/skills/$(basename "$skill_dir")"
+                    place_link "$skill_dir" "$home_dir/skills/$(basename "$skill_dir")"
                 fi
             done
         else
-            echo "$home_dir/skills already points to source directory, skipping symlinks."
+            [ "$LINKS_ONLY" -eq 1 ] || echo "$home_dir/skills already points to source directory, skipping symlinks."
         fi
     fi
 
@@ -228,19 +433,19 @@ link_agent_assets() {
     # NOTE: this only places the scripts. Wiring them up is done in
     # configs/claude/settings.json.
     if [ -d "$agent_dir/hooks" ]; then
-        mkdir -p "$home_dir/hooks"
+        ensure_dir "$home_dir/hooks"
         resolved_target=$(cd "$home_dir/hooks" 2>/dev/null && pwd -P)
         resolved_source=$(cd "$agent_dir/hooks" 2>/dev/null && pwd -P)
         if [ "$resolved_target" != "$resolved_source" ]; then
             for hook in "$agent_dir/hooks"/*; do
                 if [ -f "$hook" ]; then
                     filename=$(basename "$hook")
-                    ln -snfv "$hook" "$home_dir/hooks/$filename"
-                    chmod +x "$home_dir/hooks/$filename"
+                    place_link "$hook" "$home_dir/hooks/$filename"
+                    make_executable "$home_dir/hooks/$filename" "$hook"
                 fi
             done
         else
-            echo "$home_dir/hooks already points to source directory, skipping symlinks."
+            [ "$LINKS_ONLY" -eq 1 ] || echo "$home_dir/hooks already points to source directory, skipping symlinks."
         fi
     fi
 }
@@ -292,11 +497,31 @@ create_hammerspoon_symlinks() {
     fi
 
     # Symlink the entire hammerspoon directory to ~/.hammerspoon
-    ln -snfv "$hammerspoon_config_dir" "$HOME/.hammerspoon"
+    place_link "$hammerspoon_config_dir" "$HOME/.hammerspoon"
 }
 
-# Phase 1 実行
+for arg in "$@"; do
+    case "$arg" in
+        --links-only) LINKS_ONLY=1 ;;
+        --dry-run) LINKS_ONLY=1; DRY_RUN=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+
 refuse_worktree_checkout
+
+if [ "$LINKS_ONLY" -eq 1 ]; then
+    create_symlinks
+    create_claude_symlinks
+    generate_claude_settings || record_skip "could not generate ~/.claude/settings.json (see the message above)"
+    create_shared_agent_symlinks
+    create_hammerspoon_symlinks
+    print_link_summary
+    exit 0
+fi
+
+# Phase 1 実行
 echo "=== Phase 1: Setting up Homebrew, fish, and symlinks ==="
 install_homebrew
 install_fish

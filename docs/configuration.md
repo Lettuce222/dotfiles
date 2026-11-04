@@ -20,6 +20,19 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 新しいlocal設定パターンを追加するときは`.gitignore`も更新する。
 
+## リンクと設定だけを反映する
+
+`./install.sh --links-only`は、symlinkの配置と`~/.claude/settings.json`の生成だけを行う。Homebrew・fish・フォント・アプリのインストール、`chsh`、`mise install`、`npm ci`、`defaults write`は実行しない。ネットワークに出ず、パスワードを求めず、`$HOME`の外を変えないので、エージェントにも実行させられる。`./install.sh --dry-run`は同じ判定をして、何も変えずに予定だけを出す。引数なしの`./install.sh`の動作は変わらない。
+
+- 何度実行しても同じ結果になる。リンク先がすでに正しいものは触らない。
+- 別の場所を指すsymlinkは張り替える。symlinkでない本物のファイルやディレクトリは置き換えず、`skip:`の行で知らせる。
+- `~/.claude/settings.json`は、合成の結果と違い、かつ前回の生成（`settings.json.generated`）から変わっていないときだけ書き換え、変わるJSONのpathを`+`（追加）、`-`（削除）、`~`（値の変更）で1行ずつ出す。`claude plugin enable`などで変わっていたら上書きせず、`skip:`の行と差分を出す。退避して作り直すには引数なしの`./install.sh`を使う。
+- 最後に、変えたこと（`link`、`relink`、`mkdir`、`chmod +x`、`write`、`rewrite`など）を1行ずつ出す。何も変わらなければ`変更なし`と出す。
+- worktreeからの実行は、引数なしのときと同じく断る。
+- `cleanup_codex_symlinks`は実行しない。
+
+テスト: `python3 -m unittest tests/test_install_links_only.py`
+
 ## 新しいアプリ設定
 
 1. `configs/{app}/`に設定を置く。
