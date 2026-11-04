@@ -6,16 +6,22 @@
 - 書き込むのは受信箱だけ。worker の報告（$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md）に答えると、
   その worker の tmux pane へ send-keys で送り、報告のファイルに「回答」を追記する。
   POST は起動ごとに作るトークンと同じ origin を必須にし、送り先は記録ファイルがある worker の window に限る
+- status / answer のサブコマンドは、サーバーを起動せずに同じ集計と回答の口をターミナルへ出す。
+  status は gh の結果を ${XDG_CACHE_HOME:-~/.cache}/agent-hub に覚え、古ければ裏で取り直す
 - Python の標準ライブラリだけで動かす。markdown の整形は、手元の資料が読める程度の GFM の一部を自前で扱う
   （外部パッケージを入れずに macOS と Ubuntu の両方で `python3` だけで起動できるようにするため）
 
 Usage: dash.py [--port PORT] [--interval SECONDS] [--open]
+       dash.py status --json [--no-prs]       同じ集計を JSON で標準出力に出して終わる
+       dash.py answer <worker> <報告の時刻> (<答え> | --done)
+                                              受信箱と同じく報告に答える。成功なら終了コード 0
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import hmac
 import html
 import json
@@ -401,16 +407,21 @@ def github_repo(remote_url: str) -> str:
     return m.group(1) if m else ""
 
 
-def tmux_windows() -> dict[str, dict]:
-    """@agent-hub-worker の印が付いた window を worker のセッション名ごとに返す。pane は window の現在の pane。"""
+def tmux_windows_full() -> tuple[dict[str, dict], str]:
+    """(@agent-hub-worker の印が付いた window を worker のセッション名ごとに, tmux の失敗理由) を返す。
+    pane は window の現在の pane。"""
     fmt = "#{window_id}\t#{@agent-hub-worker}\t#{window_name}\t#{session_name}\t#{pane_id}"
-    out = run(["tmux", "list-windows", "-a", "-F", fmt])
+    out, err = run_full(["tmux", "list-windows", "-a", "-F", fmt])
     windows = {}
     for line in (out or "").splitlines():
         parts = line.split("\t")
         if len(parts) == 5 and parts[1]:
             windows[parts[1]] = {"id": parts[0], "name": parts[2], "session": parts[3], "pane": parts[4]}
-    return windows
+    return windows, err
+
+
+def tmux_windows() -> dict[str, dict]:
+    return tmux_windows_full()[0]
 
 
 class PRCache:
@@ -434,20 +445,24 @@ class PRCache:
         return (entry is not None, entry[1] if entry else None)
 
     def _fetch(self, key: tuple[str, str]) -> None:
-        repo, branch = key
-        fields = "number,title,url,state,isDraft,statusCheckRollup,updatedAt"
-        out, err = run_full([gh_command(), "pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", fields, "--limit", "5"], timeout=30)
-        pr: dict | None = {"error": err}
-        if out is not None:
-            try:
-                prs = json.loads(out)
-            except json.JSONDecodeError:
-                prs = []
-            prs.sort(key=lambda p: (p.get("state") != "OPEN", -(p.get("number") or 0)))
-            pr = prs[0] if prs else {"none": True}
+        pr = fetch_worker_pr(*key)
         with self.lock:
             self.data[key] = (time.time(), pr)
             self.pending.discard(key)
+
+
+def fetch_worker_pr(repo: str, branch: str) -> dict:
+    """ブランチの PR（open を優先し、新しいもの）を返す。無ければ {"none": True}、失敗したら {"error": 理由}。"""
+    fields = "number,title,url,state,isDraft,statusCheckRollup,updatedAt"
+    out, err = run_full([gh_command(), "pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", fields, "--limit", "5"], timeout=30)
+    if out is None:
+        return {"error": err}
+    try:
+        prs = json.loads(out)
+    except json.JSONDecodeError:
+        prs = []
+    prs.sort(key=lambda p: (p.get("state") != "OPEN", -(p.get("number") or 0)))
+    return prs[0] if prs else {"none": True}
 
 
 PR_CACHE = PRCache()
@@ -529,13 +544,14 @@ def ci_summary(rollup: list[dict] | None) -> tuple[str, str]:
     return f"CI 成功 {ok}", "good"
 
 
-def load_workers(gtd: dict[str, list[Item]]) -> list[Worker]:
+def load_workers(gtd: dict[str, list[Item]], windows: dict[str, dict] | None = None) -> list[Worker]:
     by_worker = {}
     for name in GTD_FILES:
         for it in gtd.get(name, []):
             if "worker" in it.attrs:
                 by_worker.setdefault(it.attrs["worker"], it)
-    windows = tmux_windows()
+    if windows is None:
+        windows = tmux_windows()
     workers = []
     try:
         paths = sorted(state_dir().glob("*.md"))
@@ -722,41 +738,54 @@ ANSWER_LOCK = threading.Lock()
 
 def answer_report(worker: str, ref: str, action: str, text: str) -> str:
     """報告に答える。結果を ANSWER_MESSAGES のキーで返す。"""
-    with ANSWER_LOCK:  # 同じ報告へ二重に送らない
-        if not NAME_RE.match(worker) or worker not in record_names():
-            return "unknown"
-        path = reports_dir() / f"{worker}.md"
+    if not NAME_RE.match(worker) or worker not in record_names():
+        return "unknown"
+    path = reports_dir() / f"{worker}.md"
+    # 同じ報告へ二重に送らない。ダッシュボードの中（スレッド）と、ほかのプロセス（dash.py answer）の両方で
+    with ANSWER_LOCK:
         try:
-            reports = parse_reports(path.read_text(encoding="utf-8", errors="replace"), worker)
+            fd = os.open(path, os.O_RDONLY)
         except OSError:
             return "stale"
-        if not any(r.ts == ref and r.is_open for r in reports):
-            return "stale"
-        if action == "resolve":
-            try:
-                append_report(path, "対応済み", ref, "（ダッシュボードで、送らずに対応済みにした）")
-            except OSError:
-                return "writefail"
-            return "resolved"
-        if action != "send":
-            return "stale"
-        text = clean_answer(text)
-        if not text:
-            return "empty"
-        if len(text) > MAX_ANSWER:
-            return "toolong"
-        window = tmux_windows().get(worker)
-        if not window:
-            return "nowindow"
-        if looks_like_dialog(window):
-            return "dialog"
-        if not send_to_pane(window["pane"], ANSWER_PREFIX.format(ref=ref) + text):
-            return "sendfail"
         try:
-            append_report(path, "回答", ref, text)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return _answer_locked(worker, path, ref, action, text)
+        finally:
+            os.close(fd)
+
+
+def _answer_locked(worker: str, path: Path, ref: str, action: str, text: str) -> str:
+    try:
+        reports = parse_reports(path.read_text(encoding="utf-8", errors="replace"), worker)
+    except OSError:
+        return "stale"
+    if not any(r.ts == ref and r.is_open for r in reports):
+        return "stale"
+    if action == "resolve":
+        try:
+            append_report(path, "対応済み", ref, "（ダッシュボードで、送らずに対応済みにした）")
         except OSError:
             return "writefail"
-        return "sent"
+        return "resolved"
+    if action != "send":
+        return "stale"
+    text = clean_answer(text)
+    if not text:
+        return "empty"
+    if len(text) > MAX_ANSWER:
+        return "toolong"
+    window = tmux_windows().get(worker)
+    if not window:
+        return "nowindow"
+    if looks_like_dialog(window):
+        return "dialog"
+    if not send_to_pane(window["pane"], ANSWER_PREFIX.format(ref=ref) + text):
+        return "sendfail"
+    try:
+        append_report(path, "回答", ref, text)
+    except OSError:
+        return "writefail"
+    return "sent"
 
 
 # ---------------------------------------------------------------------------
@@ -1423,6 +1452,312 @@ class Handler(BaseHTTPRequestHandler):
             self.send(HTTPStatus.OK, layout(title, body, url.path, self.interval))
 
 
+# ---------------------------------------------------------------------------
+# コマンド（status --json と answer）
+#
+# ターミナルのペインなど、ブラウザ以外から同じ集計を読むための口。HTTP サーバーは起動しない。
+# 1 回ごとに終わるので、gh の結果はメモリではなく ${XDG_CACHE_HOME:-~/.cache}/agent-hub/status-prs.json に覚えておく。
+# 古ければ裏で refresh-cache を起動して取り直し、status 自体は gh を待たずに返す。
+
+DUE_SOON_DAYS = 3
+NEXT_LIMIT = 10
+REFRESH_LOCK_SECONDS = 180  # これより古い refresh のロックは、落ちた跡とみなして取り直す
+
+
+def cache_dir() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base).expanduser() / "agent-hub"
+
+
+def pr_cache_path() -> Path:
+    return cache_dir() / "status-prs.json"
+
+
+def load_pr_cache() -> dict:
+    try:
+        data = json.loads(pr_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"my_prs": {}, "worker_prs": {}}
+    if not isinstance(data, dict):
+        return {"my_prs": {}, "worker_prs": {}}
+    data.setdefault("my_prs", {})
+    data.setdefault("worker_prs", {})
+    return data
+
+
+def save_pr_cache(data: dict) -> None:
+    d = cache_dir()
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = d / f".status-prs.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, pr_cache_path())
+
+
+def pr_key(repo: str, branch: str) -> str:
+    return f"{repo}\t{branch}"
+
+
+def cache_stale(entry: dict, seconds: float, now: float) -> bool:
+    return not entry or now - float(entry.get("at", 0)) > seconds
+
+
+def worker_pr_targets(workers: list[Worker]) -> list[tuple[str, str]]:
+    return sorted({(w.repo, w.branch) for w in workers if w.repo and w.branch})
+
+
+def refresh_needed(cache: dict, targets: list[tuple[str, str]], now: float) -> bool:
+    if cache_stale(cache["my_prs"], MY_PRS_CACHE_SECONDS, now):
+        return True
+    return any(cache_stale(cache["worker_prs"].get(pr_key(*t), {}), PR_CACHE_SECONDS, now) for t in targets)
+
+
+def spawn_refresh() -> bool:
+    """refresh-cache を切り離して起動する。すでに動いていれば起動しない。起動したら True。"""
+    lock = cache_dir() / "refresh.lock"
+    try:
+        cache_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            if time.time() - lock.stat().st_mtime < REFRESH_LOCK_SECONDS:
+                return False
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+        os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except OSError:
+        return False
+    try:
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "refresh-cache"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        lock.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def refresh_pr_cache(fetch_my_prs=None, fetch_pr=None, now: float | None = None) -> dict:
+    """古くなった gh の結果を取り直してキャッシュに書く。失敗しても前に取れた結果は残す。"""
+    fetch_my_prs = fetch_my_prs or MyPRs._fetch
+    fetch_pr = fetch_pr or fetch_worker_pr
+    now = time.time() if now is None else now
+    cache = load_pr_cache()
+    if cache_stale(cache["my_prs"], MY_PRS_CACHE_SECONDS, now):
+        entry = dict(cache["my_prs"], at=now, error="")
+        try:
+            entry["data"] = fetch_my_prs()
+        except Exception as e:
+            entry["error"] = f"{type(e).__name__}: {e}"
+        cache["my_prs"] = entry
+    targets = worker_pr_targets(load_workers(load_gtd(hub_home())))
+    for repo, branch in targets:
+        key = pr_key(repo, branch)
+        if cache_stale(cache["worker_prs"].get(key, {}), PR_CACHE_SECONDS, now):
+            cache["worker_prs"][key] = {"at": now, "pr": fetch_pr(repo, branch)}
+    live = {pr_key(*t) for t in targets}
+    cache["worker_prs"] = {k: v for k, v in cache["worker_prs"].items() if k in live}
+    save_pr_cache(cache)
+    return cache
+
+
+def claude_agents() -> tuple[dict[str, dict], str]:
+    """(`claude agents --json` をセッション名ごとに, 失敗理由) を返す。"""
+    out, err = run_full(["claude", "agents", "--json"], timeout=5)
+    if out is None:
+        return {}, err
+    try:
+        agents = json.loads(out)
+    except json.JSONDecodeError as e:
+        return {}, f"JSONDecodeError: {e}"
+    return {a["name"]: a for a in agents if isinstance(a, dict) and a.get("name")}, ""
+
+
+WINDOW_MARKS = {"🟡": "busy", "🟢": "idle"}
+
+
+def worker_status(window: dict | None, agent: dict | None, dialog: bool) -> str:
+    """busy / idle / permission（許可などの確認画面）/ no_window / unknown。"""
+    if not window:
+        return "no_window"
+    if dialog:
+        return "permission"
+    if agent and agent.get("status") in ("busy", "idle"):
+        return agent["status"]
+    for mark, status in WINDOW_MARKS.items():
+        if window.get("name", "").startswith(mark):
+            return status
+    return "unknown"
+
+
+def item_json(it: Item) -> dict:
+    return {"body": it.body, "file": it.file, "section": it.section, "attrs": it.attrs, "sub": it.sub}
+
+
+def due_soon(gtd: dict[str, list[Item]], today: dt.date) -> list[dict]:
+    out = []
+    for name in ("next-actions", "waiting-for", "inbox", "projects"):
+        for it in gtd[name]:
+            try:
+                due = dt.date.fromisoformat(it.attrs.get("due", ""))
+            except ValueError:
+                continue
+            if it.open and due <= today + dt.timedelta(days=DUE_SOON_DAYS):
+                out.append((due, item_json(it) | {"days_left": (due - today).days}))
+    return [j for _, j in sorted(out, key=lambda x: x[0])]
+
+
+def gtd_json(gtd: dict[str, list[Item]], today: dt.date) -> dict:
+    doing, nexts, waiting, inbox = split_overview(gtd)
+    return {
+        "doing": [item_json(it) for it in doing],
+        "waiting": [item_json(it) for it in waiting],
+        "next": [item_json(it) for it in nexts[:NEXT_LIMIT]],
+        "next_total": len(nexts),
+        "due_soon": due_soon(gtd, today),
+        "inbox_total": len(inbox),
+    }
+
+
+def worker_pr_json(w: Worker, cache: dict | None) -> tuple[dict | None, str]:
+    """(PR, 状態) を返す。状態は ok / none / pending / error / skipped / unknown_repo。"""
+    if cache is None:
+        return None, "skipped"
+    if not w.repo or not w.branch:
+        return None, "unknown_repo"
+    entry = cache["worker_prs"].get(pr_key(w.repo, w.branch))
+    if not entry:
+        return None, "pending"
+    pr = entry.get("pr") or {}
+    if "error" in pr:
+        return {"error": pr["error"]}, "error"
+    if pr.get("none"):
+        return None, "none"
+    state = pr.get("state", "")
+    label = {"MERGED": "merged", "CLOSED": "closed"}.get(state, "draft" if pr.get("isDraft") else "open")
+    ci = None
+    if state == "OPEN":
+        text, level = ci_summary(pr.get("statusCheckRollup"))
+        ci = {"text": text, "level": level}
+    return {"number": pr.get("number"), "url": gh_url(pr.get("url", "")), "title": pr.get("title", ""), "state": label, "ci": ci}, "ok"
+
+
+def prs_json(cache: dict | None) -> tuple[dict, str]:
+    """(prs の部分, 失敗理由) を返す。"""
+    if cache is None:
+        return {"skipped": True, "review_requests": [], "own_action": []}, ""
+    entry = cache["my_prs"]
+    data = entry.get("data")
+    out = {"skipped": False, "pending": data is None, "fetched_at": data.get("generated_at") if data else None,
+           "team_requests": 0, "review_requests": [], "own_action": []}
+    if data:
+        out["team_requests"] = data.get("team_requests", 0)
+        out["review_requests"] = data.get("review_requests", [])
+        out["own_action"] = [i for i in data.get("own_prs", []) if not own_pr_quiet(i) and OWN_ACTION_STATES & set(i["states"])]
+    return out, entry.get("error", "")
+
+
+def collect_status(with_prs: bool = True, refresh=None) -> dict:
+    """dash.py status --json の中身。部分ごとに失敗を errors に入れ、全体は失敗させない。"""
+    errors: dict[str, str] = {}
+    out: dict = {"generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+
+    def part(name: str, default, fn):
+        try:
+            return fn()
+        except Exception as e:
+            errors[name] = f"{type(e).__name__}: {e}"
+            return default
+
+    today = dt.date.today()
+    home = hub_home()
+    if not (home / "gtd").is_dir():
+        errors["gtd"] = f"gtd のディレクトリがありません: {home / 'gtd'}"
+    gtd = part("gtd", {name: [] for name in GTD_FILES}, lambda: load_gtd(home))
+    windows, tmux_err = part("tmux", ({}, ""), tmux_windows_full)
+    if tmux_err:
+        errors["tmux"] = tmux_err
+    agents, agents_err = part("claude", ({}, ""), claude_agents)
+    if agents_err:
+        errors["claude"] = agents_err
+    dialogs: dict[str, bool] = {}
+
+    def dialog(name: str) -> bool:
+        if name not in dialogs:
+            win = windows.get(name)
+            dialogs[name] = bool(win) and part("tmux", False, lambda: looks_like_dialog(win))
+        return dialogs[name]
+
+    reports = part("inbox", [], load_reports)
+    open_reports = sorted((r for r in reports if r.is_open), key=lambda r: r.ts, reverse=True)
+    out["inbox"] = [
+        {"worker": r.worker, "ref": r.ts, "kind": r.kind, "summary": r.summary, "body": r.body,
+         "choices": r.choices, "window_id": (windows.get(r.worker) or {}).get("id"), "dialog": dialog(r.worker)}
+        for r in open_reports
+    ]
+    out["gtd"] = part("gtd", {}, lambda: gtd_json(gtd, today))
+
+    cache = None
+    if with_prs:
+        cache = part("prs", {"my_prs": {}, "worker_prs": {}}, load_pr_cache)
+    workers = part("workers", [], lambda: load_workers(gtd, windows))
+    if with_prs and part("prs", False, lambda: refresh_needed(cache, worker_pr_targets(workers), time.time())):
+        part("prs", False, refresh or spawn_refresh)
+    open_by_worker: dict[str, int] = {}
+    for r in open_reports:
+        open_by_worker[r.worker] = open_by_worker.get(r.worker, 0) + 1
+    rows = []
+    for w in workers:
+        pr, pr_status = worker_pr_json(w, cache)
+        rows.append({
+            "name": w.name,
+            "window_id": (w.window or {}).get("id"),
+            "window_name": (w.window or {}).get("name"),
+            "status": worker_status(w.window, agents.get(w.name), dialog(w.name)),
+            "claude_status": (agents.get(w.name) or {}).get("status"),
+            "item": item_json(w.item) if w.item else None,
+            "branch": w.branch,
+            "repo": w.repo,
+            "worktree": w.worktree,
+            "open_reports": open_by_worker.get(w.name, 0),
+            "pr": pr,
+            "pr_status": pr_status,
+        })
+    out["workers"] = rows
+    out["prs"], prs_err = part("prs", ({"review_requests": [], "own_action": []}, ""), lambda: prs_json(cache))
+    if prs_err:
+        errors["prs"] = prs_err
+    out["errors"] = errors
+    return out
+
+
+def cmd_status(args) -> int:
+    json.dump(collect_status(with_prs=not args.no_prs), sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_answer(args) -> int:
+    if args.done:
+        result = answer_report(args.worker, args.ref, "resolve", "")
+    else:
+        result = answer_report(args.worker, args.ref, "send", args.text or "")
+    msg, _ = ANSWER_MESSAGES[result]
+    ok = result in ("sent", "resolved")
+    print(f"{result}: {msg}", file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
+def cmd_refresh_cache(args) -> int:
+    try:
+        refresh_pr_cache()
+    finally:
+        (cache_dir() / "refresh.lock").unlink(missing_ok=True)
+    return 0
+
+
 def already_running(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/app.css", timeout=2) as res:
@@ -1436,7 +1771,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=int(os.environ.get("AGENT_HUB_DASH_PORT", DEFAULT_PORT)))
     ap.add_argument("--interval", type=int, default=10, help="再読み込みの間隔（秒）")
     ap.add_argument("--open", action="store_true", help="起動後にブラウザで開く")
+    sub = ap.add_subparsers(dest="cmd", metavar="{status,answer}")
+    st = sub.add_parser("status", help="状況を JSON で標準出力に出して終わる（サーバーは起動しない）")
+    st.add_argument("--json", action="store_true", required=True, help="JSON で出す（今はこの形だけ）")
+    st.add_argument("--no-prs", action="store_true", help="gh の結果（PR）を読まず、取り直しも始めない")
+    st.set_defaults(func=cmd_status)
+    an = sub.add_parser("answer", help="worker の報告に答える（受信箱と同じ動作）")
+    an.add_argument("worker", help="worker のセッション名")
+    an.add_argument("ref", help="答える報告の時刻（YYYY-MM-DD HH:MM:SS）")
+    body = an.add_mutually_exclusive_group(required=True)
+    body.add_argument("text", nargs="?", help="worker へ送る答え")
+    body.add_argument("--done", action="store_true", help="送らずに対応済みにする")
+    an.set_defaults(func=cmd_answer)
+    rc = sub.add_parser("refresh-cache")  # status が裏で起動する。gh の結果を取り直してキャッシュに書く
+    rc.set_defaults(func=cmd_refresh_cache)
     args = ap.parse_args(argv)
+    if args.cmd:
+        return args.func(args)
 
     Handler.interval = max(2, args.interval)
     Handler.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}

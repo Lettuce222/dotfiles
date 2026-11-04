@@ -110,6 +110,20 @@ workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内�
 
 報告のファイルには報告の本文が入るため、ディレクトリは700、ファイルは600で作る。ポートは`AGENT_HUB_DASH_PORT`（既定8765）、窓口の作業場所は`AGENT_HUB_HOME`で変える。
 
+#### ターミナルから使うコマンド
+
+ブラウザを使わずに、ターミナルのペインなどから同じ集計を読み、報告に答えるためのサブコマンド。HTTPサーバーは起動しない。
+
+- `dash.py status --json [--no-prs]`: 状況を1つのJSONにして標準出力に出し、終わる。中身は次のとおり。
+  - `inbox`: まだ答えていない要判断とブロック。worker名、報告の時刻（`ref`。答えるときに使う）、種類、1行目、本文、`選択肢:`の行、workerのwindowが確認画面を出しているか（`dialog`）。
+  - `workers`: 記録ファイルのあるworker。window、状態（`busy`・`idle`・`permission`・`no_window`・`unknown`）、GTDの項目、PRとCIの状態。状態は、確認画面なら`permission`、ほかは`claude agents --json`の`status`、取れなければwindow名の🟡🟢から決める。
+  - `gtd`: OverviewのDOING、待ち、次にやること（上から10件）と、期限が3日以内か過ぎた未完了の項目。各項目は本文と属性をそのまま持つ。
+  - `prs`: `prs.py`の結果のうち、レビュー依頼と、自分のPRで手を打つ必要があるもの（Overviewの「要対応」と同じ）。
+  - `generated_at`と`errors`。取れなかった部分は空にし、理由を`errors`に入れる。全体は失敗させない。
+- `dash.py answer <worker> <報告の時刻> <答え>`、`dash.py answer <worker> <報告の時刻> --done`: 受信箱と同じく、workerのpaneへ答えを送るか、送らずに対応済みにする。守ることも受信箱と同じ。結果を1行で出し、成功なら終了コード0、断ったら1で終わる。答えの処理は報告のファイルを`flock`で押さえ、ダッシュボードと同時に答えても二度は送らない。
+
+`status`は`gh`を待たずに返す。`gh`の結果は`${XDG_CACHE_HOME:-~/.cache}/agent-hub/status-prs.json`に覚えておき、古ければ（workerのPRは60秒、自分のPRは5分）裏で`dash.py refresh-cache`を起動して取り直す。初めて実行したときや取り直しの途中は、前の結果か空の結果を返す（`prs.pending`）。`--no-prs`ではキャッシュを読まず、取り直しも始めない。
+
 markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_prs.py`で実行する。
 
 `prs.py`は、ユーザーのPRの状況（自分宛てのレビュー依頼と、自分のPRの待ち状態）を`gh api graphql`で読み、JSONか短い一覧で出す。窓口が起動時・状況確認・週次レビューで使い（`hub-rules.md`の「PRの状況」）、ダッシュボードのOverviewにも5分ごとに取り直して表示する。GitHubへは書き込まない。判定の考え方はJeongJaeSoon/agent-skillsの`skills/watch-prs`（MIT License）を参考にしている。

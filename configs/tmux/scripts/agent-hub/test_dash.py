@@ -1,5 +1,6 @@
 """dash.py のテスト。実行: python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py"""
 
+import io
 import os
 import subprocess
 import sys
@@ -229,7 +230,9 @@ class ReportsTest(unittest.TestCase):
         self.assertEqual(dash.clean_answer("絵文字👍🏽は残す"), "絵文字👍🏽は残す")
 
 
-class AnswerTest(StateDirMixin, unittest.TestCase):
+class AnswerMixin(StateDirMixin):
+    """報告のある worker を 1 つ置き、tmux を偽物にする。"""
+
     WINDOW = {"id": "@1", "name": "repo:task", "session": "s", "pane": "%9"}
 
     def setUp(self):
@@ -248,6 +251,8 @@ class AnswerTest(StateDirMixin, unittest.TestCase):
     def reports(self):
         return dash.parse_reports((self.state / "reports" / "repo.task.md").read_text(encoding="utf-8"), "repo.task")
 
+
+class AnswerTest(AnswerMixin, unittest.TestCase):
     def test_send_answer(self):
         result = dash.answer_report("repo.task", "2026-01-02 10:05:00", "send", "付与した\nので続けて\x07")
         self.assertEqual(result, "sent")
@@ -471,6 +476,197 @@ class ServerTest(StateDirMixin, unittest.TestCase):
     def test_get_does_not_answer(self):
         self.assertEqual(self.status(f"{self.origin}/inbox/answer?token=" + "t" * 43), 404)
         self.assertEqual(self.calls, [])
+
+
+class StatusTest(StateDirMixin, unittest.TestCase):
+    """dash.py status --json。tmux・claude・gh は偽物に差し替える。"""
+
+    WINDOWS = {
+        "repo.task": {"id": "@1", "name": "🟡 repo:task", "session": "s", "pane": "%1"},
+        "repo.ask": {"id": "@2", "name": "🔴 repo:ask", "session": "s", "pane": "%2"},
+    }
+    AGENTS = {"repo.task": {"name": "repo.task", "status": "idle"}, "repo.ask": {"name": "repo.ask", "status": "busy"}}
+
+    def setUp(self):
+        super().setUp()
+        root = Path(self.tmp.name)
+        self.cache_env = {"XDG_CACHE_HOME": str(root / "cache")}
+        self.old.update({k: os.environ.get(k) for k in self.cache_env})
+        os.environ.update(self.cache_env)
+        hub = root / "hub"
+        (hub / "gtd").mkdir()
+        today = dash.dt.date.today()
+        soon = (today + dash.dt.timedelta(days=2)).isoformat()
+        later = (today + dash.dt.timedelta(days=10)).isoformat()
+        nexts = "".join(f"- [ ] 次 {n}\n" for n in range(12))
+        (hub / "gtd" / "next-actions.md").write_text(
+            f"- [ ] 着手中 doing:: 2026-01-01 project:: 計測 due:: {soon}\n- [ ] 先の話 due:: {later}\n{nexts}",
+            encoding="utf-8",
+        )
+        (hub / "gtd" / "waiting-for.md").write_text(
+            "- [ ] 任せた worker:: repo.task repo:: o/r waiting:: 2026-01-02\n", encoding="utf-8"
+        )
+        self.write_record("repo.task", branch="agent/task")
+        self.write_record("repo.ask")
+        self.write_record("repo.gone")
+        (self.state / "reports" / "repo.ask.md").write_text(REPORTS, encoding="utf-8")
+        self.spawned = []
+        self.windows = dict(self.WINDOWS)
+        self.agents = (dict(self.AGENTS), "")
+        for p in (
+            mock.patch.object(dash, "tmux_windows_full", lambda: (self.windows, "")),
+            mock.patch.object(dash, "capture_pane", lambda pane: "> \n"),
+            mock.patch.object(dash, "claude_agents", lambda: self.agents),
+            mock.patch.object(dash, "spawn_refresh", lambda: self.spawned.append(1) or True),
+            mock.patch.object(dash, "send_to_pane", mock.Mock(side_effect=AssertionError("送らない"))),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def write_record(self, name, branch=""):
+        lines = [f"あなたのセッション名: {name}"] + ([f"作業ブランチ: {branch}"] if branch else [])
+        (self.state / f"{name}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def write_cache(self, at=None):
+        at = dash.time.time() if at is None else at
+        dash.save_pr_cache({
+            "my_prs": {"at": at, "data": MY_PRS_DATA, "error": ""},
+            "worker_prs": {dash.pr_key("o/r", "agent/task"): {"at": at, "pr": {
+                "number": 7, "url": "https://github.com/o/r/pull/7", "title": "作業", "state": "OPEN", "isDraft": True,
+                "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}]}}},
+        })
+
+    def test_parts(self):
+        self.write_cache()
+        out = dash.collect_status()
+        json_text = dash.json.dumps(out, ensure_ascii=False)  # JSON にできる
+        self.assertIn("generated_at", json_text)
+        self.assertEqual(out["errors"], {})
+        self.assertEqual(self.spawned, [])  # キャッシュが新しければ取り直さない
+
+        (ask,) = out["inbox"]
+        self.assertEqual((ask["worker"], ask["ref"], ask["kind"]), ("repo.ask", "2026-01-02 10:05:00", "ブロック"))
+        self.assertEqual(ask["summary"], "[ブロック] repo.task: 権限が足りない")
+        self.assertEqual((ask["window_id"], ask["dialog"]), ("@2", True))  # window 名の 🔴
+
+        workers = {w["name"]: w for w in out["workers"]}
+        self.assertEqual({n: w["status"] for n, w in workers.items()},
+                         {"repo.task": "idle", "repo.ask": "permission", "repo.gone": "no_window"})
+        task = workers["repo.task"]
+        self.assertEqual((task["window_id"], task["claude_status"], task["open_reports"]), ("@1", "idle", 0))
+        self.assertEqual(task["item"]["body"], "任せた")
+        self.assertEqual(task["pr_status"], "ok")
+        self.assertEqual(task["pr"], {"number": 7, "url": "https://github.com/o/r/pull/7", "title": "作業", "state": "draft",
+                                      "ci": {"text": "CI 失敗 1/1", "level": "bad"}})
+        self.assertEqual((workers["repo.ask"]["pr_status"], workers["repo.ask"]["open_reports"]), ("unknown_repo", 1))
+
+        gtd = out["gtd"]
+        self.assertEqual([i["body"] for i in gtd["doing"]], ["着手中"])
+        self.assertEqual(gtd["doing"][0]["attrs"]["project"], "計測")
+        self.assertEqual([i["body"] for i in gtd["waiting"]], ["任せた"])
+        self.assertEqual((len(gtd["next"]), gtd["next_total"]), (10, 13))
+        self.assertEqual([(i["body"], i["days_left"]) for i in gtd["due_soon"]], [("着手中", 2)])
+
+        prs = out["prs"]
+        self.assertEqual([i["pr"] for i in prs["review_requests"]], ["o/r#1"])
+        self.assertEqual([i["pr"] for i in prs["own_action"]], ["o/r#2"])  # draft の #3 は入れない
+        self.assertEqual((prs["pending"], prs["team_requests"]), (False, 2))
+
+    def test_stale_cache_starts_refresh_without_waiting(self):
+        self.write_cache(at=1)
+        out = dash.collect_status()
+        self.assertEqual(self.spawned, [1])
+        self.assertEqual(out["prs"]["review_requests"][0]["pr"], "o/r#1")  # 古い結果はそのまま出す
+
+    def test_first_run_is_pending(self):
+        out = dash.collect_status()
+        self.assertEqual(self.spawned, [1])
+        self.assertTrue(out["prs"]["pending"])
+        self.assertEqual({w["name"]: w["pr_status"] for w in out["workers"]}["repo.task"], "pending")
+
+    def test_no_prs(self):
+        out = dash.collect_status(with_prs=False)
+        self.assertEqual(self.spawned, [])
+        self.assertTrue(out["prs"]["skipped"])
+        self.assertEqual({w["pr_status"] for w in out["workers"]}, {"skipped"})
+
+    def test_failures_only_empty_their_part(self):
+        self.write_cache()
+        self.windows = {}
+        self.agents = ({}, "OSError: claude がありません")
+        with mock.patch.object(dash, "tmux_windows_full", lambda: ({}, "no server running")), \
+             mock.patch.object(dash, "load_reports", mock.Mock(side_effect=RuntimeError("壊れた"))):
+            out = dash.collect_status()
+        self.assertEqual(out["errors"], {"tmux": "no server running", "claude": "OSError: claude がありません",
+                                         "inbox": "RuntimeError: 壊れた"})
+        self.assertEqual(out["inbox"], [])
+        self.assertEqual({w["status"] for w in out["workers"]}, {"no_window"})
+        self.assertEqual(len(out["gtd"]["doing"]), 1)
+
+    def test_status_falls_back_to_window_mark(self):
+        self.agents = ({}, "")
+        out = dash.collect_status(with_prs=False)
+        self.assertEqual({w["name"]: w["status"] for w in out["workers"]}["repo.task"], "busy")  # 🟡
+
+    def test_prs_fetch_error_is_reported(self):
+        dash.save_pr_cache({"my_prs": {"at": dash.time.time(), "data": None, "error": "RuntimeError: HTTP 401"},
+                            "worker_prs": {}})
+        out = dash.collect_status()
+        self.assertEqual(out["errors"]["prs"], "RuntimeError: HTTP 401")
+        self.assertEqual(out["prs"]["review_requests"], [])
+
+    def test_refresh_keeps_last_result_on_failure(self):
+        calls = []
+        dash.refresh_pr_cache(lambda: MY_PRS_DATA, lambda repo, branch: calls.append((repo, branch)) or {"none": True}, now=1000)
+        self.assertEqual(calls, [("o/r", "agent/task")])
+        cache = dash.load_pr_cache()
+        self.assertEqual(cache["my_prs"]["data"], MY_PRS_DATA)
+        # 新しいうちは取り直さない
+        dash.refresh_pr_cache(mock.Mock(side_effect=AssertionError), mock.Mock(side_effect=AssertionError), now=1001)
+        cache = dash.refresh_pr_cache(mock.Mock(side_effect=RuntimeError("HTTP 502")), lambda r, b: {"error": "x"}, now=5000)
+        self.assertEqual(cache["my_prs"]["data"], MY_PRS_DATA)
+        self.assertEqual(cache["my_prs"]["error"], "RuntimeError: HTTP 502")
+        self.assertEqual(cache["worker_prs"][dash.pr_key("o/r", "agent/task")]["pr"], {"error": "x"})
+
+    def test_cli_prints_json(self):
+        buf = io.StringIO()
+        with mock.patch.object(sys, "stdout", buf):
+            self.assertEqual(dash.main(["status", "--json", "--no-prs"]), 0)
+        self.assertEqual(dash.json.loads(buf.getvalue())["inbox"][0]["worker"], "repo.ask")
+
+
+class AnswerCliTest(AnswerMixin, unittest.TestCase):
+    """dash.py answer。受信箱と同じ answer_report を通る。"""
+
+    def answer(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
+            code = dash.main(["answer", *args])
+        return code, out.getvalue() + err.getvalue()
+
+    def test_send_and_done(self):
+        code, msg = self.answer("repo.task", "2026-01-02 10:05:00", "続けて")
+        self.assertEqual((code, msg.split(":")[0]), (0, "sent"))
+        self.assertEqual(self.sent, [("%9", "[ダッシュボードから回答 2026-01-02 10:05:00] 続けて")])
+        self.assertEqual(self.reports()[-1].kind, "回答")
+        code, msg = self.answer("repo.task", "2026-01-02 10:05:00", "--done")
+        self.assertEqual((code, msg.split(":")[0]), (1, "stale"))
+        self.assertEqual(msg.count("\n"), 1)
+
+    def test_done_without_sending(self):
+        code, msg = self.answer("repo.task", "2026-01-02 10:05:00", "--done")
+        self.assertEqual((code, msg.split(":")[0]), (0, "resolved"))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.reports()[-1].kind, "対応済み")
+
+    def test_failures(self):
+        self.assertEqual(self.answer("other.task", "2026-01-02 10:05:00", "x")[0], 1)
+        with mock.patch.object(dash, "capture_pane", lambda pane: "Do you want to proceed?\n"):
+            code, msg = self.answer("repo.task", "2026-01-02 10:05:00", "x")
+        self.assertEqual((code, msg.split(":")[0]), (1, "dialog"))
+        self.assertEqual(self.sent, [])
+        with mock.patch.object(sys, "stderr", io.StringIO()), self.assertRaises(SystemExit):
+            dash.main(["answer", "repo.task", "2026-01-02 10:05:00", "x", "--done"])
 
 
 if __name__ == "__main__":
