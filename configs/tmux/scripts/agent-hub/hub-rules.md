@@ -195,7 +195,7 @@ GitHub で、ユーザーが手を打つきっかけになる出来事が起き�
 - 読むだけで終わる小さな調べものは subagent で済ませてよい。
 - コードの変更、PR の作成、CI 対応など、リポジトリでの作業は worker に任せる。
 - 設定ファイル、hook、dotfiles の変更も、小さく見えてもリポジトリでの作業として worker に任せる。
-- dotfiles（`Lettuce222/dotfiles`）の変更は PR にせず、worker が作業ブランチを `main` に直接 push する。指示書にもそう書く。片付けで merge 済みかを確かめるときは、PR の代わりに `git -C <元のリポジトリ> merge-base --is-ancestor agent/<task> origin/main` を使う。
+- dotfiles（`Lettuce222/dotfiles`）の変更は PR にせず、worker が作業ブランチを `main` に直接 push する。指示書にもそう書く。片付けの `cleanup.py` は、PR の代わりに `origin/main` に含まれているかで merge 済みかを判定する。
 
 ## worker の起動
 
@@ -261,21 +261,32 @@ worker は作業ブランチの draft PR 以外へは送れません。Slack や
 
 ## 片付け
 
-PR が merge された、または不要になった worker は、ユーザーに確認してから片付ける。merge されたかどうかは次のように確かめる。
+PR が merge された、または不要になった worker は、ユーザーに確認してから片付ける。片付けは `cleanup.py` で行う。
 
-1. `gh pr list -R <owner/repo> --head agent/<task> --state all --json number,state,headRefOid` で PR を探す。
-2. `git -C <元のリポジトリ> fetch origin pull/<number>/head` で PR の head を取得してから、`git -C <元のリポジトリ> merge-base --is-ancestor agent/<task> <headRefOid>` が成功する PR だけを見る。手元のコミットがすべてその PR に含まれている、という意味になる。
-3. その PR が `MERGED` でなければ、merge 済みとは扱わない。
+```sh
+python3 ~/.config/tmux/scripts/agent-hub/cleanup.py --dry-run <セッション名>
+python3 ~/.config/tmux/scripts/agent-hub/cleanup.py <セッション名>
+```
 
-`git branch -d` が成功しても、push 済みなだけで merge されていない場合があるので、判定には使わない。
+まず `--dry-run` で予定を見て、ユーザーに確認してから本番を実行する。`cleanup.py` は記録ファイルから元のリポジトリ、worktree、ブランチ `agent/<task>` を読み、次の順に進める。
 
-片付けは次の順に進める。
+1. merge 済みかを判定する。判定できない、または merge されていなければ、何も消さずに理由を出して止まる。
+2. worker の window を閉じる。ほかにその worktree を開いている window（`prefix + p` で開いた PR の window など）があれば、何も消さずに一覧を出して止まる。
+3. `git worktree remove` で worktree を消す。`--force` は使わない。作業ツリーに commit されていない変更があれば、何も消さずに `git status` を出して止まる。
+4. 手元のブランチを消す。merge 済みなら、リモートに残った `agent/<task>` も消す。
+5. 記録ファイルを消す。報告のファイル（`reports/<セッション名>.md`）は履歴として残す。
+6. 元のリポジトリが既定ブランチを checkout していて作業ツリーがきれいなら、`git pull --ff-only` する。そうでなければ pull せず、その旨を 1 行出す。
 
-1. `tmux list-panes -a -F '#{window_id} #{pane_current_path}'` で、ほかにその worktree を開いている window（`prefix + p` で開いた PR の window など）が無いか確かめ、あればユーザーに伝える。
-2. `tmux kill-window -t <window_id>`
-3. `git -C <元のリポジトリ> worktree remove <worktree>`。失敗したら `--force` は使わず、`git -C <worktree> status` の結果をユーザーに見せて判断を仰ぐ。
-4. `git -C <元のリポジトリ> branch -D agent/<task>`。PR が merge 済みでなければ、消す前にユーザーに確認する。
-5. リモートに `agent/<task>` が残っていれば、PR が merge 済みでもユーザーに確認してから消す。
-6. 起動時に控えた記録ファイル（`record=`）を削除する。
+行ったことが 1 行ずつ出るので、そのままユーザーへの報告に使う。止まったときは、出た理由をユーザーに見せて判断を仰ぐ。
+
+- PR が close 済みで不要と決まったなど、merge されていなくても片付けるとユーザーが決めたら `--force-unmerged` を付ける。このときリモートのブランチは消さずに残す。消すかどうかは、ユーザーに確認してから `git -C <元のリポジトリ> push origin --delete agent/<task>` で行う。
+- worker 以外の window も閉じてよいとユーザーが決めたら `--kill-other-windows` を付ける。
+- worktree に変更が残っているときは、`--force` で消さず、worker に commit してもらうか、ユーザーに判断を仰ぐ。
+
+merge 済みかは次の基準で判定している。
+
+- dotfiles（main に直接 push する運用）: `git merge-base --is-ancestor agent/<task> origin/main` が成功すること。ただし、作ったときからコミットが 1 つも無いブランチは、merge 済みとは扱わない。
+- それ以外: `gh pr list --head agent/<task> --state all` で PR を探し、`git fetch origin pull/<number>/head` で PR の head を取得してから、手元の `agent/<task>` がその head の祖先である PR だけを見る。手元のコミットがすべてその PR に含まれている、という意味になる。その PR が `MERGED` であること。
+- `git branch -d` が成功しても、push 済みなだけで merge されていない場合があるので、判定には使わない。
 
 worker の PR を手元で見たいときは、`prefix + A` で worker の window へ行くよう伝える。`prefix + p` で PR の URL を開いても、worker の worktree が開く。
