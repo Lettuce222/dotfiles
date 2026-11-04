@@ -1,7 +1,6 @@
 function orchestrator --description '窓口（claude -n orchestrator）と claude agents の 2 ペインの window を開く'
     # 小さな窓口の構成。左に窓口の Claude Code、右に claude agents の一覧を置く。
     # 窓口の決まりはスキル agents-orchestrator に、スレッドの決まりは agents-thread に書く。
-    # 今の hub（hub.fish、agent-hub/）とは tmux session も Claude のセッション名も分ける
     set -l session orchestrator
     set -l name orchestrator
     set -l dir (test -n "$AGENT_ORCHESTRATOR_HOME"; and echo $AGENT_ORCHESTRATOR_HOME; or echo $HOME/hub)
@@ -12,7 +11,7 @@ function orchestrator --description '窓口（claude -n orchestrator）と claud
     if not tmux has-session -t "=$session" 2>/dev/null
         # 非対話の fish では conf.d の mise・direnv が動かないので、起動前に環境を取り込む。
         # スレッドとセッション間でメッセージを送り合うので、permission mode を auto で揃える
-        set -l env_file ~/.config/tmux/scripts/agent-hub/agent-env.fish
+        set -l env_file ~/.config/fish/agent-env.fish
         set -l prefix
         test -f $env_file; and set prefix source (string escape -- $env_file)\;
         set -l left fish -c (string join ' ' -- $prefix \

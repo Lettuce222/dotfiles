@@ -13,7 +13,7 @@ Blocks with exit 2:
      runs tmux without -L or -S.
 
 Only the command line is inspected; tmux calls inside scripts that the
-command runs are not seen, so the rule in worker-rules.md still applies.
+command runs are not seen.
 """
 
 import json

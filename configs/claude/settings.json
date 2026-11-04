@@ -91,21 +91,6 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/tmux-socket-guard.py",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/outbox-guard.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/outbox-guard.py",
-            "timeout": 10
           }
         ]
       }
