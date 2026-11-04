@@ -11,12 +11,14 @@ GitHub へは `gh api graphql` で問い合わせるだけで、何も書き込�
 設定: ${XDG_CONFIG_HOME:-~/.config}/agent-hub/prs.json（AGENT_HUB_PRS_CONFIG か --config で変える）。
 無ければ全リポジトリが対象。キーはすべて省略できる:
   {"orgs": [], "repos": [], "exclude_orgs": [], "exclude_repos": [],
-   "exclude_title_patterns": [], "bots": [], "ignore_authors": [], "stale_days": 30, "gh": "gh"}
+   "exclude_title_patterns": [], "bots": [], "ignore_authors": [], "stale_days": 30, "gh": "gh",
+   "notify_interval_s": 60, "notify_max_minutes": 720}
 - orgs・repos が両方空なら全リポジトリ。どちらかがあれば、その org（owner）か owner/name だけ
 - exclude_title_patterns は re.search の正規表現。合う PR はどちらの一覧にも出さない
 - bots は GitHub 上は User だが人として扱わないアカウント（依頼者・作者の判定に使う）
 - ignore_authors の作者の PR はレビュー依頼に出さない
 - gh は gh のパス。環境変数 AGENT_HUB_GH が優先する
+- notify_interval_s・notify_max_minutes は notify.py が使う（見る間隔の秒数と、何も無いときに終わるまでの分数）
 
 判定の考え方は JeongJaeSoon/agent-skills の skills/watch-prs（MIT License,
 Copyright (c) 2026 JeongJaeSoon）の「What counts」と「Own PRs waiting on people」、
@@ -49,6 +51,8 @@ DEFAULTS = {
     "ignore_authors": [],
     "stale_days": 30,
     "gh": "gh",
+    "notify_interval_s": 60,
+    "notify_max_minutes": 720,
 }
 
 # own_prs の states に入る値。表示の順もこの順にする

@@ -155,8 +155,18 @@ workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内�
 
 `status`は`gh`を待たずに返す。`gh`の結果は`${XDG_CACHE_HOME:-~/.cache}/agent-hub/status-prs.json`に覚えておき、古ければ（workerのPRは60秒、自分のPRは5分）裏で`dash.py refresh-cache`を起動して取り直す。初めて実行したときや取り直しの途中は、前の結果か空の結果を返す（`prs.pending`）。`--no-prs`ではキャッシュを読まず、取り直しも始めない。
 
-markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_prs.py`で実行する。
+markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_prs.py configs/tmux/scripts/agent-hub/test_notify.py`で実行する。
 
 `prs.py`は、ユーザーのPRの状況（自分宛てのレビュー依頼と、自分のPRの待ち状態）を`gh api graphql`で読み、JSONか短い一覧で出す。窓口が起動時・状況確認・週次レビューで使い（`hub-rules.md`の「PRの状況」）、ダッシュボードのOverviewにも5分ごとに取り直して表示する。GitHubへは書き込まない。判定の考え方はJeongJaeSoon/agent-skillsの`skills/watch-prs`（MIT License）を参考にしている。
 
 対象のorgやリポジトリ、除外するもの、`gh`のパスは、dotfilesの外の`${XDG_CONFIG_HOME:-~/.config}/agent-hub/prs.json`（`AGENT_HUB_PRS_CONFIG`で変える）に置く。無ければ全リポジトリが対象になる。組織名などの具体的な値はdotfilesに書かない。`gh`は環境変数`AGENT_HUB_GH`、設定の`gh`、`PATH`の`gh`の順に探す。ダッシュボードのworkerのPRの表示も同じ`gh`を使う。
+
+`notify.py`は、GitHubで新しい出来事（名指しのレビュー依頼、自分のPRのCI失敗、自分のPRへの人のレビューとコメント、人からの@）が起きるまで待ち、1行1件（種類、repo、番号、タイトル、URLのタブ区切り）で出して終わる。窓口がBashの`run_in_background`で動かし、終わるたびに起こされて`~/hub/proposals.md`に次の行動の提案を足し、また起動する（`hub-rules.md`の「出来事から提案を出す」）。ループは窓口の側にあり、スクリプトは待つあいだモデルのトークンを使わない。終了コードは、出来事を出したら0、`notify_max_minutes`（既定720分）のあいだ何も無ければ1、認証エラーなどが3回続いたり設定が誤っていたりしたら2。5xx・タイムアウト・利用枠の超過は間隔を延ばして待ち直す。
+
+GitHubの通知API（`gh api notifications`）は、ghtknのようなGitHub Appのユーザートークンでは読めない（HTTP 403）。そのため`notify.py`は通知APIを使わず、`prs.py`と同じ`gh api graphql`で自分のPR、レビュー依頼、mentionを`notify_interval_s`（既定60秒）ごとに読み、前に見たものとの差分を出来事にする。この方法には次の制約がある。
+
+- mentionは検索（`mentions:@me`）で更新の新しい20件を取り、その中の直近のコメント（会話は20件、レビューは10件とその中のコメント10件ずつ）だけを調べる。そのため通知より粗く、長いスレッドの奥のコメント、編集で後から足された@、チーム宛ての@は拾わない。
+- 自分のPRのレビューとコメントは、PRごとに直近30件ずつを見る。1回の間隔のあいだにそれより多く付くと、古い分は見落とすが、そのPRの出来事としては出る。
+- GraphQLの利用枠は、1回の見回りでレビュー依頼・自分のPR・mentionの3つのクエリを使い、合わせて約4ポイント（自分のPRやレビュー依頼が25件を超えるとページの分だけ増える）。既定の60秒間隔なら1時間に約240ポイントで、1時間の上限（ユーザーのトークンで5,000）の5%ほどになる。`prs.py`とダッシュボードも同じ枠を使う。
+
+見たものの記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/notify-seen.txt`（キーだけ、ファイルは600）に置く。ファイルが無い初回は、今ある出来事を記録するだけで出さない。設定は`prs.py`と同じ`prs.json`で、対象のorgやリポジトリ、除外、`bots`、`gh`のパスに加えて、`notify_interval_s`と`notify_max_minutes`を使う。考え方はwatch-prsの`scripts/notify.py`（MIT License）を参考にしている。
