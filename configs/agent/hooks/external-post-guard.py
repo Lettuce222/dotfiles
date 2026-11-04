@@ -20,7 +20,12 @@ When the prose passes, the decision depends on the session:
     user approves. The user talks only to the hub, so a prompt in a worker
     window would stall the worker until someone noticed.
   - any other session (the hub included): return permissionDecision "ask" so
-    the user reviews the wording before anything is sent.
+    the user reviews the wording before anything is sent. The one exception is
+    a post the user has already approved in the hub's pane: when the prose and
+    destination match a proposal in ${AGENT_HUB_HOME:-~/hub}/outbox whose
+    <id>.approved mark is under 30 minutes old, return "allow" and rename the
+    mark to <id>.sent so the approval cannot be used twice (see
+    approved_proposal). outbox-guard.py keeps the model from writing marks.
 
 No service or tool names are hard-coded; prose is found by key name, as in
 textlint-mcp.sh.
@@ -32,6 +37,8 @@ import re
 import shlex
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 PROSE_KEY = re.compile(r"^(body|description|commentBody|comment|text|message)$", re.I)
@@ -107,9 +114,21 @@ def gh_body(command):
     return "\n\n".join(parts)
 
 
+def is_gh(arg):
+    """True for `gh` itself or a path to it (~/.local/share/gh-ghtkn/bin/gh)."""
+    return os.path.basename(arg) == "gh"
+
+
+def tokens(command):
+    """Split a command line, keeping shell operators as separate tokens."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
 def is_gh_api_read(args):
     """True for a lone `gh api` call that only reads (GET without a payload)."""
-    if args[:2] != ["gh", "api"] or any(a in SHELL_OPS for a in args):
+    if not args or not is_gh(args[0]) or args[1:2] != ["api"] or any(a in SHELL_OPS for a in args):
         return False
     method = None
     payload = False
@@ -182,12 +201,12 @@ def own_draft_pr(command, cwd, branch):
     """Return None if the command writes only to the worker's own draft PR,
     otherwise the reason it does not."""
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        args = list(lexer)
+        args = tokens(command)
     except ValueError:
         return "コマンドを解釈できません"
-    if any(a in SHELL_OPS or a.startswith(("<", ">")) for a in args) or args[:2] != ["gh", "pr"]:
+    if any(a in SHELL_OPS or a.startswith(("<", ">")) for a in args) or not (
+        args and is_gh(args[0]) and args[1:2] == ["pr"]
+    ):
         return "gh pr create・edit・comment を、cd・&&・リダイレクトを付けずに単独で実行していません"
     sub = args[2] if len(args) > 2 else ""
     if sub not in ("create", "edit", "comment"):
@@ -240,6 +259,151 @@ def own_draft_pr(command, cwd, branch):
     return None
 
 
+# --- posts the user approved in the hub's pane -------------------------------
+
+APPROVAL_TTL_S = 30 * 60
+CLOCK_SKEW_S = 60
+REVIEW_EVENTS = {
+    "-c": "comment", "--comment": "comment",
+    "-a": "approve", "--approve": "approve",
+    "-r": "request-changes", "--request-changes": "request-changes",
+}
+
+
+def outbox_dir():
+    return Path(os.environ.get("AGENT_HUB_HOME") or Path.home() / "hub").expanduser() / "outbox"
+
+
+def strip_prose(node):
+    """The tool input without its prose: what names the destination."""
+    if isinstance(node, dict):
+        return {k: strip_prose(v) for k, v in node.items() if not (isinstance(v, str) and PROSE_KEY.match(k))}
+    if isinstance(node, list):
+        return [strip_prose(v) for v in node]
+    return node
+
+
+def gh_destination(command):
+    """Destination of a lone `gh pr comment|review <number> -R <owner/repo>`
+    whose only other flags are the body (-b, --body, --body-file) and the
+    review event, or None. gh_body reads -F as a `gh api` field, so it is not
+    taken here.
+
+    Anything else (shell operators, a PR chosen by the current branch, extra
+    flags such as --edit-last) is not matched, so it still asks."""
+    try:
+        args = tokens(command)
+    except ValueError:
+        return None
+    if any(a in SHELL_OPS or a.startswith(("<", ">")) for a in args):
+        return None
+    if len(args) < 3 or not is_gh(args[0]) or args[1] != "pr" or args[2] not in ("comment", "review"):
+        return None
+    sub = args[2]
+    repo = number = event = None
+    has_body = False
+    i = 3
+    while i < len(args):
+        a = args[i]
+        flag, eq, val = a.partition("=") if a.startswith("--") else (a, "", "")
+        if flag in ("-R", "--repo", "-b", "--body", "--body-file"):
+            if not eq:
+                if i + 1 >= len(args):
+                    return None
+                i += 1
+                val = args[i]
+            if flag in ("-R", "--repo"):
+                if repo is not None:
+                    return None
+                repo = val
+            else:
+                has_body = True
+        elif sub == "review" and flag in REVIEW_EVENTS and not eq and event is None:
+            event = REVIEW_EVENTS[flag]
+        elif not a.startswith("-") and number is None and a.isdigit():
+            number = int(a)
+        else:
+            return None
+        i += 1
+    if repo is None or number is None or not has_body or (sub == "review" and event is None):
+        return None
+    action = "comment" if sub == "comment" else "review-" + event
+    return {"tool": "gh", "repo": repo, "pr": number, "action": action}
+
+
+def destination(tool_name, tool_input, command):
+    if command is not None:
+        return gh_destination(command)
+    return {"tool": tool_name, "input": strip_prose(tool_input)}
+
+
+def load_destination(path):
+    want = json.loads(path.read_text())
+    if not isinstance(want, dict):
+        raise ValueError("not an object")
+    if want.get("tool") == "gh":
+        want["pr"] = int(want.get("pr"))
+    return want
+
+
+def parse_time(text):
+    """Seconds since the epoch for an ISO 8601 time; a time without an offset
+    is local time."""
+    try:
+        t = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t.timestamp()
+
+
+def approved_proposal(dest, body, now=None):
+    """Claim the approval for this exact post and return its proposal ID, or
+    None. A proposal <id> is <id>.md (the prose), <id>.json (the destination)
+    and <id>.approved (the time the user approved it, written by the pane).
+
+    It matches when the prose equals the .md (ignoring trailing newlines), the
+    destination equals the .json, the approval is under 30 minutes old, and
+    neither file changed after the approval. The mark is renamed to <id>.sent
+    before returning, so one approval lets one post through; the rename is
+    atomic, so two calls racing for the same mark cannot both win."""
+    if dest is None:
+        return None
+    now = time.time() if now is None else now
+    box = outbox_dir()
+    for mark in sorted(box.glob("*.approved")):
+        pid = mark.name[: -len(".approved")]
+        md, js = box / (pid + ".md"), box / (pid + ".json")
+        try:
+            if md.read_text().rstrip("\n") != body.rstrip("\n"):
+                continue
+            if load_destination(js) != dest:
+                continue
+            approved_at = parse_time(mark.read_text())
+            if approved_at is None or not -CLOCK_SKEW_S <= now - approved_at <= APPROVAL_TTL_S:
+                continue
+            if max(md.stat().st_mtime, js.stat().st_mtime) > mark.stat().st_mtime:
+                continue
+            os.rename(mark, box / (pid + ".sent"))
+        except (OSError, ValueError, TypeError):
+            continue
+        return pid
+    return None
+
+
+def decide(decision, reason):
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": decision,
+                "permissionDecisionReason": reason,
+            }
+        },
+        sys.stdout,
+        ensure_ascii=False,
+    )
+
+
 def main():
     data = json.load(sys.stdin)
     tin = data.get("tool_input") or {}
@@ -275,17 +439,11 @@ def main():
         )
         return 2
 
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "ask",
-                "permissionDecisionReason": "外部に送る文面です。送る前に内容を確認してください。",
-            }
-        },
-        sys.stdout,
-        ensure_ascii=False,
-    )
+    pid = approved_proposal(destination(data.get("tool_name"), tin, command), body)
+    if pid is not None:
+        decide("allow", f"ペインで承認済みの提案 {pid} と文面・送信先が一致します。")
+        return 0
+    decide("ask", "外部に送る文面です。送る前に内容を確認してください。")
     return 0
 
 

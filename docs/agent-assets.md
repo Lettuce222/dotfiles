@@ -43,10 +43,41 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 曜日のない日付（`11/4`、`11月4日`、`2026-11-04`）があればexit 2で止める。`11/4(水)`のように日付の直後に曜日を書く
 - 通った場合の扱いはセッションで分ける
   - worker（`spawn.fish`が`AGENT_HUB_WORKER`と`AGENT_HUB_BRANCH`を渡す）では、作業ブランチのdraft PRの作成・編集・コメントだけを確認なしで通す。`gh pr create`は`--draft`と今のブランチを、`gh pr edit`と`gh pr comment`は`gh pr view`で対象のPRのブランチとdraftであることを確かめる。`cd`や`&&`を付けたコマンド、`-R`、`--head`、reviewerの指定は通さない。それ以外の送信（MCP経由の投稿、ほかのPR、draftでないPR、issue、`gh api`の書き込み）はexit 2で止め、下書きを窓口に渡すよう案内する。利用者は窓口とだけ話すため、workerのwindowで確認ダイアログを出すと、気づかれないまま止まる
-  - 窓口とそれ以外のセッションでは`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる
+  - 窓口とそれ以外のセッションでは`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる。例外は、利用者がペインで承認済みの提案と一致する送信で、`"allow"`を返す（下の「承認済みの提案」を参照）
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
+- `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
 
 テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py`で実行する。`git`と`gh`は偽物に置き換えるので、ネットワークには出ない。
+
+#### 承認済みの提案
+
+窓口は外に送る文面を提案として利用者に出し、利用者はペイン（窓口が作るClaude Codeのmod）の[承認]で承認する。承認のあとに確認ダイアログでもう一度確かめる二度手間をなくすため、承認した提案と文面・送信先がそのまま一致する送信だけを確認なしで通す。
+
+- `${AGENT_HUB_HOME:-~/hub}/outbox/<ID>.md`: 送る本文。窓口が書く
+- `<ID>.json`: 送信先。MCPなら`{"tool": "<ツール名>", "input": {<本文以外の引数すべて>}}`、GitHubのPRなら`{"tool": "gh", "repo": "<owner/repo>", "pr": <番号>, "action": "comment"}`（レビューは`review-comment`、`review-approve`、`review-request-changes`）。窓口が書く
+- `<ID>.approved`: 承認した時刻のISO 8601文字列。利用者が[承認]を押した時点でペインが書く。モデルは書かない
+
+`external-post-guard.py`は、既存の確かめ（チケットIDと日付）を通った送信のうち、次をすべて満たすものに`"allow"`を返す。
+
+- 本文が`<ID>.md`と一致する（末尾の改行は無視する）。MCPでは本文らしいkeyの値をつないだもの、`gh`では`--body`か`--body-file`の中身
+- 送信先が`<ID>.json`と一致する。MCPでは、ツール名と、本文らしいkeyを除いた入力のすべてが一致する。`gh`では`gh pr comment|review <番号> -R <owner/repo>`の形で、本文とレビューの種類のほかに引数がなく、`cd`や`&&`を付けない単独のコマンドに限る。今のブランチでPRを選ぶ呼び出しは対象にしない
+- `<ID>.approved`の時刻から30分以内で、`.md`と`.json`が承認のあとに変わっていない
+
+通すときは`<ID>.approved`を`<ID>.sent`に名前を変え、同じ承認で二度送れないようにする。名前の変更は原子的なので、同時に来た2つの呼び出しの片方しか通らない。worker（`AGENT_HUB_WORKER`）では、承認があっても今までどおり止める。
+
+`outbox-guard.py`は`PreToolUse`（`Write|Edit|MultiEdit|NotebookEdit`と`Bash`）で、モデルが承認を自分で作るのを防ぐ。
+
+- outboxの`*.approved`へのWrite・Editをdenyする
+- `.approved`を含むBashコマンドと、`outbox`を含みファイルを書き換えるBashコマンド（`touch`、`mv`、`cp`、`tee`、`sed -i`、インタプリタ、リダイレクトなど）をdenyする。文字列での最善の検出で、シェルのあらゆる書き方は防げない。`.md`と`.json`が承認後に変わっていれば通さない確かめと合わせて守る
+
+ほかのhookとの関係:
+
+- `PreToolUse`の複数のhookが違う判定を返したときは、`deny` > `defer` > `ask` > `allow`の順で強いほうが勝つ。exit 2は`allow`より強い。`textlint-mcp.sh`の指摘や、brucke pluginの`ifg-gate.py`が止めれば、こちらの`allow`があっても送られない
+- 確認ダイアログを出していたのは`external-post-guard.py`の`"ask"`だった。brucke pluginの`ifg-gate.py`は、Brucke MCPのwriteで、公開範囲を広げる操作に`"ask"`、認証情報らしき文字列に`"deny"`を返す。分類器の判定がつかないときは何も返さずClaude Code本体の権限の判定に任せる。auto modeのメインセッションで分類器が使えず、`brucke:brucke-guardrails`も実行していなければexit 2で止める。何も返さない場合はこちらの`allow`が通る。pluginは変えない
+- 承認の印は`PreToolUse`で使い切るので、ほかのhookに止められた送信でも承認は`.sent`になる。Bruckeで送る前に`brucke:brucke-guardrails`を実行しておくよう、`hub-rules.md`に書いている
+- `allow`を返しても、`settings.json`のdenyとaskのルールは評価される
+
+テストは`python3 -m unittest configs/agent/tests/test_outbox_approval.py`で実行する。`AGENT_HUB_HOME`を一時ディレクトリに向けるので、本物の`~/hub`には触れない。
 
 `textlint-mcp.sh`と同じく、特定のserviceやtool名には依存させない。
 

@@ -131,6 +131,12 @@ class GuardTest(unittest.TestCase):
         self.assertPass(self.bash("gh pr comment 12 --body ok"))
         self.assertIn("pr view 12 --json", self.gh_log.read_text())
 
+    def test_gh_called_by_path_is_checked_the_same(self):
+        gh = "~/.local/share/gh-ghtkn/bin/gh"
+        self.assertPass(self.bash(f"{gh} pr comment 12 --body ok"))
+        self.assertPass(self.bash(f"{gh} api repos/o/r/pulls/1", worker=False))
+        self.assertAsk(self.bash(f"{gh} pr comment 12 --body ok", worker=False))
+
     def test_heredoc_in_quoted_body_passes(self):
         command = textwrap.dedent(
             """\
