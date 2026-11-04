@@ -87,12 +87,6 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(*gh *)",
-            "command": "~/.claude/hooks/external-post-guard.py",
-            "timeout": 30
-          },
-          {
-            "type": "command",
             "command": "python3 ~/.claude/hooks/tmux-socket-guard.py",
             "timeout": 10
           },

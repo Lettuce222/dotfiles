@@ -59,6 +59,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
   - 窓口とそれ以外のセッションでは`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる。例外は、利用者がペインで承認済みの提案と一致する送信で、`"allow"`を返す（下の「承認済みの提案」を参照）
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
 - `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
+- いまは`Bash`向けの登録を一時的に外している（確認でたびたび止まるため）。MCP toolへの登録は残している。戻すときは`PreToolUse`の`Bash` matcherの先頭に`{"type": "command", "if": "Bash(*gh *)", "command": "~/.claude/hooks/external-post-guard.py", "timeout": 30}`を足す
 
 テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py`で実行する。`git`と`gh`は偽物に置き換えるので、ネットワークには出ない。
 
