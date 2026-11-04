@@ -64,5 +64,6 @@ cd <作業場所> && claude --bg -n "<スレッド名>" --permission-mode auto [
 
 ## 片付け
 
-- 作業が済んだスレッドは、ユーザーに確かめてから `claude rm <id>` で消す。`--worktree` で作った worktree も、安全なら一緒に消える。
+- 完了の報告や idle の知らせを受けても、自分からスレッドを消さない。ユーザーが続きを頼むかもしれず、消すと `--resume` できなくなる。
+- ユーザーが片付けを頼んだときだけ、`claude rm <id>` で消す。`--worktree` で作った worktree も、安全なら一緒に消える。`~/hub/threads/<スレッド名>/` は残るので、要らなければ一緒に消してよいか聞く。
 - 止めるだけなら `claude stop <id>`。会話は残り、あとで `--resume` できる。
