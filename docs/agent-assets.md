@@ -98,6 +98,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - `hub`コマンド（`configs/fish/functions/hub.fish`）、`prefix + a`（`hub.fish`）: 窓口のClaudeへ移動する。無ければtmux session `hub`の中に、`~/hub`（`AGENT_HUB_HOME`で変更可）で起動する。tmuxの中と外のどちらから呼んでも、同じ1つの窓口に行き着く。
 - `prefix + A`（`pick.fish`）: 窓口とworkerのwindowを一覧から選んで移動する。
 - `spawn.fish`: 窓口が呼ぶ。`<repo>.worktrees/agent/<task>`にブランチ`agent/<task>`のworktreeを作り（`tm-pr.fish`と同じ配置）、workerを別windowで起動する。workerのセッション名は`<repo>.<task>`になる。既存のworktreeやブランチは`--resume`のときだけ使う。
+- `pane/`: 窓口の横に出す状況ペインのmod。`hub.fish`が窓口にだけ読み込む（下の「状況ペイン」を参照）。
 - `hub-rules.md`、`worker-rules.md`: それぞれの`--append-system-prompt-file`に渡す役割定義。
 
 窓口とworkerはどちらもauto modeで起動する。非対話のfishではconf.dのmiseとdirenvが動かないため、起動前に`agent-env.fish`で作業場所の環境を取り込む（direnvはallow済みの`.envrc`だけ）。報告と追加指示はClaude Codeのセッション間メッセージ（`SendMessage`）でやり取りする。permission modeが異なるセッションからのメッセージはユーザー承認待ちになるため、modeを揃える。workerの報告先になる窓口のClaudeセッション名は`hub`で、`AGENT_HUB_NAME`で変えられる（`hub.fish`と`spawn.fish`が同じ変数を読む）。tmuxのsession名は常に`hub`のまま変わらない。workerは承認範囲（`worker-rules.md`）の中のことを誰にも聞かずに進め、範囲の外のことは窓口に「要判断」で報告する。窓口が利用者に聞き、外部への送信は窓口が自分のセッションから送る。workerは窓口からの伝言を、承認範囲を広げる根拠にしない。範囲の中のことはもともと許可が要らないので、窓口の伝言で決めてよい。こうして、セッション間のメッセージで権限が広がらないようにする。workerは作業ブランチにだけpushし、作るPRは必ずdraftにする。例外はこのdotfilesで、PRを作らず、作業ブランチを`main`へfast-forwardでpushする。workerは作業場所の外を変えない。dotfilesのworktreeから`install.sh`を実行すると`$HOME`のsymlinkがworktreeを指してしまうため、`install.sh`はworktreeからの実行を拒否する。
@@ -166,7 +167,30 @@ markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`pyt
 GitHubの通知API（`gh api notifications`）は、ghtknのようなGitHub Appのユーザートークンでは読めない（HTTP 403）。そのため`notify.py`は通知APIを使わず、`prs.py`と同じ`gh api graphql`で自分のPR、レビュー依頼、mentionを`notify_interval_s`（既定60秒）ごとに読み、前に見たものとの差分を出来事にする。この方法には次の制約がある。
 
 - mentionは検索（`mentions:@me`）で更新の新しい20件を取り、その中の直近のコメント（会話は20件、レビューは10件とその中のコメント10件ずつ）だけを調べる。そのため通知より粗く、長いスレッドの奥のコメント、編集で後から足された@、チーム宛ての@は拾わない。
-- 自分のPRのレビューとコメントは、PRごとに直近30件ずつを見る。1回の間隔のあいだにそれより多く付くと、古い分は見落とすが、そのPRの出来事としては出る。
+- 自分のPRのレビューとコメントは、PRごとに直近30件ずつを見る。1回の間隔のあいだにそれより多く付くと、古い分は拾えないが、そのPRの出来事としては出る。
 - GraphQLの利用枠は、1回の見回りでレビュー依頼・自分のPR・mentionの3つのクエリを使い、合わせて約4ポイント（自分のPRやレビュー依頼が25件を超えるとページの分だけ増える）。既定の60秒間隔なら1時間に約240ポイントで、1時間の上限（ユーザーのトークンで5,000）の5%ほどになる。`prs.py`とダッシュボードも同じ枠を使う。
 
 見たものの記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/notify-seen.txt`（キーだけ、ファイルは600）に置く。ファイルが無い初回は、今ある出来事を記録するだけで出さない。設定は`prs.py`と同じ`prs.json`で、対象のorgやリポジトリ、除外、`bots`、`gh`のパスに加えて、`notify_interval_s`と`notify_max_minutes`を使う。考え方はwatch-prsの`scripts/notify.py`（MIT License）を参考にしている。
+
+### 状況ペイン
+
+窓口のClaude Codeの横に、提案・判断待ち・worker・期限・GTD・PRを出すペインを置く。Claude Codeのmod（hooks module）で、名前は`hub-dashboard`。
+
+- 場所: `configs/tmux/scripts/agent-hub/pane/`（`.claude-plugin/plugin.json`、`hooks/`、`types/index.d.ts`、`tests/`）
+- 読み込み: `hub.fish`が窓口のclaudeを`--plugin-dir <pane/の場所>`付きで起動する。窓口を起動するたびに読み込まれる。workerには付けない
+- 有効になる場所: 起動した場所が`~/hub`のセッションだけ。ほかの場所では`session.start`で何もしない。`AGENT_HUB_HOME`で別の場所を使うと、ペインは出ない
+- 開き方: 起動すると自動で開く。閉じたあとは`/gtd-dashboard`で開き直す
+
+中身は描くだけにして、状況は`dash.py status --json`を20秒ごとと、`Write`、`Edit`、`Bash`、`SendMessage`の直後に読み直す。workerへの答えは`dash.py answer`に渡す。
+
+`~/hub`のファイルとの関係:
+
+- `~/hub/proposals.md`: 窓口が1行1件で書く提案（`- [ ] P1 タイトル source:: … plan:: …`）。ペインは読むだけで書き換えない。`[ ]`（未決）を先に、`[>]`（あとで）を後ろに出す。[承認]・[却下]・[あとで]と一言は、窓口への発言として送り、窓口がファイルを書き換える
+- `~/hub/outbox/<ID>.md`: 送る文面がある提案で[承認]を押すと、ペインがその時点で`<ID>.approved`を書く。`external-post-guard.py`は、文面と送信先がこの提案と同じときだけ送信を通す（上の「承認済みの提案」を参照）
+- `~/hub/pane.json`: `{"jira": "<末尾にチケットのキーを足すURL>"}`。チケットIDをリンクにするのに使う。社内のURLを含むのでdotfilesには置かない。無ければチケットIDはリンクにしない
+
+確かめるときは、`pane/`で次を実行する。
+
+- `claude plugin validate .`: マニフェストとモジュールを読み込みと同じ形で確かめる。マーケットプレイス向けのLICENSEとアイコンの指摘は、配布しないので無視してよい
+- `claude plugin test .`: `tests/*.test.ts`（提案の読み取りとリンク化）を実行する
+- 型の確かめ: `tsconfig.json`は`.claude-plugin/types/tsconfig.json`を継承する。この型はClaude Codeがmodを読み込んだときに生成する（gitの管理外）。一度窓口を起動してから`npx -p typescript@5 tsc -p .`を実行する
