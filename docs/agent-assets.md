@@ -15,6 +15,18 @@ Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置い�
 
 `settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`install.sh`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
 
+## Skill
+
+skillは、作業の種類ごとに必要なときだけ読み込まれる。毎回読み込まれる`AGENTS.md`や記憶には、特定の作業でしか使わない知識を置かず、skillに移す。
+
+- `commit-push`: 未コミットの変更を意図ごとにコミットしてpushする
+- `gh-fix-ci`: GitHub ActionsのPR checkの失敗を調べて直す
+- `grill-me`: 計画や設計を質問で掘り下げる
+- `pr-review-comment`: ほかの人のPRに、1つのpending reviewで行コメントを付ける
+- `report-writing`: 上長や関係者に向けた進捗報告・定例の報告資料・報告用の議事録の節を、空雨傘（現状・見立て・ネクストアクション）で書く。付属の`scripts/md_to_gdocs.py`は、Markdownの箇条書きの`- `を`* `に直し（入れ子も、コードブロックと表は変えない）、Google Docsの「Markdownから貼り付け」用にpbcopyでクリップボードに入れる。pbcopyが無ければ標準出力に出す。fishからは`md-gdocs <ファイル>`で呼べる
+
+skillに付けるscriptはskillのディレクトリの中に置き、`~/.claude/skills/<name>/`経由で呼ぶ。テストは`configs/agent/tests/`に置く（`python3 -m unittest configs/agent/tests/test_md_to_gdocs.py`）。
+
 ## なぜ個別symlinkか
 
 `~/.claude/skills/`には、別の方法で導入したskillが同居する。ディレクトリ全体をsymlinkせず、dotfiles管理対象だけを個別にlinkする。
@@ -166,7 +178,7 @@ markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`pyt
 GitHubの通知API（`gh api notifications`）は、ghtknのようなGitHub Appのユーザートークンでは読めない（HTTP 403）。そのため`notify.py`は通知APIを使わず、`prs.py`と同じ`gh api graphql`で自分のPR、レビュー依頼、mentionを`notify_interval_s`（既定60秒）ごとに読み、前に見たものとの差分を出来事にする。この方法には次の制約がある。
 
 - mentionは検索（`mentions:@me`）で更新の新しい20件を取り、その中の直近のコメント（会話は20件、レビューは10件とその中のコメント10件ずつ）だけを調べる。そのため通知より粗く、長いスレッドの奥のコメント、編集で後から足された@、チーム宛ての@は拾わない。
-- 自分のPRのレビューとコメントは、PRごとに直近30件ずつを見る。1回の間隔のあいだにそれより多く付くと、古い分は見落とすが、そのPRの出来事としては出る。
+- 自分のPRのレビューとコメントは、PRごとに直近30件ずつを見る。1回の間隔のあいだにそれより多く付くと、古い分は拾えないが、そのPRの出来事としては出る。
 - GraphQLの利用枠は、1回の見回りでレビュー依頼・自分のPR・mentionの3つのクエリを使い、合わせて約4ポイント（自分のPRやレビュー依頼が25件を超えるとページの分だけ増える）。既定の60秒間隔なら1時間に約240ポイントで、1時間の上限（ユーザーのトークンで5,000）の5%ほどになる。`prs.py`とダッシュボードも同じ枠を使う。
 
 見たものの記録は`${XDG_STATE_HOME:-~/.local/state}/agent-hub/notify-seen.txt`（キーだけ、ファイルは600）に置く。ファイルが無い初回は、今ある出来事を記録するだけで出さない。設定は`prs.py`と同じ`prs.json`で、対象のorgやリポジトリ、除外、`bots`、`gh`のパスに加えて、`notify_interval_s`と`notify_max_minutes`を使う。考え方はwatch-prsの`scripts/notify.py`（MIT License）を参考にしている。
