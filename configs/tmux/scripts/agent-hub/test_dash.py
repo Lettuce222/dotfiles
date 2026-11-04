@@ -36,12 +36,59 @@ class GtdTest(unittest.TestCase):
         self.assertFalse(items[1].open)
 
     def test_doing(self):
-        (item,) = dash.parse_gtd("- [ ] 作業 worker:: repo.task\n", "waiting-for")
-        self.assertTrue(item.doing)
         (item,) = dash.parse_gtd("- [ ] 作業 doing:: 2026-01-01\n", "next-actions")
         self.assertTrue(item.doing)
-        (item,) = dash.parse_gtd("- [x] 作業 worker:: repo.task\n", "done")
+        self.assertFalse(item.waiting)
+        (item,) = dash.parse_gtd("- [x] 作業 doing:: 2026-01-01\n", "done")
         self.assertFalse(item.doing)
+
+    def test_handed_over_items_are_waiting_not_doing(self):
+        cases = [
+            ("- [ ] 作業 doing:: 2026-01-01 waiting:: 2026-01-02\n", "next-actions"),
+            ("- [ ] 作業 doing:: 2026-01-01\n", "waiting-for"),
+            ("- [ ] 作業 worker:: repo.task doing:: 2026-01-01 waiting:: 2026-01-02\n", "waiting-for"),
+            ("- [ ] 作業 worker:: repo.task\n", "next-actions"),
+        ]
+        for line, file in cases:
+            with self.subTest(line=line, file=file):
+                (item,) = dash.parse_gtd(line, file)
+                self.assertTrue(item.waiting)
+                self.assertFalse(item.doing)
+        (item,) = dash.parse_gtd("- [x] 作業 worker:: repo.task waiting:: 2026-01-02\n", "done")
+        self.assertFalse(item.waiting)
+
+    def test_split_overview(self):
+        gtd = {name: [] for name in dash.GTD_FILES}
+        gtd["next-actions"] = dash.parse_gtd(
+            "- [ ] 着手中 doing:: 2026-01-01\n"
+            "- [ ] 渡した doing:: 2026-01-01 waiting:: 2026-01-02\n"
+            "- [ ] まだ\n"
+            "- [x] 終わった doing:: 2026-01-01\n",
+            "next-actions",
+        )
+        gtd["waiting-for"] = dash.parse_gtd(
+            "- [ ] worker に任せた worker:: repo.task doing:: 2026-01-01 waiting:: 2026-01-02\n"
+            "- [ ] 返事待ち who:: 誰か\n",
+            "waiting-for",
+        )
+        gtd["inbox"] = dash.parse_gtd("- [ ] メモ\n", "inbox")
+        gtd["projects"] = dash.parse_gtd("- [ ] 計画 doing:: 2026-01-01\n", "projects")
+        doing, nexts, waiting, inbox = dash.split_overview(gtd)
+        bodies = lambda items: [it.body for it in items]  # noqa: E731
+        self.assertEqual(bodies(doing), ["着手中"])
+        self.assertEqual(bodies(nexts), ["まだ"])
+        self.assertEqual(bodies(waiting), ["渡した", "worker に任せた", "返事待ち"])
+        self.assertEqual(bodies(inbox), ["メモ"])
+
+    def test_waiting_item_shows_worker_and_handover_date(self):
+        (item,) = dash.parse_gtd(
+            "- [ ] 任せた worker:: dotfiles.task doing:: 2026-01-01 waiting:: 2026-01-02\n", "waiting-for"
+        )
+        html = dash.render_item(item, dash.dt.date(2026, 1, 3))
+        self.assertIn("worker: dotfiles.task", html)
+        self.assertIn("/workers#", html)
+        self.assertIn("渡した日 2026-01-02", html)
+        self.assertNotIn("着手", html)
 
     def test_url_with_colons_is_not_an_attr(self):
         (item,) = dash.parse_gtd("- [ ] 見る https://example.com/a::b link:: https://example.com/x\n", "inbox")

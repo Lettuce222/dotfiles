@@ -79,8 +79,14 @@ class Item:
         return self.state == " "
 
     @property
+    def waiting(self) -> bool:
+        """ほかの人や worker に渡して待っている。渡したあとも doing:: は残るので、こちらを先に見る。"""
+        return self.open and (self.file == "waiting-for" or "waiting" in self.attrs or "worker" in self.attrs)
+
+    @property
     def doing(self) -> bool:
-        return self.open and ("worker" in self.attrs or "doing" in self.attrs)
+        """着手して、まだ自分の手元にある。"""
+        return self.open and "doing" in self.attrs and not self.waiting
 
 
 def split_attrs(text: str) -> tuple[str, dict[str, str]]:
@@ -790,8 +796,10 @@ def render_item(it: Item, today: dt.date, show_project: bool = True, show_sub: b
     chips = []
     if "worker" in a:
         chips.append(chip(f"worker: {a['worker']}", "accent", f"/workers#{worker_anchor(a['worker'])}"))
-    elif "doing" in a:
+    elif it.doing:
         chips.append(chip(f"着手 {a['doing']}", "accent"))
+    if "waiting" in a:
+        chips.append(chip(f"渡した日 {a['waiting']}", "muted"))
     if "due" in a:
         chips.append(chip(f"期限 {a['due']}", due_class(a["due"], today)))
     if "note" in a:
@@ -903,6 +911,16 @@ def render_my_prs() -> tuple[str, int, int]:
     return body, len(requests), len(act)
 
 
+def split_overview(gtd: dict[str, list[Item]]) -> tuple[list[Item], list[Item], list[Item], list[Item]]:
+    """未完了の項目を DOING、次にやること、待ち、inbox に分ける。project の行そのものはどれにも入れない。"""
+    items = [it for name in ("next-actions", "waiting-for", "inbox") for it in gtd[name] if it.open]
+    doing = [it for it in items if it.doing]
+    waiting = [it for it in items if it.waiting]
+    nexts = [it for it in items if it.file == "next-actions" and not it.doing and not it.waiting]
+    inbox = [it for it in items if it.file == "inbox" and not it.doing and not it.waiting]
+    return doing, nexts, waiting, inbox
+
+
 def page_overview() -> tuple[str, str]:
     home = hub_home()
     gtd = load_gtd(home)
@@ -910,10 +928,7 @@ def page_overview() -> tuple[str, str]:
     yesterday = today - dt.timedelta(days=1)
 
     open_items = [it for name in ("next-actions", "waiting-for", "inbox", "projects") for it in gtd[name] if it.open]
-    doing = [it for it in open_items if it.doing and it.file != "projects"]
-    nexts = [it for it in gtd["next-actions"] if it.open and not it.doing]
-    waiting = [it for it in gtd["waiting-for"] if it.open and not it.doing]
-    inbox = [it for it in gtd["inbox"] if it.open]
+    doing, nexts, waiting, inbox = split_overview(gtd)
 
     def closed_on(it: Item) -> str:
         return it.attrs.get("done") or it.attrs.get("cancelled") or it.section

@@ -77,7 +77,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `dash.py`は、窓口の状況と資料をブラウザで見るためのローカルのwebページ。Pythonの標準ライブラリだけで動き、モデルのトークンを使わない。fishの`hub-dash`で起動し、ブラウザで開く。すでに起動していれば開くだけにする。
 
-- Overview: `~/hub/gtd/`からDOING、次にやること、待ち、今日と昨日の完了、プロジェクトを出す。`note::`は資料へ、`worker::`と`record::`はworker一覧へ、`link::`は外部へリンクする。
+- Overview: `~/hub/gtd/`からDOING、次にやること、待ち、今日と昨日の完了、プロジェクトを出す。待ちは`waiting-for.md`にある項目と、`waiting::`か`worker::`の付いた項目。DOINGは`doing::`が付いていて待ちに入らない項目。渡したあとも`doing::`は残るので、待ちを先に判定する。`note::`は資料へ、`worker::`と`record::`はworker一覧へ、`link::`は外部へリンクする。
 - 資料: `notes/`、`minutes/`、`gtd/`のmarkdownを整形して表示する。
 - Workers: 記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）ごとに、指示の全文、worktree、ブランチ、tmuxのwindowの有無、`gh`で取ったPRとCIの状態、未対応の報告の件数を出す。
 - 受信箱: workerの報告（`$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md`）を出す。まだ答えていない要判断とブロックを上に並べ、そこから答えられる。Overviewにも未対応の件数を出す。
