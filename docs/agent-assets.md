@@ -19,6 +19,7 @@ Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置い�
 
 skillは、作業の種類ごとに必要なときだけ読み込まれる。毎回読み込まれる`AGENTS.md`や記憶には、特定の作業でしか使わない知識を置かず、skillに移す。
 
+- `agents-orchestrator`、`agents-thread`: 小さな窓口（`hub2`）の窓口とスレッドの決まり（下の「小さな窓口（hub2）」を参照）
 - `commit-push`: 未コミットの変更を意図ごとにコミットしてpushする
 - `gh-fix-ci`: GitHub ActionsのPR checkの失敗を調べて直す
 - `grill-me`: 計画や設計を質問で掘り下げる
@@ -102,6 +103,30 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 見るのはコマンドラインだけで、実行するスクリプトの中のtmuxは見えない。workerには`worker-rules.md`で同じ決まりを伝える
 
 実行ビットに頼らないよう、`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_tmux_socket_guard.py`で実行する。
+
+## 小さな窓口（hub2）
+
+自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。下の「窓口（hub）とworker」の構成と並べて置き、試している。
+
+- `hub2`コマンド（`configs/fish/functions/hub2.fish`）: tmux session `hub2`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_HUB2_HOME`で変更可）で起動し、右のペインで`claude agents`を開く。どちらもauto modeで起動する
+- `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
+- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行以内、人に判断を求めるときは必ずAskUserQuestionで止まる。止まったスレッドは`claude agents`の一覧で入力待ちとして上に出るので、ユーザーはそこで選んで答える
+
+`--worktree`の作るworktreeは、どのリポジトリでも`git status`に出ないよう、`configs/git/ignore`で無視する。片付けは`claude rm <id>`で、worktreeも安全なら一緒に消える。
+
+外への送信の確認（`external-post-guard.py`）とtextlintは、`settings.json`のhookなので、窓口でもスレッドでもそのまま動く。スレッドは`AGENT_HUB_WORKER`を持たないので、送信はいつも確認ダイアログで止まり、一覧で入力待ちになる。提案と承認のファイル（`~/hub/proposals.md`、`outbox/`）、状況ペイン、ダッシュボード、`report.sh`は使わない。`outbox-guard.py`は今の構成のためにhookに残るが、hub2では関係しない。
+
+今の構成との違い:
+
+| | hub | hub2 |
+| --- | --- | --- |
+| 作業の単位 | tmuxのwindowのworker（`spawn.fish`） | `claude --bg`のスレッド |
+| 作業場所 | `<repo>.worktrees/agent/<task>` | `<repo>/.claude/worktrees/<名前>` |
+| 状況の表示 | 状況ペインのmod、ダッシュボード | `claude agents` |
+| 承認待ち | 受信箱と`report.sh`の報告 | スレッドのAskUserQuestion |
+| 外への送信 | 提案を承認すると確認なしで通る | いつも確認ダイアログ |
+
+今の構成（`hub`、`hub-dash`、`configs/tmux/scripts/agent-hub/`）は消していないので、`hub`でそのまま使える。hub2を足す前の状態には、tag `hub-v1-20261104`で戻せる（`git checkout hub-v1-20261104 -- <path>`か、そのtagからブランチを作る）。
 
 ## 窓口（hub）とworker
 
