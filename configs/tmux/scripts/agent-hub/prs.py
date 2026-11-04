@@ -80,7 +80,10 @@ OWN_FIELDS = """id number title url isDraft createdAt updatedAt headRefOid addit
  timelineItems(last:50,itemTypes:[REVIEW_REQUESTED_EVENT,REVIEW_DISMISSED_EVENT]){nodes{__typename
   ... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login} ... on Team{slug}}}
   ... on ReviewDismissedEvent{createdAt previousReviewState review{author{login}}}}}
- commits(last:1){nodes{commit{committedDate statusCheckRollup{state}}}}"""
+ commits(last:1){nodes{commit{committedDate statusCheckRollup{state
+  contexts(first:100){pageInfo{hasNextPage} nodes{__typename
+   ... on CheckRun{name status conclusion startedAt completedAt checkSuite{workflowRun{workflow{name}}}}
+   ... on StatusContext{context state createdAt}}}}}}}"""
 
 
 def search_query(fields: str, me_var: bool) -> str:
@@ -299,6 +302,51 @@ def rank_requests(items: list[dict]) -> list[dict]:
     )
 
 
+ROLLUP_CI = {"SUCCESS": "success", "FAILURE": "failure", "ERROR": "failure", "PENDING": "pending", "EXPECTED": "pending"}
+CHECK_RUN_FAILURES = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+
+
+def check_ci(node: dict) -> tuple[str, str, str] | None:
+    """rollup の 1 件を (名前, 新しさの比較キー, success|failure|pending) にする。
+
+    GitHub Actions のジョブは、別のワークフローの同じ名前のジョブと混ぜないよう、名前にワークフロー名を付ける。
+    """
+    if node.get("__typename") == "CheckRun":
+        if node.get("status") != "COMPLETED":
+            state = "pending"
+        else:
+            state = "failure" if node.get("conclusion") in CHECK_RUN_FAILURES else "success"
+        workflow = (((node.get("checkSuite") or {}).get("workflowRun") or {}).get("workflow") or {}).get("name") or ""
+        # 待ち行列にあってまだ始まっていない実行は、ほかのどれよりも新しい
+        return f"{workflow} / {node.get('name') or ''}", node.get("startedAt") or node.get("completedAt") or "\uffff", state
+    if node.get("__typename") == "StatusContext":
+        return f"status: {node.get('context') or ''}", node.get("createdAt") or "", ROLLUP_CI.get(node.get("state") or "", "pending")
+    return None
+
+
+def ci_state(rollup: dict | None) -> str | None:
+    """head の CI の状態。同じ名前のチェックは最新の実行だけで決める。
+
+    statusCheckRollup.state は、後の実行に置き換えられて CANCELLED になった古い実行も失敗に数えるので、
+    contexts を名前ごとに見る。contexts が取り切れないときだけ rollup の state に頼る。
+    """
+    if not rollup:
+        return None
+    contexts = rollup.get("contexts") or {}
+    nodes = [c for c in map(check_ci, contexts.get("nodes") or []) if c]
+    if not nodes or (contexts.get("pageInfo") or {}).get("hasNextPage"):
+        return ROLLUP_CI.get(rollup.get("state") or "")
+    latest: dict[str, tuple[str, str]] = {}
+    for name, when, state in nodes:
+        if name not in latest or when >= latest[name][0]:
+            latest[name] = (when, state)
+    states = {state for _, state in latest.values()}
+    for state in ("failure", "pending"):
+        if state in states:
+            return state
+    return "success"
+
+
 def own_pr_item(pr: dict, me: str, cfg: dict, now: float) -> dict:
     """自分の PR が何を待っているか。GitHub の状態だけから決める。"""
     head = pr["headRefOid"]
@@ -361,10 +409,7 @@ def own_pr_item(pr: dict, me: str, cfg: dict, now: float) -> dict:
         if login(c.get("author")) != me and ts(c["createdAt"]) > head_at:
             unanswered += 1
 
-    rollup = (last.get("statusCheckRollup") or {}).get("state")
-    ci = {"SUCCESS": "success", "FAILURE": "failure", "ERROR": "failure", "PENDING": "pending", "EXPECTED": "pending"}.get(
-        rollup or "", None
-    )
+    ci = ci_state(last.get("statusCheckRollup"))
     changes = sorted(who for who, r in reviews.items() if r["state"] == "CHANGES_REQUESTED")
     approvers = sorted(
         who for who, r in reviews.items() if r["state"] == "APPROVED" and (r.get("commit") or {}).get("oid") == head

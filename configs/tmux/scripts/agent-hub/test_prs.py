@@ -85,6 +85,16 @@ def own_pr(**kw):
     return pr
 
 
+def check_run(name, conclusion, started, status="COMPLETED", workflow="CI"):
+    return {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion,
+            "startedAt": started, "completedAt": started if status == "COMPLETED" else None,
+            "checkSuite": {"workflowRun": {"workflow": {"name": workflow}}}}
+
+
+def status(context, state, created):
+    return {"__typename": "StatusContext", "context": context, "state": state, "createdAt": created}
+
+
 def review(who, state, commit=HEAD, author=None):
     return {"author": author or user(who), "state": state, "submittedAt": "2026-01-08T00:00:00Z", "commit": {"oid": commit}}
 
@@ -257,6 +267,39 @@ class OwnPrTest(unittest.TestCase):
 
     def test_no_ci(self):
         self.assertIsNone(self.item(commits={"nodes": [{"commit": {"committedDate": "2026-01-07T00:00:00Z", "statusCheckRollup": None}}]})["ci"])
+
+    def ci(self, *nodes, state="FAILURE", more=False):
+        rollup = {"state": state, "contexts": {"pageInfo": {"hasNextPage": more}, "nodes": list(nodes)}}
+        return self.item(commits={"nodes": [{"commit": {"committedDate": "2026-01-07T00:00:00Z", "statusCheckRollup": rollup}}]})
+
+    def test_ci_uses_the_latest_run_of_each_check(self):
+        # 同じ名前のチェックが 4 回。古い 3 回は後の実行に置き換えられて CANCELLED、最後は SUCCESS。
+        # rollup の state は FAILURE でも、GitHub の画面では成功なので失敗にしない
+        runs = [check_run("build", "CANCELLED", f"2026-01-07T00:0{i}:00Z") for i in range(3)]
+        runs.append(check_run("build", "SUCCESS", "2026-01-07T00:03:00Z"))
+        others = [check_run("lint", "SUCCESS", "2026-01-07T00:00:00Z"), check_run("deploy", "SKIPPED", "2026-01-07T00:00:00Z"),
+                  status("ci/legacy", "SUCCESS", "2026-01-07T00:00:00Z")]
+        for nodes in (runs + others, runs[3:] + runs[:3] + others):  # 並び順によらない
+            item = self.ci(*nodes)
+            self.assertEqual(item["ci"], "success")
+            self.assertNotIn("ci_failed", item["states"])
+
+    def test_ci_failure_and_pending_of_the_latest_runs(self):
+        old_ok = check_run("build", "SUCCESS", "2026-01-07T00:00:00Z")
+        self.assertEqual(self.ci(old_ok, check_run("build", "CANCELLED", "2026-01-07T00:01:00Z"), state="SUCCESS")["ci"], "failure")
+        self.assertEqual(self.ci(old_ok, check_run("build", None, "2026-01-07T00:01:00Z", status="IN_PROGRESS"))["ci"], "pending")
+        self.assertEqual(self.ci(old_ok, check_run("build", None, None, status="QUEUED"))["ci"], "pending")
+        self.assertEqual(self.ci(old_ok, status("ci/legacy", "ERROR", "2026-01-07T00:00:00Z"))["ci"], "failure")
+        # 別のワークフローの同じ名前のジョブは、別のチェックとして見る
+        self.assertEqual(self.ci(check_run("build", "FAILURE", "2026-01-07T00:00:00Z", workflow="Release"),
+                                 check_run("build", "SUCCESS", "2026-01-07T00:05:00Z"))["ci"], "failure")
+        self.assertEqual(self.ci(status("ci/legacy", "FAILURE", "2026-01-07T00:00:00Z"),
+                                 status("ci/legacy", "SUCCESS", "2026-01-07T00:05:00Z"))["ci"], "success")
+
+    def test_ci_falls_back_to_rollup_state(self):
+        # contexts を取り切れないときは、一部だけで決めずに rollup の state を使う
+        self.assertEqual(self.ci(check_run("build", "SUCCESS", "2026-01-07T00:00:00Z"), more=True)["ci"], "failure")
+        self.assertEqual(self.ci(state="PENDING")["ci"], "pending")
 
     def test_rank(self):
         def item(name, states, **kw):
