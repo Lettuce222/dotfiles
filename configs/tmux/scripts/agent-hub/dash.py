@@ -36,10 +36,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import prs as pr_watch
+
 DEFAULT_PORT = 8765
 DOC_DIRS = ("notes", "minutes", "gtd")
 GTD_FILES = ("inbox", "next-actions", "waiting-for", "projects", "someday", "done")
 PR_CACHE_SECONDS = 60
+MY_PRS_CACHE_SECONDS = 300  # GitHub の検索 API は回数の制限がきついので、worker の PR より間を空ける
 
 
 def hub_home() -> Path:
@@ -427,7 +430,7 @@ class PRCache:
     def _fetch(self, key: tuple[str, str]) -> None:
         repo, branch = key
         fields = "number,title,url,state,isDraft,statusCheckRollup,updatedAt"
-        out, err = run_full(["gh", "pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", fields, "--limit", "5"], timeout=30)
+        out, err = run_full([gh_command(), "pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", fields, "--limit", "5"], timeout=30)
         pr: dict | None = {"error": err}
         if out is not None:
             try:
@@ -442,6 +445,54 @@ class PRCache:
 
 
 PR_CACHE = PRCache()
+
+
+def gh_command() -> str:
+    """prs.py と同じ gh を使う（AGENT_HUB_GH > prs.json の gh > PATH の gh）。"""
+    try:
+        return pr_watch.gh_path(pr_watch.load_config())
+    except pr_watch.ConfigError:
+        return pr_watch.gh_path({})
+
+
+class MyPRs:
+    """prs.py の結果（自分宛てのレビュー依頼と自分の PR）を覚えておく。取得は裏で行い、ページの表示を待たせない。"""
+
+    def __init__(self, fetch=None):
+        self.lock = threading.Lock()
+        self.fetch = fetch or self._fetch
+        self.at = 0.0
+        self.data: dict | None = None
+        self.error = ""
+        self.pending = False
+
+    def get(self) -> tuple[bool, dict | None, str]:
+        """(一度でも取り終えたか, 最後に取れた結果, 最後の失敗理由) を返す。古ければ取り直しを始める。"""
+        with self.lock:
+            if not self.pending and time.time() - self.at > MY_PRS_CACHE_SECONDS:
+                self.pending = True
+                threading.Thread(target=self._run, daemon=True).start()
+            return self.at > 0, self.data, self.error
+
+    def _run(self) -> None:
+        try:
+            data, err = self.fetch(), ""
+        except Exception as e:  # 失敗しても前の結果は残し、理由を添えて表示する
+            data, err = None, f"{type(e).__name__}: {e}"
+        with self.lock:
+            self.at = time.time()
+            self.pending = False
+            self.error = err
+            if data is not None:
+                self.data = data
+
+    @staticmethod
+    def _fetch() -> dict:
+        cfg = pr_watch.load_config()
+        return pr_watch.collect(pr_watch.GitHub(pr_watch.gh_path(cfg)), cfg)
+
+
+MY_PRS = MyPRs()
 
 
 def ci_summary(rollup: list[dict] | None) -> tuple[str, str]:
@@ -767,6 +818,91 @@ def item_list(items: list[Item], today: dt.date, empty: str = "なし", **kw) ->
     return "<ul class=items>" + "".join(render_item(it, today, **kw) for it in items) + "</ul>"
 
 
+# 自分の PR の状態ごとの見た目。prs.STATES と同じキー
+STATE_CLASSES = {
+    "ci_failed": "bad",
+    "changes_requested": "bad",
+    "unanswered": "warn",
+    "approval_stale": "warn",
+    "no_reviewer": "warn-soft",
+    "waiting": "muted",
+    "approved": "good",
+}
+# 自分が次の手を打つ必要がある状態
+OWN_ACTION_STATES = {"ci_failed", "changes_requested", "unanswered", "approval_stale", "no_reviewer"}
+
+
+def gh_url(url: str) -> str:
+    return url if url.startswith("https://") else ""
+
+
+def own_pr_quiet(i: dict) -> bool:
+    """draft や長く動いていない PR は、畳んだほうに出す。"""
+    return i["draft"] or i["stale"]
+
+
+def render_review_request(i: dict) -> str:
+    chips = [chip(i["pr"], "link", gh_url(i["url"]), external=True), chip(i["author"] or "?", "" if i["author_is_person"] else "muted")]
+    chips.append(chip(pr_watch.wait_text(i["waiting_hours"]) + "待ち", "warn" if i["waiting_hours"] >= 24 else "muted"))
+    if i["only_blocker"]:
+        chips.append(chip("残りは自分だけ", "warn-soft"))
+    if i["re_review"]:
+        chips.append(chip("再レビュー", "accent"))
+    if i["stale"]:
+        chips.append(chip(f"{i['idle_days']}日動きなし", "muted"))
+    chips.append(chip(f"+-{i['size']}", "muted"))
+    return f'<li class="item"><span class="body">{esc(i["title"])}</span><span class="chips">{"".join(chips)}</span></li>'
+
+
+def render_own_pr(i: dict) -> str:
+    chips = [chip(i["pr"], "link", gh_url(i["url"]), external=True)]
+    if i["draft"]:
+        chips.append(chip("draft", "muted"))
+    for s in i["states"]:
+        if s == "waiting":
+            for w in i["waiting"]:
+                chips.append(chip(f"{w['reviewer']} {pr_watch.wait_text(w['hours'])}待ち", "warn-soft" if w["hours"] >= 24 else "muted"))
+            continue
+        label = pr_watch.STATES[s]
+        if s == "unanswered":
+            label += f" {i['unanswered_threads']}"
+        elif s == "changes_requested" and i["changes_requested_by"]:
+            label += " " + ", ".join(i["changes_requested_by"])
+        elif s == "approval_stale":
+            label += " " + ", ".join(i["stale_approvals"])
+        chips.append(chip(label, STATE_CLASSES.get(s, "")))
+    if i["ci"] == "pending":
+        chips.append(chip("CI 実行中", "muted"))
+    if i["stale"]:
+        chips.append(chip(f"{i['idle_days']}日動きなし", "muted"))
+    return f'<li class="item"><span class="body">{esc(i["title"])}</span><span class="chips">{"".join(chips)}</span></li>'
+
+
+def render_my_prs() -> tuple[str, int, int]:
+    """(PR の欄の HTML, レビュー依頼の数, 手を打つ必要がある自分の PR の数) を返す。取れていなければ数は -1。"""
+    fetched, data, error = MY_PRS.get()
+    err = f'<p class="muted small">取得に失敗しました: {esc(error)}</p>' if error else ""
+    if data is None:
+        msg = "取得中…" if not fetched else "まだ取得できていません"
+        return f'<section id="prs"><h2>PR</h2><p class="muted">{msg}</p>{err}</section>', -1, -1
+    requests = data["review_requests"]
+    own = [i for i in data["own_prs"] if not own_pr_quiet(i)]
+    quiet = [i for i in data["own_prs"] if own_pr_quiet(i)]
+    act = [i for i in own if OWN_ACTION_STATES & set(i["states"])]
+    team = data.get("team_requests", 0)
+    team_note = f'<p class="muted small">ほかにチーム宛ての依頼 {team} 件（一覧には出しません）</p>' if team else ""
+    req_html = "".join(render_review_request(i) for i in requests)
+    own_html = "".join(render_own_pr(i) for i in own)
+    quiet_html = "".join(render_own_pr(i) for i in quiet)
+    stamp = esc(data.get("generated_at", "")[:16].replace("T", " "))
+    body = f"""<section id="prs"><h2>PR <span class="muted small">{stamp} UTC 時点</span></h2>{err}
+<h3>自分宛てのレビュー依頼（{len(requests)}）</h3>{f'<ul class="items">{req_html}</ul>' if requests else '<p class="muted">ありません</p>'}{team_note}
+<h3>自分の PR（{len(own)}）</h3>{f'<ul class="items">{own_html}</ul>' if own else '<p class="muted">ありません</p>'}
+{f'<details id="prs-quiet"><summary>draft・長く動いていない PR（{len(quiet)}）</summary><ul class="items">{quiet_html}</ul></details>' if quiet else ''}
+</section>"""
+    return body, len(requests), len(act)
+
+
 def page_overview() -> tuple[str, str]:
     home = hub_home()
     gtd = load_gtd(home)
@@ -787,8 +923,11 @@ def page_overview() -> tuple[str, str]:
 
     alive = sum(1 for w in tmux_windows())
     asks = sum(1 for r in load_reports() if r.is_open)
+    prs_html, n_requests, n_own_act = render_my_prs()
     stats = [
         ("受信箱（未対応）", asks, "/inbox"),
+        ("レビュー依頼", n_requests, "#prs"),
+        ("自分の PR（要対応）", n_own_act, "#prs"),
         ("DOING", len(doing), "#doing"),
         ("次にやること", len(nexts), "#next"),
         ("待ち", len(waiting), "#waiting"),
@@ -798,7 +937,7 @@ def page_overview() -> tuple[str, str]:
     ]
     cards = "".join(
         f'<a class="stat{" alert" if href == "/inbox" and n else ""}" href="{href}">'
-        f'<span class="num">{n}</span><span class="label">{esc(label)}</span></a>'
+        f'<span class="num">{n if n >= 0 else "…"}</span><span class="label">{esc(label)}</span></a>'
         for label, n, href in stats
     )
 
@@ -821,6 +960,7 @@ def page_overview() -> tuple[str, str]:
 <section id="doing"><h2>DOING</h2>{item_list(doing, today, "着手中の項目はありません")}</section>
 <section id="next"><h2>次にやること</h2>{item_list(nexts, today, "次にやることはありません")}</section>
 <section id="waiting"><h2>待ち</h2>{item_list(waiting, today, "待っている項目はありません")}</section>
+{prs_html}
 {f'<section id="inbox"><h2>inbox</h2>{item_list(inbox, today)}</section>' if inbox else ''}
 <section id="done"><h2>完了（今日 {today.isoformat()}）</h2>{item_list(done_today, today, "まだありません", show_sub=True)}
 <h3>昨日 {yesterday.isoformat()}</h3>{item_list(done_yesterday, today, "ありません", show_sub=True)}</section>

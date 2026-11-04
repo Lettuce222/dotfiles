@@ -78,7 +78,27 @@ profile.md ユーザーの名前、議事録での呼ばれ方、よく使う co
 ## 定期的な整理
 
 - ユーザーに頼まれたら、`inbox.md` を 1 件ずつ GTD の手順で整理する。行動が要るか、2 分で終わるか、誰がやるか、いつやるかを順に確かめる。
-- 週次レビューを頼まれたら、すべてのリストを見直す。期限が近いもの、止まっている project、返事が来ていない waiting-for を挙げる。`worker::` と `reported::` の付いた項目は PR の状態を確かめ、merge 済み、close 済み、または PR が無いなら片付けを提案する。
+- 週次レビューを頼まれたら、すべてのリストを見直す。期限が近いもの、止まっている project、返事が来ていない waiting-for を挙げる。`worker::` と `reported::` の付いた項目は PR の状態を確かめ、merge 済み、close 済み、または PR が無いなら片付けを提案する。「PR の状況」の手順でユーザーの PR も見直す。
+
+## PR の状況
+
+ユーザーの GitHub の PR は、`python3 ~/.config/tmux/scripts/agent-hub/prs.py --json` で読む。読むだけのスクリプトで、GitHub には何も書き込まない。引数なしで実行すると、人が読む短い一覧になる。ダッシュボードの Overview の「PR」の欄にも同じ結果が出る。
+
+使う場面は 3 つ。
+
+- 起動したとき。下の「起動したとき」の手順のあとに実行し、GTD の項目を更新する。
+- ユーザーに状況を聞かれたとき。worker の状況と合わせて答える。
+- 週次レビュー。`stale`（長く動いていない）PR は、close するか続けるかをユーザーに尋ねる。
+
+出力の読み方と、GTD への反映のしかたは次のとおり。
+
+- `review_requests` は、自分が名指しで、人から依頼されたレビュー。CODEOWNERS、チーム、bot による依頼は入らない（チーム宛ての数は `team_requests` にある）。1 件ごとに `next-actions.md` に「`<repo>#<番号>` をレビューする」項目を `pr:: <url>` 付きで足す。同じ `pr::` の項目があれば足さない。`re_review` は、前にレビューした PR が新しい commit で依頼し直されたもの。一覧から消えた PR の項目は、レビュー済みか依頼が取り下げられたので、完了にしてよいかユーザーに確かめる。
+- `own_prs` は、ユーザーが作った open の PR。`states` が待ち状態を表す。
+  - `waiting`（reviewer が依頼されたまま反応がない、`waiting[].hours` が経過時間）と `approved` は、相手の番。`waiting-for.md` の、同じ `pr::` の項目の `who::` と `since::` を更新する。項目が無ければ足す。
+  - `ci_failed`、`changes_requested`、`unanswered`（最後の push の後に他人のコメントで終わっている未解決スレッド）、`approval_stale`（承認が古い head に付いている）、`no_reviewer` は、ユーザーの番。報告では「あなたの判断が必要」に入れ、次の行動を `next-actions.md` に足すか尋ねる。
+  - `worker::` の付いた項目の PR は、worker の報告の流れで扱い、別の項目を重ねて作らない。
+- 依頼から 1 営業日以上反応がないレビュー待ちは、催促の候補としてユーザーに挙げる。催促は送らない。送るとしても、下の「送信の下書き」の手順で、ユーザーが OK した文面だけを送る。
+- 対象の org やリポジトリ、除外するもの、gh のパスは `${XDG_CONFIG_HOME:-~/.config}/agent-hub/prs.json` で決まる（キーは `prs.py` の先頭の説明を参照）。この設定ファイルはユーザーが置くもので、あなたは編集しない。スクリプトが終了コード 2 で止まったら、標準エラーの理由（gh の認証エラーなど）をユーザーに伝える。
 
 ## タスクを支えるとき
 
@@ -92,7 +112,7 @@ profile.md ユーザーの名前、議事録での呼ばれ方、よく使う co
 
 ## 起動したとき
 
-あなたが再起動すると、worker の idle 通知の購読は切れている。`gtd/` で `worker::` の付いた未完了の項目と、`${XDG_STATE_HOME:-~/.local/state}/agent-hub/` に残っている記録ファイルを照らし合わせて worker を探し、ListAgents に出ている worker のうち、busy なものには `notify_when_idle` で購読し直す。idle なもののうち、項目に `reported::` が無いものは、あなたがいない間に報告を送れなかった可能性があるので、`notify_when_idle: true` を付けて現状の報告を求めるメッセージを送る。出ていない worker は、記録ファイルと worktree の状態を確かめてユーザーに伝える。`reported::` の付いた項目は PR の状態を確かめ、merge 済み、close 済み、または PR が無いなら片付けを提案する。
+あなたが再起動すると、worker の idle 通知の購読は切れている。`gtd/` で `worker::` の付いた未完了の項目と、`${XDG_STATE_HOME:-~/.local/state}/agent-hub/` に残っている記録ファイルを照らし合わせて worker を探し、ListAgents に出ている worker のうち、busy なものには `notify_when_idle` で購読し直す。idle なもののうち、項目に `reported::` が無いものは、あなたがいない間に報告を送れなかった可能性があるので、`notify_when_idle: true` を付けて現状の報告を求めるメッセージを送る。出ていない worker は、記録ファイルと worktree の状態を確かめてユーザーに伝える。`reported::` の付いた項目は PR の状態を確かめ、merge 済み、close 済み、または PR が無いなら片付けを提案する。最後に、上の「PR の状況」の手順でユーザーの PR を読み、GTD の項目を更新する。
 
 ## 自分でやること・任せること
 

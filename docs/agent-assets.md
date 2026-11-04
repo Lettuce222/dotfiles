@@ -110,4 +110,8 @@ workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内�
 
 報告のファイルには報告の本文が入るため、ディレクトリは700、ファイルは600で作る。ポートは`AGENT_HUB_DASH_PORT`（既定8765）、窓口の作業場所は`AGENT_HUB_HOME`で変える。
 
-markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py`で実行する。
+markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_prs.py`で実行する。
+
+`prs.py`は、ユーザーのPRの状況（自分宛てのレビュー依頼と、自分のPRの待ち状態）を`gh api graphql`で読み、JSONか短い一覧で出す。窓口が起動時・状況確認・週次レビューで使い（`hub-rules.md`の「PRの状況」）、ダッシュボードのOverviewにも5分ごとに取り直して表示する。GitHubへは書き込まない。判定の考え方はJeongJaeSoon/agent-skillsの`skills/watch-prs`（MIT License）を参考にしている。
+
+対象のorgやリポジトリ、除外するもの、`gh`のパスは、dotfilesの外の`${XDG_CONFIG_HOME:-~/.config}/agent-hub/prs.json`（`AGENT_HUB_PRS_CONFIG`で変える）に置く。無ければ全リポジトリが対象になる。組織名などの具体的な値はdotfilesに書かない。`gh`は環境変数`AGENT_HUB_GH`、設定の`gh`、`PATH`の`gh`の順に探す。ダッシュボードのworkerのPRの表示も同じ`gh`を使う。

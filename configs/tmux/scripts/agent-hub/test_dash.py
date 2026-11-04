@@ -265,6 +265,74 @@ class ReportScriptTest(StateDirMixin, unittest.TestCase):
         self.assertFalse((self.state / "reports" / "repo.task.md").exists())
 
 
+MY_PRS_DATA = {
+    "generated_at": "2026-01-10T00:00:00+00:00",
+    "viewer": "me",
+    "team_requests": 2,
+    "review_requests": [
+        {"pr": "o/r#1", "url": "https://github.com/o/r/pull/1", "title": "<b>機能</b>", "author": "alice",
+         "author_is_person": True, "waiting_hours": 30, "only_blocker": True, "re_review": True, "stale": False,
+         "idle_days": 0, "size": 15},
+    ],
+    "own_prs": [
+        {"pr": "o/r#2", "url": "javascript:alert(1)", "title": "直す", "draft": False, "stale": False, "idle_days": 1,
+         "ci": "failure", "states": ["ci_failed", "waiting"], "waiting": [{"reviewer": "bob", "hours": 3}],
+         "unanswered_threads": 0, "changes_requested_by": [], "stale_approvals": []},
+        {"pr": "o/r#3", "url": "https://github.com/o/r/pull/3", "title": "下書き", "draft": True, "stale": False,
+         "idle_days": 1, "ci": None, "states": [], "waiting": [], "unanswered_threads": 0,
+         "changes_requested_by": [], "stale_approvals": []},
+    ],
+    "excluded": [],
+}
+
+
+class MyPrsTest(unittest.TestCase):
+    def cache(self, fetch):
+        c = dash.MyPRs(fetch=fetch)
+        c.get()  # 取得を始める
+        for _ in range(100):
+            if not c.pending:
+                break
+            threading.Event().wait(0.01)
+        return c
+
+    def test_render(self):
+        with mock.patch.object(dash, "MY_PRS", self.cache(lambda: MY_PRS_DATA)):
+            html, n_requests, n_act = dash.render_my_prs()
+        self.assertEqual((n_requests, n_act), (1, 1))
+        self.assertIn("自分宛てのレビュー依頼（1）", html)
+        self.assertIn("&lt;b&gt;機能&lt;/b&gt;", html)
+        self.assertIn("30時間待ち", html)
+        self.assertIn("再レビュー", html)
+        self.assertIn("チーム宛ての依頼 2 件", html)
+        self.assertIn('<span class="chip bad">CI 失敗</span>', html)
+        self.assertIn("bob 3時間待ち", html)
+        self.assertNotIn("javascript:", html)
+        self.assertIn("draft・長く動いていない PR（1）", html)
+
+    def test_failure_keeps_last_result(self):
+        c = self.cache(lambda: MY_PRS_DATA)
+        c.fetch = mock.Mock(side_effect=RuntimeError("gh api graphql: HTTP 401"))
+        c.at = 0  # 古くして取り直させる
+        c.get()
+        for _ in range(100):
+            if not c.pending:
+                break
+            threading.Event().wait(0.01)
+        with mock.patch.object(dash, "MY_PRS", c):
+            html, n_requests, _ = dash.render_my_prs()
+        self.assertEqual(n_requests, 1)
+        self.assertIn("取得に失敗しました: RuntimeError: gh api graphql: HTTP 401", html)
+
+    def test_not_fetched_yet(self):
+        c = dash.MyPRs(fetch=lambda: MY_PRS_DATA)
+        c.pending = True  # 取得中のまま
+        with mock.patch.object(dash, "MY_PRS", c):
+            html, n_requests, n_act = dash.render_my_prs()
+        self.assertEqual((n_requests, n_act), (-1, -1))
+        self.assertIn("取得中…", html)
+
+
 class ServerTest(StateDirMixin, unittest.TestCase):
     def setUp(self):
         super().setUp()
@@ -287,6 +355,8 @@ class ServerTest(StateDirMixin, unittest.TestCase):
         for p in (
             mock.patch.object(dash, "answer_report", lambda *a: self.calls.append(a) or "sent"),
             mock.patch.object(dash, "tmux_windows", lambda: {}),
+            # 本物の GitHub には問い合わせない
+            mock.patch.object(dash, "MY_PRS", dash.MyPRs(fetch=lambda: MY_PRS_DATA)),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -328,7 +398,9 @@ class ServerTest(StateDirMixin, unittest.TestCase):
         self.assertIn('name="token" value="' + "t" * 43, body)
         self.assertIn("未対応の要判断・ブロック（1）", body)
         with urllib.request.urlopen(f"{self.origin}/", timeout=5) as res:
-            self.assertIn('<a class="stat alert" href="/inbox"><span class="num">1</span>', res.read().decode())
+            page = res.read().decode()
+        self.assertIn('<a class="stat alert" href="/inbox"><span class="num">1</span>', page)
+        self.assertIn('<section id="prs">', page)
 
     def test_post_requires_token_and_origin(self):
         ok = {"token": "t" * 43, "worker": "repo.task", "ref": "2026-01-02 10:05:00", "action": "send", "text": "x"}
