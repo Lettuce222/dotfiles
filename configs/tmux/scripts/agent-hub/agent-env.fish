@@ -11,3 +11,11 @@ end
 if command -q direnv
     direnv export fish 2>/dev/null | source
 end
+
+# 上の mise env は mise の gh を PATH の先頭に置く。gh のラッパー（ghtkn で
+# トークンを渡すもの）を入れたマシンでは、それを最優先にする。
+# 無いマシンでは何もしない。
+set -l gh_wrapper_dir ~/.local/share/gh-ghtkn/bin
+if test -x $gh_wrapper_dir/gh
+    fish_add_path -gpm $gh_wrapper_dir
+end
