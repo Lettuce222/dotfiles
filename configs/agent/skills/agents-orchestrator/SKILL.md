@@ -1,6 +1,6 @@
 ---
 name: agents-orchestrator
-description: 窓口（hub2 の左ペインの claude -n orchestrator）の決まり。依頼を受けたら自分では作業せず、正しい作業場所で background のスレッドを起動して任せる。hub2 が起動時に読み込む。
+description: 窓口（orchestrator コマンドの左ペインの claude -n orchestrator）の決まり。依頼を受けたら自分では作業せず、正しい作業場所で background のスレッドを起動して任せる。orchestrator コマンドが起動時に読み込む。
 disable-model-invocation: true
 ---
 
@@ -33,7 +33,7 @@ disable-model-invocation: true
 cd <作業場所> && claude --bg -n "<スレッド名>" --permission-mode auto [--worktree <スレッド名>] "/agents-thread <依頼>"
 ```
 
-- スレッド名は `<分類>-<対象>-<短い名前>` にする。分類は `impl`（実装・修正）、`review`（レビュー）、`research`（調査）、`chore`（雑務）のどれか。例: `impl-dotfiles-hub2`、`research-tmp-readme`。英小文字・数字・ハイフンだけにし、ほかのスレッドとぶつけない。
+- スレッド名は `<分類>-<対象>-<短い名前>` にする。分類は `impl`（実装・修正）、`review`（レビュー）、`research`（調査）、`chore`（雑務）のどれか。例: `impl-dotfiles-readme`、`research-tmp-readme`。英小文字・数字・ハイフンだけにし、ほかのスレッドとぶつけない。
 - 依頼の先頭に `/agents-thread` を付け、スレッドの決まりを読み込ませる。依頼には、ユーザーの言葉のほかに、完了の条件と、窓口が知っている前提（関係する PR、前のスレッドの結論）を書く。
 - 窓口と同じ permission mode（auto）で起動する。mode が違うと、スレッドからの報告がユーザーの承認待ちになる。
 - 起動したら、すぐに SendMessage で `to: "<スレッド名>"`、`notify_when_idle: true`、`message` は空にして送る。スレッドが止まったときに知らせが届く。
