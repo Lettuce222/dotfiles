@@ -24,6 +24,8 @@
       "Bash(git push:*)",
       "Bash(git checkout:*)",
       "Bash(git switch:*)",
+      "Bash(git pull --ff-only:*)",
+      "Bash(git -C * pull --ff-only:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:zenn.dev)",
       "Bash(pbcopy:*)",
