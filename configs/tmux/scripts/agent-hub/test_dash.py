@@ -1,6 +1,7 @@
 """dash.py のテスト。実行: python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py"""
 
 import io
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dash  # noqa: E402
+import topics  # noqa: E402
 
 
 class GtdTest(unittest.TestCase):
@@ -667,6 +669,192 @@ class AnswerCliTest(AnswerMixin, unittest.TestCase):
         self.assertEqual(self.sent, [])
         with mock.patch.object(sys, "stderr", io.StringIO()), self.assertRaises(SystemExit):
             dash.main(["answer", "repo.task", "2026-01-02 10:05:00", "x", "--done"])
+
+
+class TopicsMixin(StateDirMixin):
+    """worker を 1 つ置き、その transcript と tmux と claude agents を偽物にする。"""
+
+    WINDOW = {"id": "@7", "name": "🟢 repo:task", "session": "s", "pane": "%9", "pane_pid": 500}
+
+    def setUp(self):
+        super().setUp()
+        root = Path(self.tmp.name).resolve()
+        self.worktree = root / "wt"
+        self.worktree.mkdir()
+        (self.state / "repo.task.md").write_text(
+            f"あなたのセッション名: repo.task\n作業場所: {self.worktree}\n作業ブランチ: agent/task\n", encoding="utf-8")
+        self.env2 = {"CLAUDE_CONFIG_DIR": str(root / "claude"), "AGENT_HUB_OPEN_DIRS": str(root / "out")}
+        self.old.update({k: os.environ.get(k) for k in self.env2})
+        os.environ.update(self.env2)
+        self.out = root / "out"
+        self.out.mkdir()
+        (self.out / "after-1.png").write_bytes(b"\x89PNG")
+        (root / "secret.png").write_bytes(b"\x89PNG")
+        self.secret = root / "secret.png"
+        self.transcript = topics.project_dir(str(self.worktree)) / "sess-1.jsonl"
+        self.transcript.parent.mkdir(parents=True)
+        self.write_transcript("2026-01-02T01:00:00Z", f"撮りました: `{self.out / 'after-1.png'}` と {self.secret}")
+        self.agents = [{"pid": 501, "name": "repo.task", "cwd": str(self.worktree), "sessionId": "sess-1", "status": "idle"}]
+        self.pane = "> \n"
+        self.sent, self.ran = [], []
+        patches = [
+            mock.patch.object(dash, "tmux_windows", lambda: {"repo.task": self.WINDOW}),
+            mock.patch.object(dash, "capture_pane", lambda pane: self.pane),
+            mock.patch.object(dash, "send_to_pane", lambda pane, text: self.sent.append((pane, text)) or True),
+            mock.patch.object(dash.AGENTS, "get", lambda: (self.agents, {501: 500})),
+            mock.patch.object(dash, "TRANSCRIPTS", topics.TranscriptCache()),
+            mock.patch.object(dash, "run", lambda cmd, *a, **kw: self.ran.append(cmd) or ""),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def write_transcript(self, ts, text):
+        rows = [
+            {"type": "user", "timestamp": "2026-01-02T00:59:00Z", "origin": {"kind": "human"},
+             "message": {"role": "user", "content": "指示"}},
+            {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
+        ]
+        self.transcript.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+    def topic(self):
+        (t,) = dash.load_topics()
+        return t
+
+
+class TopicsTest(TopicsMixin, unittest.TestCase):
+    def test_transcript_is_found_from_pane_process(self):
+        t = self.topic()
+        self.assertEqual(t.agent["sessionId"], "sess-1")
+        self.assertEqual([e.kind for e in t.transcript.entries], ["user", "assistant"])
+        self.assertEqual(t.state, "unread")
+        self.assertTrue(t.summary().startswith("撮りました"))
+
+    def test_fallback_without_live_session(self):
+        self.agents = []
+        self.transcript.with_name("sess-1.jsonl").write_text(
+            '{"type":"agent-name","agentName":"repo.task"}\n' + self.transcript.read_text(encoding="utf-8"), encoding="utf-8")
+        self.assertIsNotNone(self.topic().transcript)
+
+    def test_open_report_or_dialog_means_waiting(self):
+        (self.state / "reports" / "repo.task.md").write_text(REPORTS, encoding="utf-8")
+        t = self.topic()
+        self.assertEqual(t.state, "waiting")
+        self.assertIn("権限が足りない", t.summary())
+        (self.state / "reports" / "repo.task.md").unlink()
+        self.pane = "Do you want to proceed?\n❯ 1. Yes\n"
+        self.assertEqual(self.topic().state, "waiting")
+
+    def test_opening_marks_read_until_next_reply(self):
+        self.assertTrue(self.topic().unread)
+        title, body = dash.page_topic("tok", "repo.task", mark_seen=False)
+        self.assertTrue(self.topic().unread)
+        dash.page_topic("tok", "repo.task")
+        self.assertFalse(self.topic().unread)
+        self.assertEqual(self.topic().state, "idle")
+        self.write_transcript("2026-01-02T02:00:00Z", "次の返答")
+        self.assertTrue(self.topic().unread)
+
+    def test_page_shows_allowed_paths_as_buttons_and_images(self):
+        _, body = dash.page_topic("tok", "repo.task")
+        allowed = str(self.out / "after-1.png")
+        self.assertIn(f'name="path" value="{allowed}"', body)
+        self.assertIn(f'<img loading="lazy" src="/topics/file?{urllib.parse.urlencode({"path": allowed})}"', body)
+        self.assertNotIn(f'value="{self.secret}"', body)  # 許可していない場所はただの文字
+        self.assertIn(str(self.secret), body)
+        self.assertIn('action="/topics/send"', body)
+        self.assertIsNone(dash.page_topic("tok", "nobody"))
+
+    def test_send_refuses_dialog(self):
+        self.assertEqual(dash.topic_send("repo.task", "続けて\nください"), "sent")
+        self.assertEqual(self.sent, [("%9", "続けて ください")])
+        self.pane = "Do you want to make this edit?\n"
+        self.assertEqual(dash.topic_send("repo.task", "x"), "dialog")
+        _, body = dash.page_topic("tok", "repo.task")
+        self.assertIn("許可待ち。window へ移ってください", body)
+        self.assertNotIn('action="/topics/send"', body)
+        self.assertEqual(dash.topic_send("repo.task", "  "), "empty")
+        self.assertEqual(dash.topic_send("other.task", "x"), "nowindow")
+        self.assertEqual(len(self.sent), 1)
+
+    def test_switch_and_open(self):
+        self.assertEqual(dash.topic_switch("repo.task"), "switched")
+        self.assertEqual(self.ran, [["tmux", "select-window", "-t", "@7"], ["tmux", "switch-client", "-t", "@7"]])
+        self.ran.clear()
+        self.assertEqual(dash.open_path(str(self.secret)), "badpath")
+        self.assertEqual(dash.open_path(str(self.out / ".." / "secret.png")), "badpath")
+        self.assertEqual(self.ran, [])
+        self.assertEqual(dash.open_path(str(self.out)), "opened")
+        self.assertEqual(len(self.ran), 1)
+        self.assertIsNone(dash.read_image(str(self.secret)))
+        self.assertEqual(dash.read_image(str(self.out / "after-1.png")), (b"\x89PNG", "image/png"))
+
+
+class TopicsServerTest(TopicsMixin, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
+        self.port = self.server.server_address[1]
+        self.origin = f"http://127.0.0.1:{self.port}"
+        old = (dash.Handler.allowed_hosts, dash.Handler.token)
+        dash.Handler.allowed_hosts = {f"127.0.0.1:{self.port}"}
+        dash.Handler.token = "t" * 43
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+        def restore():
+            self.server.shutdown()
+            self.server.server_close()
+            dash.Handler.allowed_hosts, dash.Handler.token = old
+
+        self.addCleanup(restore)
+
+    def request(self, path, fields=None, headers=None):
+        h = {"Origin": self.origin, "Content-Type": "application/x-www-form-urlencoded"} | (headers or {})
+        data = urllib.parse.urlencode(fields).encode() if fields is not None else None
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **kw):
+                return None
+
+        req = urllib.request.Request(self.origin + path, data=data, headers=h, method="POST" if data else "GET")
+        try:
+            with urllib.request.build_opener(NoRedirect).open(req, timeout=5) as res:
+                return res.status, res.headers.get("Location"), res.read()
+        except urllib.error.HTTPError as e:
+            body = e.read()
+            e.close()
+            return e.code, e.headers.get("Location"), body
+
+    def test_posts_require_token_and_origin(self):
+        ok = {"token": "t" * 43, "name": "repo.task", "text": "x", "path": str(self.out)}
+        for route in ("/topics/send", "/topics/switch", "/topics/open"):
+            with self.subTest(route=route):
+                self.assertEqual(self.request(route, dict(ok, token="bad"))[0], 403)
+                self.assertEqual(self.request(route, ok, {"Origin": "http://evil.example"})[0], 403)
+                self.assertEqual(self.request(route, ok, {"Sec-Fetch-Site": "cross-site"})[0], 403)
+        self.assertEqual((self.sent, self.ran), ([], []))
+        self.assertEqual(self.request("/topics/send", ok)[:2], (303, "/topic?name=repo.task&r=sent"))
+        self.assertEqual(self.request("/topics/switch", dict(ok, back="list"))[:2], (303, "/topics?r=switched"))
+        self.assertEqual(self.request("/topics/open", dict(ok, path=str(self.secret)))[:2],
+                         (303, "/topic?name=repo.task&r=badpath"))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_pages_and_images(self):
+        status, _, body = self.request("/topics")
+        self.assertEqual(status, 200)
+        self.assertIn("新しい返答あり", body.decode())
+        self.assertIn('href="/topics" class="active"', body.decode())
+        status, _, body = self.request("/topic?name=repo.task", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 200)
+        self.assertTrue(self.topic().unread)  # ほかのサイトからでは既読にしない
+        self.request("/topic?name=repo.task", headers={"X-Partial": "1"})
+        self.assertFalse(self.topic().unread)
+        q = urllib.parse.urlencode({"path": str(self.out / "after-1.png")})
+        status, _, body = self.request("/topics/file?" + q)
+        self.assertEqual((status, body), (200, b"\x89PNG"))
+        self.assertEqual(self.request("/topics/file?" + q, headers={"Sec-Fetch-Site": "cross-site"})[0], 404)
+        self.assertEqual(self.request("/topics/file?" + urllib.parse.urlencode({"path": str(self.secret)}))[0], 404)
+        self.assertEqual(self.request("/topic?name=nobody")[0], 404)
 
 
 if __name__ == "__main__":

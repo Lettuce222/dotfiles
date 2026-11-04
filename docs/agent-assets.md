@@ -123,6 +123,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 `dash.py`は、窓口の状況と資料をブラウザで見るためのローカルのwebページ。Pythonの標準ライブラリだけで動き、モデルのトークンを使わない。fishの`hub-dash`で起動し、ブラウザで開く。すでに起動していれば開くだけにする。
 
 - Overview: `~/hub/gtd/`からDOING、次にやること、待ち、今日と昨日の完了、プロジェクトを出す。待ちは`waiting-for.md`にある項目と、`waiting::`か`worker::`の付いた項目。DOINGは`doing::`が付いていて待ちに入らない項目。渡したあとも`doing::`は残るので、待ちを先に判定する。`note::`は資料へ、`worker::`と`record::`はworker一覧へ、`link::`は外部へリンクする。
+- 話題: workerごとのスレッド。一覧に状態、最後のやり取りの1行、最終更新を出し、開くと会話を読める。詳しくは下の「話題」。
 - 資料: `notes/`、`minutes/`、`gtd/`のmarkdownを整形して表示する。
 - Workers: 記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）ごとに、指示の全文、worktree、ブランチ、tmuxのwindowの有無、`gh`で取ったPRとCIの状態、未対応の報告の件数を出す。
 - 受信箱: workerの報告（`$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md`）を出す。まだ答えていない要判断とブロックを上に並べ、そこから答えられる。Overviewにも未対応の件数を出す。
@@ -130,6 +131,20 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 ページは数秒ごとに読み直す（`--interval`で変える）。`gh`の結果は60秒ごとに裏で取り直す。
 
 資料には仕事の内容が入るため、`127.0.0.1`だけで待ち受け、Hostヘッダーが`127.0.0.1`か`localhost`でない要求は断る。`~/hub`と記録ファイルは読むだけで、書き換えない。
+
+#### 話題
+
+workerごとのスレッドを、Claude Codeのtranscriptから読んで出す（`topics.py`）。モデルは使わない。
+
+- transcriptの決め方: `claude agents --json`のうち、pidがworkerのtmux paneの`pane_pid`の子孫であるセッションの`sessionId`を使い、`~/.claude/projects/<作業ディレクトリの英数字以外を-にした名前>/<sessionId>.jsonl`を読む。paneが分からなければ、名前と作業ディレクトリが一致するセッションが1つだけのときに使う。セッションが動いていなければ、worktreeのtranscriptのうち`agent-name`がworkerのセッション名と同じで最も新しいものを読む。transcriptは追記された分だけを読み足す。
+- 会話: ユーザー、assistant、ほかのセッション（hubなど）からのメッセージをmarkdownで出す。続けて呼んだツールは1つに畳み、失敗した数を添える。thinking、サブエージェント、裏の知らせ（task-notification）、Skillの本文は出さない。
+- 状態: 確認画面が出ている、AskUserQuestionなどの答えを待っている、未対応の要判断・ブロックがある、のどれかなら「あなたの返事待ち」。ほかは、未読なら「新しい返答あり」、`claude agents`の`busy`（取れなければwindow名の🟡）なら「進行中」、残りは「完了・待機」。
+- 既読: workerの最後の発言（assistantの文章と報告）の時刻を、話題を開いたときに`$XDG_STATE_HOME/agent-hub/dash/seen.json`へ書く。それより新しい発言があれば未読。ほかのサイトからの読み込み（`Sec-Fetch-Site`がcross-siteなど）では既読にしない。
+- 返答: 話題の画面の入力欄から、そのworkerのpaneへ`send-keys -l`で送る。受信箱の回答と同じく、記録ファイルとwindowのあるworkerに限り、確認画面が出ていれば送らずに「許可待ち。windowへ移ってください」と出す。前置きは付けず、windowで打ったのと同じ入力になる。
+- windowへ移る: `tmux select-window`と`switch-client`で、tmuxのclientをworkerのwindowへ切り替える（clientが1つの前提）。
+- 成果物のパス: 会話と報告の中の、`/tmp`、`~/hub`、`AGENT_HUB_OPEN_DIRS`（`:`区切り）の下に実在するパスをボタンにする。押すと、ファイルなら`open -R`でFinderに選んだ状態で、ディレクトリなら`open`で開く（Ubuntuは`xdg-open`でディレクトリを開く）。symlinkを辿ったあとの場所で確かめ、許可したディレクトリの外は開かない。画像（png、jpg、gif、webp）は話題の画面の中にも出す（`GET /topics/file`。同じ制限で、ほかのサイトからは読ませない）。
+
+返答、windowへ移る、パスを開くは、受信箱の回答と同じくPOSTだけで受け、トークン・Host・Origin・`Sec-Fetch-Site`を確かめる。
 
 #### 受信箱と回答
 
@@ -145,9 +160,9 @@ workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内�
 
 受信箱で答えると、`dash.py`はworkerのwindowのpaneへ`tmux send-keys`で`[ダッシュボードから回答 <報告の時刻>] <答え>`を打ち込んでEnterを送り、報告のファイルに`回答`を追記する。workerはユーザーの入力として受け取り、窓口へ`[回答受領]`をSendMessageで知らせる。窓口はそれを見てGTDを更新する。送らずに`対応済み`にするだけのボタンもある。
 
-ダッシュボードで書き込みを受けるのはこの口だけなので、次のように守る。
+ダッシュボードで書き込みを受けるのはこの口と話題の口だけなので、次のように守る。
 
-- 待ち受けは`127.0.0.1`のまま。答えは`POST /inbox/answer`だけで受け、GETでは何も変えない。
+- 待ち受けは`127.0.0.1`のまま。答えは`POST /inbox/answer`だけで受け、GETでは何も変えない（話題の既読の記録を除く）。
 - 起動ごとに`secrets.token_urlsafe(32)`でトークンを作り、受信箱のフォームに埋める。POSTはトークンの一致（`hmac.compare_digest`）、許可したHost、同じOriginを必須にし、`Sec-Fetch-Site`が付いていれば`same-origin`に限る。CSPの`form-action 'self'`も付ける。
 - 送り先は、記録ファイル（`$XDG_STATE_HOME/agent-hub/*.md`）があり、`@agent-hub-worker`の印が付いたtmuxのwindowがあるworkerに限る。セッション名は英数字と`._-`だけを受け付ける。まだ答えていない報告にだけ答えられ、同じ報告へ二度は送らない。
 - 答えは1000文字まで。改行とタブは空白に変え、ほかの制御文字（ESCなど）とUnicodeの双方向制御文字は落とす。`send-keys -l`で文字として送る。フォームの本体は16KiBまで。
@@ -169,7 +184,7 @@ workerは報告をSendMessageで窓口に送る前に、`report.sh`で同じ内�
 
 `status`は`gh`を待たずに返す。`gh`の結果は`${XDG_CACHE_HOME:-~/.cache}/agent-hub/status-prs.json`に覚えておき、古ければ（workerのPRは60秒、自分のPRは5分）裏で`dash.py refresh-cache`を起動して取り直す。初めて実行したときや取り直しの途中は、前の結果か空の結果を返す（`prs.pending`）。`--no-prs`ではキャッシュを読まず、取り直しも始めない。
 
-markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_prs.py configs/tmux/scripts/agent-hub/test_notify.py`で実行する。
+markdownの整形は、外部パッケージを入れずにmacOSとUbuntuの`python3`だけで動かすため、GFMの一部（表、リスト、コード、リンク、強調）を`dash.py`の中で扱う。テストは`python3 -m unittest configs/tmux/scripts/agent-hub/test_dash.py configs/tmux/scripts/agent-hub/test_topics.py configs/tmux/scripts/agent-hub/test_prs.py configs/tmux/scripts/agent-hub/test_notify.py`で実行する。
 
 `prs.py`は、ユーザーのPRの状況（自分宛てのレビュー依頼と、自分のPRの待ち状態）を`gh api graphql`で読み、JSONか短い一覧で出す。窓口が起動時・状況確認・週次レビューで使い（`hub-rules.md`の「PRの状況」）、ダッシュボードのOverviewにも5分ごとに取り直して表示する。GitHubへは書き込まない。判定の考え方はJeongJaeSoon/agent-skillsの`skills/watch-prs`（MIT License）を参考にしている。
 

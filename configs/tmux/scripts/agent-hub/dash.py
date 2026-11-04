@@ -6,6 +6,9 @@
 - 書き込むのは受信箱だけ。worker の報告（$XDG_STATE_HOME/agent-hub/reports/<セッション名>.md）に答えると、
   その worker の tmux pane へ send-keys で送り、報告のファイルに「回答」を追記する。
   POST は起動ごとに作るトークンと同じ origin を必須にし、送り先は記録ファイルがある worker の window に限る
+- 話題（/topics）は worker ごとに Claude Code の transcript を読み（topics.py）、会話を出す。そこから
+  返答を send-keys で送り、tmux の window へ移り、許可したディレクトリの下の成果物を Finder で開く。
+  どれも受信箱の回答と同じ POST の守りを通す。既読の記録だけは $XDG_STATE_HOME/agent-hub/dash/seen.json に書く
 - status / answer のサブコマンドは、サーバーを起動せずに同じ集計と回答の口をターミナルへ出す。
   status は gh の結果を ${XDG_CACHE_HOME:-~/.cache}/agent-hub に覚え、古ければ裏で取り直す
 - Python の標準ライブラリだけで動かす。markdown の整形は、手元の資料が読める程度の GFM の一部を自前で扱う
@@ -43,6 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import prs as pr_watch
+import topics
 
 DEFAULT_PORT = 8765
 DOC_DIRS = ("notes", "minutes", "gtd")
@@ -180,10 +184,10 @@ class Renderer:
         out = []
         pos = 0
         for m in INLINE_RE.finditer(text):
-            out.append(esc(text[pos : m.start()]))
+            out.append(self.text(text[pos : m.start()]))
             pos = m.end()
             if m.group("code"):
-                out.append(f"<code>{esc(m.group('codetext').strip())}</code>")
+                out.append(self.code(m.group("codetext").strip()))
             elif m.group("ltext") is not None:
                 out.append(self.link(self.inline(m.group("ltext")), m.group("lurl")))
             elif m.group("auto"):
@@ -194,8 +198,15 @@ class Renderer:
                 out.append(f"<del>{self.inline(m.group('del'))}</del>")
             elif m.group("em") is not None:
                 out.append(f"<em>{self.inline(m.group('em'))}</em>")
-        out.append(esc(text[pos:]))
+        out.append(self.text(text[pos:]))
         return "".join(out)
+
+    def text(self, s: str) -> str:
+        """書式の付かない地の文。"""
+        return esc(s)
+
+    def code(self, s: str) -> str:
+        return f"<code>{esc(s)}</code>"
 
     def render(self, text: str) -> str:
         lines = text.replace("\t", "    ").splitlines()
@@ -410,13 +421,14 @@ def github_repo(remote_url: str) -> str:
 def tmux_windows_full() -> tuple[dict[str, dict], str]:
     """(@agent-hub-worker の印が付いた window を worker のセッション名ごとに, tmux の失敗理由) を返す。
     pane は window の現在の pane。"""
-    fmt = "#{window_id}\t#{@agent-hub-worker}\t#{window_name}\t#{session_name}\t#{pane_id}"
+    fmt = "#{window_id}\t#{@agent-hub-worker}\t#{window_name}\t#{session_name}\t#{pane_id}\t#{pane_pid}"
     out, err = run_full(["tmux", "list-windows", "-a", "-F", fmt])
     windows = {}
     for line in (out or "").splitlines():
         parts = line.split("\t")
-        if len(parts) == 5 and parts[1]:
-            windows[parts[1]] = {"id": parts[0], "name": parts[2], "session": parts[3], "pane": parts[4]}
+        if len(parts) == 6 and parts[1]:
+            windows[parts[1]] = {"id": parts[0], "name": parts[2], "session": parts[3], "pane": parts[4],
+                                 "pane_pid": int(parts[5]) if parts[5].isdigit() else None}
     return windows, err
 
 
@@ -1204,6 +1216,384 @@ def page_inbox(token: str, flash: str = "") -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# 話題（worker ごとのスレッド。transcript を読んで会話を出し、返答と window への移動をここから行う）
+
+TOPIC_ENTRIES = 150  # 話題の画面に出す、最近のやり取りの数
+AGENTS_CACHE_SECONDS = 3
+LONG_MESSAGE = 1200  # これより長い指示（worker への最初の指示など）は畳む
+TRANSCRIPTS = topics.TranscriptCache()
+TOPIC_MESSAGES = {
+    "sent": ("送りました。会話に出るまで少しかかります", "good"),
+    "dialog": ("許可待ち。window へ移ってください", "bad"),
+    "nowindow": ("window がないので送れません", "bad"),
+    "empty": ("返答が空です", "bad"),
+    "toolong": (f"返答は {MAX_ANSWER} 文字までです", "bad"),
+    "sendfail": ("tmux で送れませんでした", "bad"),
+    "switched": ("window へ移りました。ターミナルを前に出してください", "good"),
+    "switchfail": ("tmux で window を切り替えられませんでした", "bad"),
+    "opened": ("開きました", "good"),
+    "badpath": ("開けないパスです（許可したディレクトリの外か、ありません）", "bad"),
+    "openfail": ("開けませんでした", "bad"),
+}
+
+
+class AgentsCache:
+    """`claude agents --json` と、プロセスの親子関係（ps）を少しの間だけ覚える。一覧の再読み込みごとに起動しないため。"""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.at = 0.0
+        self.value: tuple[list[dict], dict[int, int]] = ([], {})
+
+    def get(self) -> tuple[list[dict], dict[int, int]]:
+        with self.lock:
+            if time.time() - self.at > AGENTS_CACHE_SECONDS:
+                out = run(["claude", "agents", "--json"], timeout=5)
+                ps = run(["ps", "-A", "-o", "pid=", "-o", "ppid="], timeout=5)
+                self.value = (topics.parse_agents(out or "[]"), topics.parse_ps(ps or ""))
+                self.at = time.time()
+            return self.value
+
+
+AGENTS = AgentsCache()
+
+
+def seen_store() -> topics.SeenStore:
+    return topics.SeenStore(state_dir() / "dash" / "seen.json")
+
+
+def report_epoch(ts: str) -> float:
+    try:
+        return dt.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError:
+        return 0.0
+
+
+@dataclass
+class Topic:
+    worker: Worker
+    agent: dict | None
+    transcript: topics.Transcript | None
+    reports: list[Report]
+    dialog: bool
+    seen: float
+
+    @property
+    def name(self) -> str:
+        return self.worker.name
+
+    @property
+    def window(self) -> dict | None:
+        return self.worker.window
+
+    @property
+    def open_reports(self) -> list[Report]:
+        return [r for r in self.reports if r.is_open]
+
+    @property
+    def thread_ts(self) -> float:
+        """スレッド側（worker）が最後に発言した時刻。assistant の文章と報告。"""
+        ts = self.transcript.last_reply_ts if self.transcript else 0.0
+        reps = [report_epoch(r.ts) for r in self.reports if r.kind in REPORT_KINDS]
+        return max([ts] + reps)
+
+    @property
+    def updated(self) -> float:
+        """最後のやり取りの時刻。transcript が無いときだけ、記録ファイルを書いた時刻を使う。"""
+        ts = max(self.transcript.last_ts if self.transcript else 0.0, self.thread_ts)
+        return ts or self.worker.mtime
+
+    @property
+    def unread(self) -> bool:
+        return self.thread_ts > self.seen
+
+    @property
+    def busy(self) -> bool:
+        return worker_status(self.window, self.agent, False) == "busy"
+
+    @property
+    def state(self) -> str:
+        return topics.topic_state(
+            dialog=self.dialog,
+            asking=bool(self.transcript and self.transcript.waiting_input),
+            open_reports=len(self.open_reports),
+            unread=self.unread,
+            busy=self.busy,
+        )
+
+    def summary(self) -> str:
+        if self.open_reports:
+            return topics.first_line(self.open_reports[-1].summary)
+        last = self.transcript.last_message() if self.transcript else None
+        if last is None:
+            return ""
+        who = {"user": "あなた: ", "peer": f"{last.sender}: "}.get(last.kind, "")
+        return who + topics.first_line(last.text)
+
+
+def load_topics(only: str | None = None) -> list[Topic]:
+    """worker ごとに話題を作る。only を渡すとその worker だけ。"""
+    gtd = load_gtd(hub_home())
+    workers = [w for w in load_workers(gtd) if only is None or w.name == only]
+    if not workers:
+        return []
+    agents, parents = AGENTS.get()
+    reports: dict[str, list[Report]] = {}
+    for r in load_reports():
+        reports.setdefault(r.worker, []).append(r)
+    seen = seen_store().load()
+    out = []
+    for w in workers:
+        pane_pid = (w.window or {}).get("pane_pid")
+        agent = topics.find_agent(w.name, w.worktree, pane_pid, agents, parents) if w.window else None
+        path = topics.agent_transcript(agent) if agent else None
+        if path is None or not path.is_file():
+            path = topics.fallback_transcript(w.name, w.worktree)
+        transcript = TRANSCRIPTS.get(path) if path else None
+        dialog = bool(w.window) and looks_like_dialog(w.window)
+        out.append(Topic(w, agent, transcript, reports.get(w.name, []), dialog, seen.get(w.name, 0.0)))
+    return out
+
+
+def topic_href(name: str, flash: str = "") -> str:
+    q = {"name": name} | ({"r": flash} if flash else {})
+    return "/topic?" + urllib.parse.urlencode(q)
+
+
+def fmt_time(ts: float) -> str:
+    if not ts:
+        return "?"
+    t = dt.datetime.fromtimestamp(ts)
+    return t.strftime("%H:%M") if t.date() == dt.date.today() else t.strftime("%m-%d %H:%M")
+
+
+def switch_button(token: str, t: Topic, back: str = "") -> str:
+    if not t.window:
+        return chip("window なし", "muted")
+    back_input = f'<input type="hidden" name="back" value="{esc(back)}">' if back else ""
+    return (
+        f'<form class="inline" method="post" action="/topics/switch">{back_input}'
+        f'<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="name" value="{esc(t.name)}">'
+        f'<button class="ghost" title="{esc(t.window["session"])}:{esc(t.window["name"])}">window へ移る</button></form>'
+    )
+
+
+def state_chip(t: Topic) -> str:
+    label, cls = topics.STATES[t.state]
+    extra = chip("未読", "warn-soft") if t.unread and t.state != "unread" else ""
+    return chip(label, cls) + extra
+
+
+def page_topics(token: str, flash: str = "") -> tuple[str, str]:
+    items = load_topics()
+    if not items:
+        return "話題", f'<p class="muted">記録ファイルがありません（{esc(state_dir())}）</p>'
+    order = {s: i for i, s in enumerate(topics.STATE_ORDER)}
+    items.sort(key=lambda t: (order[t.state], -t.updated))
+
+    def row(t: Topic) -> str:
+        return (
+            f'<li class="topic {t.state}"><div class="thead"><a class="tname" href="{esc(topic_href(t.name))}">{esc(t.name)}</a>'
+            f'{state_chip(t)}<span class="muted small">{fmt_time(t.updated)}</span>{switch_button(token, t, "list")}</div>'
+            f'<div class="tsum">{esc(t.summary()) or "<span class=muted>（まだ発言がありません）</span>"}</div></li>'
+        )
+
+    live = [t for t in items if t.window]
+    gone = [t for t in items if not t.window]
+    parts = []
+    if flash in TOPIC_MESSAGES:
+        msg, cls = TOPIC_MESSAGES[flash]
+        parts.append(f'<p class="flash {cls}">{esc(msg)}</p>')
+    parts.append(f"<h2>話題（{len(live)}）</h2>")
+    parts.append(f'<ul class="topics">{"".join(row(t) for t in live)}</ul>' if live else '<p class="muted">動いている話題はありません</p>')
+    if gone:
+        parts.append(
+            f'<details id="topics-gone"><summary>window のない話題（{len(gone)}）</summary>'
+            f'<ul class="topics">{"".join(row(t) for t in gone)}</ul></details>'
+        )
+    return "話題", "".join(parts)
+
+
+class TopicRenderer(Renderer):
+    """会話の markdown。許可したディレクトリの下にある成果物のパスを、開くボタンにする。画像は下に並べる。"""
+
+    def __init__(self, roots: list[Path]):
+        super().__init__()
+        self.roots = roots
+        self.images: list[Path] = []
+
+    def path_button(self, raw: str) -> str | None:
+        path = topics.resolve_allowed(raw, self.roots)
+        if path is None:
+            return None
+        if topics.is_image(path) and path not in self.images:
+            self.images.append(path)
+        title = "Finder で選ぶ" if path.is_file() else "Finder で開く"
+        return f'<button class="path" form="open-form" name="path" value="{esc(path)}" title="{title}">{esc(raw)}</button>'
+
+    def text(self, s: str) -> str:
+        out, pos = [], 0
+        for m in topics.PATH_RE.finditer(s):
+            raw = m.group(1).rstrip(".,:;!?")
+            button = self.path_button(raw)
+            if button is None:
+                continue
+            out.append(esc(s[pos : m.start(1)]) + button)
+            pos = m.start(1) + len(raw)
+        out.append(esc(s[pos:]))
+        return "".join(out)
+
+    def code(self, s: str) -> str:
+        if topics.PATH_RE.fullmatch(s):
+            button = self.path_button(s)
+            if button:
+                return f"<code>{button}</code>"
+        return super().code(s)
+
+    def take_images(self) -> str:
+        imgs = "".join(
+            f'<a href="{esc(file_href(p))}" target="_blank"><img loading="lazy" src="{esc(file_href(p))}" alt="{esc(p.name)}"></a>'
+            for p in self.images
+        )
+        self.images = []
+        return f'<div class="shots">{imgs}</div>' if imgs else ""
+
+
+def file_href(path: Path) -> str:
+    return "/topics/file?" + urllib.parse.urlencode({"path": str(path)})
+
+
+def render_entry(e: topics.Entry, r: TopicRenderer) -> str:
+    when = f'<span class="muted small">{fmt_time(e.ts)}</span>'
+    if e.kind == "tools":
+        names: dict[str, int] = {}
+        for c in e.tools:
+            names[c.name] = names.get(c.name, 0) + 1
+        label = "、".join(f"{n} ×{k}" if k > 1 else n for n, k in names.items())
+        bad = sum(1 for c in e.tools if c.error)
+        lis = "".join(
+            f'<li><code>{esc(c.name)}</code> {esc(topics.first_line(c.summary, 200))}'
+            f'{" " + chip("失敗", "bad") if c.error else ""}{"" if c.done else " " + chip("実行中", "muted")}'
+            f'{f"<pre>{esc(c.result)}</pre>" if c.error and c.result else ""}</li>'
+            for c in e.tools
+        )
+        warn = f" {chip(f'失敗 {bad}', 'bad')}" if bad else ""
+        return f'<details class="tools"><summary>ツール {len(e.tools)} 件: {esc(label)}{warn}</summary><ul>{lis}</ul></details>'
+    if e.kind == "note":
+        return f'<div class="msg note muted small">— {esc(e.text)} {when}</div>'
+    who = {"user": "あなた", "assistant": "worker", "peer": e.sender}.get(e.kind, e.kind)
+    body = r.render(e.text)
+    if e.kind != "assistant" and len(e.text) > LONG_MESSAGE:
+        body = f"<details><summary>{esc(topics.first_line(e.text))}</summary>{body}</details>"
+    return f'<div class="msg {e.kind}"><div class="who">{esc(who)} {when}</div><article class="md">{body}</article>{r.take_images()}</div>'
+
+
+def page_topic(token: str, name: str, flash: str = "", mark_seen: bool = True) -> tuple[str, str] | None:
+    found = load_topics(only=name) if NAME_RE.match(name or "") else []
+    if not found:
+        return None
+    t = found[0]
+    if mark_seen and t.thread_ts > t.seen:
+        seen_store().mark(t.name, t.thread_ts)
+        t.seen = t.thread_ts
+    roots = topics.allowed_roots(hub_home())
+    r = TopicRenderer(roots)
+    w = t.worker
+    parts = [f'<p class="crumbs"><a href="/topics">話題</a> / {esc(t.name)}</p>']
+    if flash in TOPIC_MESSAGES:
+        msg, cls = TOPIC_MESSAGES[flash]
+        parts.append(f'<p class="flash {cls}">{esc(msg)}</p>')
+    wt = w.worktree.replace(str(Path.home()), "~") if w.worktree else "?"
+    parts.append(
+        f'<div class="thead big"><h2>{esc(t.name)}</h2>{state_chip(t)}{switch_button(token, t)}</div>'
+        f'<p class="muted small">worktree <code>{esc(wt)}</code>・ブランチ <code>{esc(w.branch or "?")}</code>・'
+        f'更新 {fmt_time(t.updated)}・<a href="/workers#{worker_anchor(t.name)}">Workers で見る</a></p>'
+    )
+    parts.append(
+        f'<form id="open-form" method="post" action="/topics/open"><input type="hidden" name="token" value="{esc(token)}">'
+        f'<input type="hidden" name="name" value="{esc(t.name)}"></form>'
+    )
+    for rep in t.open_reports:
+        parts.append(
+            f'<section class="report open" id="{report_anchor(rep.worker, rep.ts)}">{render_report(rep)}'
+            f'<article class="md">{r.render(rep.body)}</article>{r.take_images()}{answer_form(rep, token, t.window)}</section>'
+        )
+    if t.transcript is None:
+        parts.append('<p class="muted">このセッションの transcript が見つかりません。</p>')
+    else:
+        entries = t.transcript.entries
+        if len(entries) > TOPIC_ENTRIES:
+            parts.append(f'<p class="muted small">古い {len(entries) - TOPIC_ENTRIES} 件は省きました。</p>')
+        parts.append('<div class="thread">' + "".join(render_entry(e, r) for e in entries[-TOPIC_ENTRIES:]) + "</div>")
+        if t.transcript.waiting_input:
+            parts.append(f'<p class="flash bad">質問に答えるのを待っています。window へ移って選んでください。</p>')
+    parts.append(reply_form(token, t))
+    return t.name, "".join(parts)
+
+
+def reply_form(token: str, t: Topic) -> str:
+    if not t.window:
+        return '<p class="muted">window がないので、ここからは送れません。</p>'
+    if t.dialog:
+        return '<p class="flash bad" id="reply">許可待ち。window へ移ってください</p>'
+    return f"""<form class="answer" id="reply" method="post" action="/topics/send">
+<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="name" value="{esc(t.name)}">
+<textarea name="text" maxlength="{MAX_ANSWER}" rows="3" placeholder="このスレッドへの返答（改行は空白になります）"></textarea>
+<div class="row"><button>送る</button><span class="muted small">送り先: {esc(t.window['session'])}:{esc(t.window['name'])}</span></div></form>"""
+
+
+def topic_send(name: str, text: str) -> str:
+    """話題のスレッドへ返答を送る。結果を TOPIC_MESSAGES のキーで返す。"""
+    if not NAME_RE.match(name or "") or name not in record_names():
+        return "nowindow"
+    text = clean_answer(text)
+    if not text:
+        return "empty"
+    if len(text) > MAX_ANSWER:
+        return "toolong"
+    with ANSWER_LOCK:
+        window = tmux_windows().get(name)
+        if not window:
+            return "nowindow"
+        if looks_like_dialog(window):
+            return "dialog"
+        return "sent" if send_to_pane(window["pane"], text) else "sendfail"
+
+
+def topic_switch(name: str) -> str:
+    if not NAME_RE.match(name or "") or name not in record_names():
+        return "nowindow"
+    window = tmux_windows().get(name)
+    if not window:
+        return "nowindow"
+    if run(["tmux", "select-window", "-t", window["id"]]) is None:
+        return "switchfail"
+    if run(["tmux", "switch-client", "-t", window["id"]]) is None:
+        return "switchfail"
+    return "switched"
+
+
+def open_path(raw: str) -> str:
+    path = topics.resolve_allowed(raw, topics.allowed_roots(hub_home()))
+    if path is None:
+        return "badpath"
+    return "opened" if run(topics.open_command(path)) is not None else "openfail"
+
+
+def read_image(raw: str) -> tuple[bytes, str] | None:
+    """許可したディレクトリの下の画像だけを読む。"""
+    path = topics.resolve_allowed(raw, topics.allowed_roots(hub_home()))
+    if path is None or not path.is_file() or not topics.is_image(path):
+        return None
+    try:
+        if path.stat().st_size > topics.MAX_IMAGE_BYTES:
+            return None
+        return path.read_bytes(), topics.IMAGE_TYPES[path.suffix.lower()]
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # HTTP
 
 CSS = """
@@ -1280,6 +1670,30 @@ form.answer button.ghost{background:none;border-color:var(--line);color:var(--mu
 .flash{padding:.5em .8em;border:1px solid var(--line);border-radius:6px}
 .flash.good{border-color:var(--good);color:var(--good)}
 .flash.bad{border-color:var(--bad);color:var(--bad)}
+form.inline{display:inline;margin:0}
+button.ghost,form.inline button{font:inherit;font-size:.82em;padding:0 .7em;border:1px solid var(--line);border-radius:6px;background:none;color:var(--muted);cursor:pointer}
+ul.topics{list-style:none;padding:0;margin:0}
+li.topic{padding:.55em .3em;border-bottom:1px solid var(--line);border-left:4px solid transparent}
+li.topic.waiting{border-left-color:var(--bad)}
+li.topic.unread{border-left-color:var(--warn)}
+li.topic.busy{border-left-color:var(--accent)}
+.thead{display:flex;gap:.5em;align-items:center;flex-wrap:wrap}
+.thead.big h2{border:0;margin:.4em 0}
+.tname{font-weight:600}
+.tsum{color:var(--muted);font-size:.92em;margin:.15em 0 0 .1em;overflow-wrap:anywhere}
+.thread{display:flex;flex-direction:column;gap:.6em;margin:1em 0}
+.msg{border:1px solid var(--line);border-radius:8px;padding:.3em 1em;background:var(--card)}
+.msg.user{border-left:4px solid var(--accent)}
+.msg.peer{border-left:4px solid var(--merged)}
+.msg.note{border:0;background:none;padding:0 .3em}
+.msg .who{font-size:.8em;font-weight:600;color:var(--muted);margin-top:.3em}
+details.tools{font-size:.85em;color:var(--muted);padding:0 .3em}
+details.tools summary{margin:0;color:var(--muted)}
+details.tools ul{margin:.3em 0;padding-left:1.4em}
+details.tools pre{white-space:pre-wrap;max-height:12em;overflow:auto;background:var(--card);padding:.4em;border-radius:6px}
+button.path{font:inherit;padding:0;border:0;background:none;color:var(--accent);text-decoration:underline dotted;cursor:pointer;text-align:left;overflow-wrap:anywhere}
+.shots{display:flex;flex-wrap:wrap;gap:.6em;margin:.4em 0 .6em}
+.shots img{max-width:min(100%,480px);max-height:360px;border:1px solid var(--line);border-radius:6px}
 """
 
 # 一定間隔で同じ URL を取り直し、<main> の中身が変わっていたら差し替える。
@@ -1317,17 +1731,21 @@ APP_JS = """
     if (form.dataset.sent) { e.preventDefault(); return; }
     form.dataset.sent = '1';
   });
+  // 話題の画面は、最新のやり取りと返答の欄が見えるところから始める
+  const reply = document.getElementById('reply');
+  if (reply && location.pathname === '/topic' && !location.hash) reply.scrollIntoView({block: 'end'});
   setInterval(tick, interval);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
 })();
 """
 
-NAV = (("/", "Overview"), ("/inbox", "受信箱"), ("/docs", "資料"), ("/workers", "Workers"))
+NAV = (("/", "Overview"), ("/topics", "話題"), ("/inbox", "受信箱"), ("/docs", "資料"), ("/workers", "Workers"))
+POST_ROUTES = {"/inbox/answer", "/topics/send", "/topics/switch", "/topics/open"}
 
 
 def layout(title: str, body: str, path: str, interval: int) -> str:
     def active(href: str) -> str:
-        on = path == href or (href == "/docs" and path == "/doc")
+        on = path == href or (href == "/docs" and path == "/doc") or (href == "/topics" and path == "/topic")
         return ' class="active"' if on else ""
 
     nav = "".join(f'<a href="{h}"{active(h)}>{esc(t)}</a>' for h, t in NAV)
@@ -1366,6 +1784,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
+    def send_bytes(self, data: bytes, ctype: str) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def same_site(self) -> bool:
+        """ほかのサイトのページから読ませたり、既読を付けさせたりしない。古いブラウザなどで無ければ通す。"""
+        return self.headers.get("Sec-Fetch-Site", "same-origin") in ("same-origin", "none")
+
     def redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
@@ -1384,7 +1818,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.forbidden("forbidden origin")
         if self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin":
             return self.forbidden("forbidden origin")
-        if urllib.parse.urlsplit(self.path).path != "/inbox/answer":
+        route = urllib.parse.urlsplit(self.path).path
+        if route not in POST_ROUTES:
             return self.send(HTTPStatus.NOT_FOUND, "not found", "text/plain; charset=utf-8")
         if not self.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
             return self.send(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported media type", "text/plain; charset=utf-8")
@@ -1404,6 +1839,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if not self.token or not hmac.compare_digest(field_("token").encode(), self.token.encode()):
             return self.forbidden("invalid token: ページを読み直してください")
+        if route != "/inbox/answer":
+            name = field_("name")
+            if route == "/topics/send":
+                result = topic_send(name, field_("text"))
+                return self.redirect(topic_href(name, result) + ("" if result == "sent" else "#reply"))
+            if route == "/topics/switch":
+                result = topic_switch(name)
+                back = field_("back")
+                return self.redirect(topic_href(name, result) if back != "list" else f"/topics?r={result}")
+            return self.redirect(topic_href(name, open_path(field_("path"))))
         worker, ref = field_("worker"), field_("ref")
         if "choice" in form:
             result = answer_report(worker, ref, "send", field_("choice"))
@@ -1427,6 +1872,13 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/app.js":
             self.send(HTTPStatus.OK, APP_JS, "text/javascript; charset=utf-8")
             return
+        if url.path == "/topics/file":
+            image = read_image(query.get("path", [""])[0]) if self.same_site() else None
+            if image is None:
+                self.send(HTTPStatus.NOT_FOUND, "not found", "text/plain; charset=utf-8")
+            else:
+                self.send_bytes(*image)
+            return
         try:
             if url.path == "/":
                 page = page_overview()
@@ -1438,6 +1890,10 @@ class Handler(BaseHTTPRequestHandler):
                 page = page_workers()
             elif url.path == "/inbox":
                 page = page_inbox(self.token, query.get("r", [""])[0])
+            elif url.path == "/topics":
+                page = page_topics(self.token, query.get("r", [""])[0])
+            elif url.path == "/topic":
+                page = page_topic(self.token, query.get("name", [""])[0], query.get("r", [""])[0], mark_seen=self.same_site())
             else:
                 page = None
         except Exception as e:  # 読み込み中のファイルなどで落ちても、次の更新で直るようにする
