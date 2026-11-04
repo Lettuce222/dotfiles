@@ -1,0 +1,6 @@
+{
+  "name": "hub-dashboard",
+  "version": "0.2.0",
+  "description": "hub セッションの横に、判断待ち・worker・期限・GTD・PR の状況を出すペイン",
+  "types": "./types/index.d.ts"
+}

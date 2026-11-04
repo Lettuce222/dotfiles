@@ -6,11 +6,13 @@
 # worker の報告先になるセッション名。spawn.fish と同じ変数を読む
 set -l hub_name (test -n "$AGENT_HUB_NAME"; and echo $AGENT_HUB_NAME; or echo hub)
 # fish 経由で起動し、agent-env.fish で作業場所の環境を取り込む。
-# 起動直後に hub-rules.md の「起動したとき」の手順を実行させる
+# 起動直後に hub-rules.md の「起動したとき」の手順を実行させる。
+# 横の状況ペイン（pane/ の mod）は窓口だけに読み込む。worker には付けない
 set -l script_dir (path resolve -- (status dirname))
 set -l hub_command fish -c (string join ' ' -- \
     source (string escape -- $script_dir/agent-env.fish)\; \
     claude -n (string escape -- $hub_name) --permission-mode auto \
+    --plugin-dir (string escape -- $script_dir/pane) \
     --append-system-prompt-file (string escape -- $script_dir/hub-rules.md) \
     (string escape -- '「起動したとき」の手順を実行してください。'))
 # 議事録や GTD のリストを置く個人用の作業場所。dotfiles では管理しない
