@@ -23,5 +23,12 @@ split-divider-color = 414868
 keybind = ctrl+backslash=new_split:right
 keybind = ctrl+minus=new_split:down
 
+# Links
+# OSC 8 のリンクは tmux の Option+クリック（configs/tmux/scripts/open-link.sh）で開く。
+# Ghostty の Cmd+クリックは macOS の既定アプリで開くので、file:// の .md などが
+# 意図しないアプリに渡らないよう OSC 8 を無効にする。URL の文字列そのものは
+# 従来どおり Cmd+クリックでブラウザが開く（link-url）。
+link-osc8 = false
+
 # Misc
 confirm-close-surface = false
