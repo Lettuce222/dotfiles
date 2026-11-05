@@ -216,5 +216,54 @@ class RenderTest(Base):
         self.assertIn("案件はありません", text)
 
 
+class HeadingStyleTest(Base):
+    """区分名を変えても、見出しの色が名前に付いてくること。"""
+
+    NOW = dt.datetime(2026, 11, 5, 16, 40)
+    # 区分名を変える前（あなたの番 / 外の待ち / あとでやること）と同じ色。
+    EXPECTED = {
+        "TODO": ("▶ TODO", "\x1b[1;38;2;224;175;104m"),  # yellow
+        "Waiting": ("◇ Waiting", "\x1b[1;38;2;125;207;255m"),  # cyan
+        "Later": ("・Later", "\x1b[1;38;2;158;206;106m"),  # green
+    }
+
+    def test_every_task_section_has_its_own_style_and_label(self):
+        self.assertEqual(set(cases.TASK_SECTIONS), set(self.EXPECTED))
+        for name in cases.TASK_SECTIONS:
+            self.assertIn(name, cases.STYLE, name)
+            self.assertIn(name, cases.LABEL, name)
+            self.assertNotEqual(cases.STYLE[name], cases.STYLE["other"], name)
+        styles = [cases.STYLE[n] for n in cases.TASK_SECTIONS]
+        self.assertEqual(len(set(styles)), len(styles))
+
+    def test_headings_in_case_file_are_colored(self):
+        self.write()
+        out = "\n".join(cases.render(self.dir, 80, 100, self.NOW))
+        for name, (label, style) in self.EXPECTED.items():
+            self.assertIn(f"{style}{label}{cases.RESET}", out, name)
+
+    def test_unknown_section_uses_other(self):
+        self.write(text="# t\n\n## メモ\n- 何か\n")
+        out = "\n".join(cases.render(self.dir, 80, 100, self.NOW))
+        self.assertIn(f"{cases.STYLE['other']}メモ{cases.RESET}", out)
+
+
+class BoardReloadTest(Base):
+    def test_restarts_when_script_changes(self):
+        sigs = iter([("old",), ("new",), ("new",)])
+        execv = mock.Mock(side_effect=SystemExit)
+        with (
+            mock.patch.object(cases, "code_signature", lambda: next(sigs)),
+            mock.patch.object(cases.os, "execv", execv),
+            mock.patch.object(cases.time, "sleep"),
+            mock.patch.object(cases.sys, "stdout", new=mock.Mock()),
+            mock.patch.object(cases.signal, "signal"),
+        ):
+            with self.assertRaises(SystemExit):
+                cases.board(self.dir, once=False, width=40, height=10)
+        execv.assert_called_once()
+        self.assertEqual(execv.call_args.args[1][1], str(SCRIPT))
+
+
 if __name__ == "__main__":
     unittest.main()

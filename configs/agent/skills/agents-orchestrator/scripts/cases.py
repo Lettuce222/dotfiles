@@ -28,6 +28,7 @@ Usage:
   cases.py board [--once] [--width N] [--height N]
       案件の一覧を描く。--once が無ければ、ファイルの変化と端末の大きさの変化を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
+      このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
       Waiting の項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものを消す。
       ` → ` のあとがあれば「TODO」に移す。項目が無くなった案件は done/ に移す。
@@ -561,6 +562,15 @@ def signature(d: Path) -> tuple:
     return tuple(sig)
 
 
+def code_signature() -> tuple | None:
+    """このスクリプト自身の状態。動いている board が古いコードのまま描き続けないように見る。"""
+    try:
+        st = Path(__file__).resolve().stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
     def size():
         ts = shutil.get_terminal_size((60, 30))
@@ -576,8 +586,16 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
     out = sys.stdout
     out.write("\x1b[?25l")  # カーソルを隠す
     last = None
+    code = seen = code_signature()
     try:
         while True:
+            now_code = code_signature()
+            # 書き換えの途中で読まないよう、変わったあと 1 秒落ち着いてから起動し直す。
+            if now_code is not None and now_code != code and now_code == seen:
+                out.write("\x1b[?25h")
+                out.flush()
+                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
+            seen = now_code
             w, h = size()
             key = (signature(d), w, h, f"{dt.datetime.now():%H:%M}")
             if key != last or resized[0]:
