@@ -80,10 +80,10 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
 
-- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインで`claude agents`を開く。どちらもauto modeで起動する。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
+- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右上のペインに案件の一覧（下の「案件の一覧」を参照）、右下のペインに`claude agents`を開く。窓口と`claude agents`はauto modeで起動する。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
 - `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、人に判断を求めるときは必ずAskUserQuestionで止まる。止まったスレッドは`claude agents`の一覧で入力待ちとして上に出るので、ユーザーはそこで選んで答える
-- `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。読むだけで書き込まない
+- `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けた外の待ちは`cases.py sweep`で消す
 
 窓口の振る舞いは`agents-orchestrator`の表にまとめている。
 
@@ -91,6 +91,23 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 外に出す文面: スレッドは下書きまでで止まり、窓口が送る。送る直前の確認ダイアログ（MCPは`external-post-guard.py`、ghは`permissions.ask`）を承認とする
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
 - 状況の一覧: `claude agents --json`とスレッドの報告を合わせて、「スレッド」「止まった理由」「あなたの番」「資料」の表にし、次の行動を1件だけAskUserQuestionで提案する
+
+### 案件の一覧
+
+話題が並ぶと前に頼んだことが流れるので、スレッドとは別に案件（PRの束や1つの施策）ごとの「あなたの番」「外の待ち」「あとでやること」「資料」を残す。スレッドを片付けても、宿題は案件に残る。
+
+- 置き場所: `~/hub/state/cases/<案件>.md`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_CASES_DIR`で変わる）。1案件1ファイルのMarkdown。中身は社内の文脈なのでdotfilesには置かない。dotfilesにあるのは形の決まり（`agents-orchestrator`の「案件の一覧」）とスクリプトだけ
+- 書く人: 窓口が、依頼を受けたとき、ユーザーの番や外の待ちが生まれたとき、スレッドを片付ける前に書く。見張りは解けた外の待ちを消すだけ
+- 外の待ちの項目は` → `のあとに、待ちが解けたらやることを書ける。解けると、そこが「あなたの番」に移る
+- 3つの節が空になった案件は`done/`に移す（消さない）
+
+`agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`だけで動く。サブコマンドは次の3つ。
+
+- `board`: 案件の一覧を描き、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`はpopupのnvim）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、あとでやること、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。あなたの番がある案件を上に出す
+- `sweep`: 外の待ちのうち、` → `の前のPRがすべてmerge・close済みの項目を消し、` → `のあとを「あなたの番」に移す。したことと、残ったPR付きの項目の状態（`reviewDecision`など）をJSON Linesで出す。見張りが30分ごとに実行し、レビュー待ちが解けたかなどの判断は見張りがする
+- `resolve <案件> <行の一部>`: 1つの項目を消す。外の待ちなら` → `のあとを「あなたの番」に移す
+
+テストは`python3 -m unittest configs/agent/tests/test_cases.py`で実行する。
 
 `agents-watch`の`scripts/watch.py`は、`gh api graphql`で読むだけのスクリプト。状態は`~/hub/state/`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_WATCH_STATE`で変わる）に置く。
 
