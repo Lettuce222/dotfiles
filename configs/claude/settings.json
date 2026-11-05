@@ -4,7 +4,8 @@
     "command": "~/.claude/file-suggestion.sh"
   },
   "env": {
-    "ENABLE_TOOL_SEARCH": "true"
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
   },
   "permissions": {
     "allow": [
@@ -51,7 +52,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/update-tmux-window-title.sh 🟡",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -63,7 +64,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/update-tmux-window-title.sh 🔴",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -113,7 +114,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/update-tmux-window-title.sh 🟢",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -124,7 +125,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/clear-tmux-window-title.sh",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -136,7 +137,7 @@
     "command": "~/.claude/statusline.sh"
   },
   "enabledPlugins": {
-    "example-skills@anthropic-agent-skills": true
+    "example-skills@anthropic-agent-skills": false
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {

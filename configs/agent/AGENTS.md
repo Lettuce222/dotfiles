@@ -1,7 +1,7 @@
 ## Shell Environment
 
-- Shell: fish
-- Use fish syntax for shell commands.
+- The user's interactive shell is fish, but the Bash tool runs zsh. Write POSIX syntax for commands you run yourself.
+- Use fish syntax only when showing commands for the user to run.
 
 ## Engineering Judgement
 
