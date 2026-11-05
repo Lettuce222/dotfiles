@@ -28,16 +28,16 @@ PR3 = "https://github.com/o/r/pull/3"
 
 SAMPLE = f"""# 架空の案件
 
-## あなたの番
+## TODO
 - [#3]({PR3}) を Ready にする
 
-## 外の待ち
+## Waiting
 - [#1]({PR1}) の merge 待ち → 続きの PR の base を main に向ける
 - [#1]({PR1})・[#2]({PR2}) のチェック待ち
 - シートの申請中
   （11/05 に申請）
 
-## あとでやること
+## Later
 - [#1]({PR1}) が merge されたらチケットを閉じる
 
 ## 資料
@@ -103,10 +103,10 @@ class SweepTest(Base):
         # #2 が開いているので、2 つの PR を待つ項目は残る
         waits = [it.text for it in c.items(cases.WAITING)]
         self.assertEqual(len(waits), 2)
-        # あとでやることは消さずに stale として知らせる
+        # Later は消さずに stale として知らせる
         stale = [a for a in actions if a["action"] == "stale"]
         self.assertEqual([a["section"] for a in stale], [cases.LATER])
-        self.assertIn("## あとでやること\n- [#1]", p.read_text())
+        self.assertIn("## Later\n- [#1]", p.read_text())
 
     def test_open_waits_are_reported(self):
         self.write()
@@ -121,20 +121,20 @@ class SweepTest(Base):
         self.assertEqual(p.read_text(), SAMPLE)
 
     def test_pr_after_arrow_does_not_resolve_wait(self):
-        p = self.write(text=f"# t\n\n## 外の待ち\n- 申請中 → [#1]({PR1}) にコメントする\n")
+        p = self.write(text=f"# t\n\n## Waiting\n- 申請中 → [#1]({PR1}) にコメントする\n")
         actions = cases.sweep(self.dir, states(**{PR1: "MERGED"}))
         self.assertEqual(actions, [])
         self.assertIn("申請中", p.read_text())
 
     def test_archives_case_without_tasks(self):
-        self.write(text=f"# t\n\n## 外の待ち\n- [#1]({PR1}) の merge 待ち\n\n## 資料\n- a\n")
+        self.write(text=f"# t\n\n## Waiting\n- [#1]({PR1}) の merge 待ち\n\n## 資料\n- a\n")
         actions = cases.sweep(self.dir, states(**{PR1: "CLOSED"}))
         self.assertEqual(actions[-1], {"action": "archived", "case": "x"})
         self.assertFalse((self.dir / "x.md").exists())
         self.assertTrue((self.dir / "done" / "x.md").exists())
 
     def test_unknown_pr_is_kept(self):
-        self.write(text=f"# t\n\n## 外の待ち\n- [#1]({PR1}) 待ち\n")
+        self.write(text=f"# t\n\n## Waiting\n- [#1]({PR1}) 待ち\n")
         actions = cases.sweep(self.dir, lambda urls: {})
         self.assertEqual(actions[0]["action"], "open")
         self.assertEqual(actions[0]["prs"][0]["state"], "UNKNOWN")
@@ -147,8 +147,8 @@ class ResolveTest(Base):
         self.assertEqual(out["next"], "続きの PR の base を main に向ける")
         text = p.read_text()
         self.assertNotIn("merge 待ち", text)
-        self.assertIn("## あなたの番\n- [#3]", text)
-        self.assertIn("- 続きの PR の base を main に向ける\n\n## 外の待ち", text)
+        self.assertIn("## TODO\n- [#3]", text)
+        self.assertIn("- 続きの PR の base を main に向ける\n\n## Waiting", text)
 
     def test_resolve_continuation_item(self):
         p = self.write()
@@ -161,9 +161,9 @@ class ResolveTest(Base):
             cases.resolve(self.dir, "x", "待ち")
 
     def test_resolve_creates_mine_section(self):
-        p = self.write(text="# t\n\n## 外の待ち\n- 申請中 → 届いたら設定する\n- ほか\n")
+        p = self.write(text="# t\n\n## Waiting\n- 申請中 → 届いたら設定する\n- ほか\n")
         cases.resolve(self.dir, "x", "申請中")
-        self.assertEqual(p.read_text(), "# t\n\n## あなたの番\n- 届いたら設定する\n\n## 外の待ち\n- ほか\n")
+        self.assertEqual(p.read_text(), "# t\n\n## TODO\n- 届いたら設定する\n\n## Waiting\n- ほか\n")
 
 
 class RenderTest(Base):
@@ -177,7 +177,7 @@ class RenderTest(Base):
         self.assertIn((self.dir / "x.md").as_uri(), out)
 
     def test_ticket_link_uses_pane_json(self):
-        self.write(text="# t\n\n## あとでやること\n- ABC-12 を閉じる\n")
+        self.write(text="# t\n\n## Later\n- ABC-12 を閉じる\n")
         out = "\n".join(cases.render(self.dir, 60, 100, self.NOW))
         self.assertNotIn("\x1b]8;;https://jira.example/browse/ABC-12", out)
         (Path(self.tmp.name) / "pane.json").write_text('{"jira": "https://jira.example/browse/"}')
@@ -200,16 +200,16 @@ class RenderTest(Base):
         full = cases.render(self.dir, 80, 100, self.NOW)
         folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 2, self.NOW)))
         self.assertNotIn("資料", folded)
-        self.assertIn("・あとで 1 件", folded)
+        self.assertIn("・Later 1 件", folded)
         self.assertNotIn("… ほか", folded)
 
     def test_cases_with_my_turn_come_first(self):
-        self.write("a", "# 待つだけ\n\n## 外の待ち\n- 待ち\n")
-        self.write("b", "# 私の番\n\n## あなたの番\n- やる\n")
+        self.write("a", "# 待つだけ\n\n## Waiting\n- 待ち\n")
+        self.write("b", "# 私の番\n\n## TODO\n- やる\n")
         os.utime(self.dir / "b.md", (0, 0))
         text = plain("\n".join(cases.render(self.dir, 60, 100, self.NOW)))
         self.assertLess(text.index("私の番"), text.index("待つだけ"))
-        self.assertIn("あなたの番 1", text.splitlines()[0])
+        self.assertIn("TODO 1", text.splitlines()[0])
 
     def test_empty(self):
         text = plain("\n".join(cases.render(self.dir, 40, 10, self.NOW)))

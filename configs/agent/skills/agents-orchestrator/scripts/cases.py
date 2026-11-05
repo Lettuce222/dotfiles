@@ -7,21 +7,21 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
 
     # explore-wam security scan 対応
 
-    ## あなたの番
+    ## TODO
     - [#828](https://github.com/o/r/pull/828) にスクリーンショットを貼って Ready にする
 
-    ## 外の待ち
+    ## Waiting
     - [#818](https://github.com/o/r/pull/818) のレビュー待ち → 返ってきたら直す
 
-    ## あとでやること
+    ## Later
     - チケットを完了にする
 
     ## 資料
     - [report.md](file:///Users/me/hub/threads/x/report.md)
 
 - 項目は `- ` で始まる行。2 文字以上の字下げで続く行は、前の項目の続き。
-- 外の待ちの項目は ` → ` のあとに、待ちが解けたらやることを書ける。待ちが解けると
-  その部分が「あなたの番」に移る。
+- Waiting の項目は ` → ` のあとに、待ちが解けたらやることを書ける。待ちが解けると
+  その部分が「TODO」に移る。
 - 資料以外の 3 つの節に項目が無くなった案件は done/ に移す（sweep）。
 
 Usage:
@@ -29,18 +29,18 @@ Usage:
       案件の一覧を描く。--once が無ければ、ファイルの変化と端末の大きさの変化を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
   cases.py sweep [--dry-run]
-      外の待ちの項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものを消す。
-      ` → ` のあとがあれば「あなたの番」に移す。項目が無くなった案件は done/ に移す。
+      Waiting の項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものを消す。
+      ` → ` のあとがあれば「TODO」に移す。項目が無くなった案件は done/ に移す。
       したことと、残った PR 付きの項目の状態を JSON Lines で出す（下の「出力」を参照）。
-  cases.py resolve <案件> <文字列> [--section 外の待ち]
-      節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。外の待ちなら
-      ` → ` のあとを「あなたの番」に移す。<案件> はファイル名（.md は省略可）。
+  cases.py resolve <案件> <文字列> [--section Waiting]
+      節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。Waiting なら
+      ` → ` のあとを「TODO」に移す。<案件> はファイル名（.md は省略可）。
 
 sweep の出力（1 行に 1 つ）:
   {"action": "removed", "case", "section", "item", "next"?}   消した項目（next は移したもの）
   {"action": "archived", "case"}                               done/ に移した案件
-  {"action": "stale", "case", "section", "item", "prs"}        外の待ち以外で、PR がすべて閉じた項目（消さない）
-  {"action": "open", "case", "section", "item", "prs"}         外の待ちで、まだ開いている PR がある項目
+  {"action": "stale", "case", "section", "item", "prs"}        Waiting 以外で、PR がすべて閉じた項目（消さない）
+  {"action": "open", "case", "section", "item", "prs"}         Waiting で、まだ開いている PR がある項目
   prs は [{"url", "state", "reviewDecision", "isDraft", "reviews": [{"author", "state"}]}]（reviews は人ごとの最新のレビュー）
 
 gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh だけで動かす。
@@ -62,9 +62,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-MINE = "あなたの番"
-WAITING = "外の待ち"
-LATER = "あとでやること"
+MINE = "TODO"
+WAITING = "Waiting"
+LATER = "Later"
 REFS = "資料"
 TASK_SECTIONS = (MINE, WAITING, LATER)
 ARROW = " → "
@@ -149,7 +149,7 @@ class Case:
         s = self.section(section)
         if s is None:
             s = Section(section, f"## {section}", [])
-            # 「あなたの番」は先頭の節にする。ほかは末尾に足す。
+            # 「TODO」は先頭の節にする。ほかは末尾に足す。
             at = 1 if section == MINE else len(self.sections)
             self.sections.insert(at, s)
         # 節の末尾の空行の前に足す。
@@ -362,7 +362,7 @@ STYLE = {
     "link": "\x1b[4;38;2;122;162;247m",
     "code": "\x1b[38;2;187;154;247m",
 }
-LABEL = {MINE: "▶ あなたの番", WAITING: "◇ 外の待ち", LATER: "・あとで", REFS: "資料"}
+LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
 
 INLINE_RE = re.compile(
     r"\[(?P<lt>[^\]]+)\]\((?P<lu>[^)\s]+)\)"  # [text](url)
@@ -471,7 +471,7 @@ def sort_key(case: Case):
 
 def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
     """案件の部分の行。level が上がるほど畳む。
-    1: 資料を出さない  2: あとでやることを件数だけにする  3: 外の待ちの ` → ` のあとを出さない
+    1: 資料を出さない  2: Later を件数だけにする  3: Waiting の ` → ` のあとを出さない
     """
     rows: list[list[tuple[str, str, str | None]]] = []
     for i, c in enumerate(cases):
@@ -522,9 +522,9 @@ def render(d: Path, width: int, height: int, now: dt.datetime | None = None) -> 
     head = [
         ("案件", STYLE["title"], d.as_uri() if d.is_dir() else None),
         (f" {len(cases)}  ", STYLE["title"], None),
-        (f"あなたの番 {mine}", STYLE[MINE] if mine else STYLE["dim"], None),
+        (f"TODO {mine}", STYLE[MINE] if mine else STYLE["dim"], None),
         ("  ", "", None),
-        (f"外の待ち {waiting}", STYLE["dim"], None),
+        (f"Waiting {waiting}", STYLE["dim"], None),
     ]
     clock = f"{now:%H:%M}"
     pad = width - text_width("".join(t for t, _, _ in head)) - len(clock)
@@ -536,7 +536,7 @@ def render(d: Path, width: int, height: int, now: dt.datetime | None = None) -> 
     if not cases:
         rows.append([("案件はありません", STYLE["dim"], None)])
 
-    # 入りきらなければ、資料、あとでやること、外の待ちの次の手、の順に畳む。
+    # 入りきらなければ、資料、Later、Waiting の次の手、の順に畳む。
     for level in range(4):
         body = case_rows(cases, width, jira, level)
         if len(rows) + len(body) <= height:
