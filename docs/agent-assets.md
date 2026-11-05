@@ -21,7 +21,7 @@ skillは、作業の種類ごとに必要なときだけ読み込まれる。毎
 
 Claude Codeのauto memoryは`settings.json`の`autoMemoryEnabled: false`で止めている。覚えさせたい振る舞いは、memoryではなくskill、`AGENTS.md`、リポジトリの`CLAUDE.md`に書く。memoryは決まりと食い違っても気づきにくいため。
 
-- `agents-orchestrator`、`agents-thread`: 小さな窓口（`orchestrator`）の窓口とスレッドの決まり（下の「小さな窓口（orchestrator）」を参照）
+- `agents-orchestrator`、`agents-thread`、`agents-watch`: 小さな窓口（`orchestrator`）の窓口、スレッド、見張りのスレッドの決まり（下の「小さな窓口（orchestrator）」を参照）
 - `commit-push`: 未コミットの変更を意図ごとにコミットしてpushする
 - `gh-fix-ci`: GitHub ActionsのPR checkの失敗を調べて直す
 - `grill-me`: 計画や設計を質問で掘り下げる
@@ -60,6 +60,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
 - `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
 - いまは`Bash`向けの登録を一時的に外している（確認でたびたび止まるため）。MCP toolへの登録は残している。戻すときは`PreToolUse`の`Bash` matcherの先頭に`{"type": "command", "if": "Bash(*gh *)", "command": "~/.claude/hooks/external-post-guard.py", "timeout": 30}`を足す
+- 代わりに、`settings.json`の`permissions.ask`で、gh の書き込み（`gh pr create`・`comment`・`review`・`merge`・`ready`・`edit`・`close`、`gh issue`の作成・コメント・編集、`gh api`の`-X`/`--method`での書き込み・`body=`の付いた呼び出し・`--input`・graphqlの`mutation`）に確認ダイアログを出す。auto modeでもaskのルールは必ず確認を出し、`&&`などでつないだコマンドの中でも一致する。パスで呼んだとき用に`*/gh …`も並べている。文字列の一致なので、`gh api`の書き込みのすべてを捕まえられるわけではない
 
 テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py`で実行する。
 
@@ -81,10 +82,27 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 - `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインで`claude agents`を開く。どちらもauto modeで起動する。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
-- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行以内、人に判断を求めるときは必ずAskUserQuestionで止まる。止まったスレッドは`claude agents`の一覧で入力待ちとして上に出るので、ユーザーはそこで選んで答える
+- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、人に判断を求めるときは必ずAskUserQuestionで止まる。止まったスレッドは`claude agents`の一覧で入力待ちとして上に出るので、ユーザーはそこで選んで答える
+- `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。読むだけで書き込まない
+
+窓口の振る舞いは`agents-orchestrator`の表にまとめている。
+
+- 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
+- 外に出す文面: スレッドは下書きまでで止まり、窓口が送る。送る直前の確認ダイアログ（MCPは`external-post-guard.py`、ghは`permissions.ask`）を承認とする
+- 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
+- 状況の一覧: `claude agents --json`とスレッドの報告を合わせて、「スレッド」「止まった理由」「あなたの番」「資料」の表にし、次の行動を1件だけAskUserQuestionで提案する
+
+`agents-watch`の`scripts/watch.py`は、`gh api graphql`で読むだけのスクリプト。状態は`~/hub/state/`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_WATCH_STATE`で変わる）に置く。
+
+- `seen.txt`: 知らせ済みの出来事のkey。初回は今あるものを記録し、コメント以外だけを出す
+- `events.jsonl`: 知らせた出来事を1行に1つ追記する（`source`、`kind`、`key`、`url`、`title`、`at`）。あとでGTDの受信箱などから読めるよう、形を変えずに追記だけする
+- `watch.json`: 設定（無くてよい）。`ignore_authors`（コメントを知らせないbotなど）、`work_days`、`work_start`、`work_end`
+- Slackはスクリプトから読めないので、見張りのスレッドがbrucke-slackで検索し、`watch.py seen slack`で新しいものだけに絞る
+
+テストは`python3 -m unittest configs/agent/tests/test_agents_watch.py`で実行する。
 
 `--worktree`の作るworktreeは、どのリポジトリでも`git status`に出ないよう、`configs/git/ignore`で無視する。片付けは`claude rm <id>`で、worktreeも安全なら一緒に消える。
 
-外への送信の確認（`external-post-guard.py`）とtextlintは、`settings.json`のhookなので、窓口でもスレッドでもそのまま動く。送信はいつも確認ダイアログで止まり、一覧で入力待ちになる。
+外への送信の確認（`external-post-guard.py`、`permissions.ask`）とtextlintは、`settings.json`の設定なので、窓口でもスレッドでもそのまま動く。
 
 以前の窓口（tmuxのwindowでworkerを動かす`hub`、ダッシュボードの`hub-dash`、`configs/tmux/scripts/agent-hub/`、承認済みの提案を通す`outbox-guard.py`など）は消した。中身はtag `hub-v1-20261104`で見られる（`git show hub-v1-20261104:<path>`か、そのtagからブランチを作る）。
