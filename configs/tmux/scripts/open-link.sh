@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tmux のマウスバインドから呼ばれ、ペイン内の OSC 8 ハイパーリンクを開く。
-#   file:// のリンク → tmux display-popup の中で nvim で開く（ディレクトリも nvim で開く）
-#   それ以外の URL   → OS の既定の opener（macOS: open, Linux: xdg-open）
+#   file:// のテキスト・ディレクトリ → tmux display-popup の中で nvim で開く
+#   file:// のテキストでないファイル  → OS の既定の opener（画像ならプレビューなど）
+#   それ以外の URL                    → OS の既定の opener（macOS: open, Linux: xdg-open）
 #
 # usage: open-link.sh <client-name> <url>
 set -eu
@@ -18,6 +19,23 @@ percent_decode() {
   local s=${1//\\/\\\\}
   s=$(printf '%s' "$s" | sed -E 's/%([0-9A-Fa-f]{2})/\\x\1/g')
   printf '%b' "$s"
+}
+
+# OS の既定の opener に渡す（macOS: open, Linux: xdg-open）。
+system_open() {
+  if [ "$(uname -s)" = Darwin ]; then
+    open "$1"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$1" >/dev/null 2>&1 &
+  else
+    message "open-link: 開くコマンドがありません: $1"
+  fi
+}
+
+# file(1) が binary と判定したら真。file がなければテキスト扱い。
+is_binary() {
+  command -v file >/dev/null 2>&1 || return 1
+  [ "$(file -b --mime-encoding -- "$1")" = binary ]
 }
 
 case $url in
@@ -47,6 +65,11 @@ case $url in
     if [ -d "$path" ]; then
       dir=$path
     elif [ -e "$path" ]; then
+      # 画像や PDF などテキストでないファイルは既定のアプリ（プレビューなど）で開く。
+      if [ -s "$path" ] && is_binary "$path"; then
+        system_open "$path"
+        exit 0
+      fi
       dir=$(dirname -- "$path")
     else
       message "open-link: ファイルがありません: $path"
@@ -60,12 +83,6 @@ case $url in
       -T " $(basename -- "$path") " "$@"
     ;;
   *)
-    if command -v open >/dev/null 2>&1 && [ "$(uname -s)" = Darwin ]; then
-      open "$url"
-    elif command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$url" >/dev/null 2>&1 &
-    else
-      message "open-link: URL を開くコマンドがありません: $url"
-    fi
+    system_open "$url"
     ;;
 esac
