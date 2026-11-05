@@ -17,5 +17,6 @@ macOS（仕事）と Ubuntu（プライベート）両方で使う個人用 dotf
 
 ## Git ワークフロー
 
-- main ブランチへ conventional commit (`feat:`, `fix:`, `chore:` ...)
+- PR にせず、main へ直接 push する。conventional commit (`feat:`, `fix:`, `chore:` ...)。push の前に `origin/main` に rebase する。force push はしない
+- マシンへの反映（`./install.sh` など）まで済んだ状態を完了とする。`~/.claude` などへの反映をエージェントが実行できないときは、手順を報告に書く
 - 設定変更は `./install.sh` で再リンクして動作確認してからコミット

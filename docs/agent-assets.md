@@ -17,7 +17,9 @@ Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置い�
 
 ## Skill
 
-skillは、作業の種類ごとに必要なときだけ読み込まれる。毎回読み込まれる`AGENTS.md`や記憶には、特定の作業でしか使わない知識を置かず、skillに移す。
+skillは、作業の種類ごとに必要なときだけ読み込まれる。毎回読み込まれる`AGENTS.md`には、特定の作業でしか使わない知識を置かず、skillに移す。
+
+Claude Codeのauto memoryは`settings.json`の`autoMemoryEnabled: false`で止めている。覚えさせたい振る舞いは、memoryではなくskill、`AGENTS.md`、リポジトリの`CLAUDE.md`に書く。memoryは決まりと食い違っても気づきにくいため。
 
 - `agents-orchestrator`、`agents-thread`: 小さな窓口（`orchestrator`）の窓口とスレッドの決まり（下の「小さな窓口（orchestrator）」を参照）
 - `commit-push`: 未コミットの変更を意図ごとにコミットしてpushする

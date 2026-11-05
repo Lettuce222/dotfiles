@@ -20,6 +20,11 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 新しいlocal設定パターンを追加するときは`.gitignore`も更新する。
 
+### local設定に置くもの
+
+- Git: ローカルの絶対パスや鍵のファイル名など、マシン固有のgit設定（`user.signingkey`、`gpg.ssh.allowedSignersFile`など）は、追跡しない`~/.gitconfig`に書く。`~/.config/git`はディレクトリごと`configs/git`へのsymlinkなので、`git config --file ~/.config/git/config`で書くとリポジトリに入る。`git config --global`は、`~/.gitconfig`があればそこへ書く。共有してよい設定だけを`configs/git/config`に置く。
+- 試している段階のツール（Orcaなど）: 追跡しているファイルに書かず、`configs/fish/conf.d/*.local.fish`などgitignore済みのlocal設定に置く。正式に採用すると決めてから、追跡するファイルへ移す。
+
 ## リンクと設定だけを反映する
 
 `./install.sh --links-only`は、symlinkの配置と`~/.claude/settings.json`の生成だけを行う。Homebrew・fish・フォント・アプリのインストール、`chsh`、`mise install`、`npm ci`、`defaults write`は実行しない。ネットワークに出ず、パスワードを求めず、`$HOME`の外を変えないので、エージェントにも実行させられる。`./install.sh --dry-run`は同じ判定をして、何も変えずに予定だけを出す。引数なしの`./install.sh`の動作は変わらない。
