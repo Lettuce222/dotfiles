@@ -511,28 +511,12 @@ def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
     return rows
 
 
-def render(d: Path, width: int, height: int, now: dt.datetime | None = None) -> list[str]:
-    now = now or dt.datetime.now()
+def render(d: Path, width: int, height: int) -> list[str]:
+    """案件の一覧だけを描く。見出しや区切り線は出さず、1 行目から案件にする。"""
     width = max(width, 20)
     jira = jira_base()
     cases = sorted(load_cases(d), key=sort_key)
-    mine = sum(len(c.items(MINE)) for c in cases)
-    waiting = sum(len(c.items(WAITING)) for c in cases)
-
     rows: list[list[tuple[str, str, str | None]]] = []
-    head = [
-        ("案件", STYLE["title"], d.as_uri() if d.is_dir() else None),
-        (f" {len(cases)}  ", STYLE["title"], None),
-        (f"TODO {mine}", STYLE[MINE] if mine else STYLE["dim"], None),
-        ("  ", "", None),
-        (f"Waiting {waiting}", STYLE["dim"], None),
-    ]
-    clock = f"{now:%H:%M}"
-    pad = width - text_width("".join(t for t, _, _ in head)) - len(clock)
-    if pad >= 1:
-        head.append((" " * pad + clock, STYLE["dim"], None))
-    rows.extend(wrap(head, width, 0, 0))
-    rows.append([("─" * width, STYLE["dim"], None)])
 
     if not cases:
         rows.append([("案件はありません", STYLE["dim"], None)])
@@ -597,7 +581,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
                 os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
             seen = now_code
             w, h = size()
-            key = (signature(d), w, h, f"{dt.datetime.now():%H:%M}")
+            key = (signature(d), w, h)
             if key != last or resized[0]:
                 resized[0] = False
                 last = key

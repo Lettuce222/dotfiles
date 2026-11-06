@@ -107,7 +107,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`だけで動く。サブコマンドは次の3つ。
 
-- `board`: 案件の一覧を描き、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`はpopupのnvim）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す
+- `board`: 案件の一覧を描き（見出しや区切り線は出さず、1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`はpopupのnvim）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す
 - `sweep`: Waitingのうち、` → `の前のPRがすべてmerge・close済みの項目を消し、` → `のあとを「TODO」に移す。したことと、残ったPR付きの項目の状態（`reviewDecision`など）をJSON Linesで出す。見張りが30分ごとに実行し、レビュー待ちが解けたかなどの判断は見張りがする
 - `resolve <案件> <行の一部>`: 1つの項目を消す。Waitingなら` → `のあとを「TODO」に移す
 

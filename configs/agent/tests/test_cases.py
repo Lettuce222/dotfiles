@@ -5,7 +5,6 @@
 gh は呼ばない（sweep には PR の状態を返す関数を渡す）。
 """
 
-import datetime as dt
 import importlib.util
 import os
 import re
@@ -167,38 +166,36 @@ class ResolveTest(Base):
 
 
 class RenderTest(Base):
-    NOW = dt.datetime(2026, 11, 5, 16, 40)
-
     def test_links_are_osc8(self):
         self.write()
-        out = "\n".join(cases.render(self.dir, 60, 100, self.NOW))
+        out = "\n".join(cases.render(self.dir, 60, 100))
         self.assertIn(f"\x1b]8;;{PR3}\x1b\\", out)
         self.assertIn("\x1b]8;;file:///tmp/report.md\x1b\\", out)
         self.assertIn((self.dir / "x.md").as_uri(), out)
 
     def test_ticket_link_uses_pane_json(self):
         self.write(text="# t\n\n## Later\n- ABC-12 を閉じる\n")
-        out = "\n".join(cases.render(self.dir, 60, 100, self.NOW))
+        out = "\n".join(cases.render(self.dir, 60, 100))
         self.assertNotIn("\x1b]8;;https://jira.example/browse/ABC-12", out)
         (Path(self.tmp.name) / "pane.json").write_text('{"jira": "https://jira.example/browse/"}')
-        out = "\n".join(cases.render(self.dir, 60, 100, self.NOW))
+        out = "\n".join(cases.render(self.dir, 60, 100))
         self.assertIn("\x1b]8;;https://jira.example/browse/ABC-12\x1b\\", out)
 
     def test_lines_fit_width(self):
         self.write()
-        for line in cases.render(self.dir, 24, 100, self.NOW):
+        for line in cases.render(self.dir, 24, 100):
             self.assertLessEqual(cases.text_width(plain(line)), 24, plain(line))
 
     def test_truncates_to_height(self):
         self.write()
-        lines = cases.render(self.dir, 60, 6, self.NOW)
+        lines = cases.render(self.dir, 60, 6)
         self.assertEqual(len(lines), 6)
         self.assertTrue(plain(lines[-1]).startswith("… ほか"))
 
     def test_folds_refs_and_later_before_truncating(self):
         self.write()
-        full = cases.render(self.dir, 80, 100, self.NOW)
-        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 2, self.NOW)))
+        full = cases.render(self.dir, 80, 100)
+        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 2)))
         self.assertNotIn("資料", folded)
         self.assertIn("・Later 1 件", folded)
         self.assertNotIn("… ほか", folded)
@@ -207,19 +204,23 @@ class RenderTest(Base):
         self.write("a", "# 待つだけ\n\n## Waiting\n- 待ち\n")
         self.write("b", "# 私の番\n\n## TODO\n- やる\n")
         os.utime(self.dir / "b.md", (0, 0))
-        text = plain("\n".join(cases.render(self.dir, 60, 100, self.NOW)))
+        text = plain("\n".join(cases.render(self.dir, 60, 100)))
         self.assertLess(text.index("私の番"), text.index("待つだけ"))
-        self.assertIn("TODO 1", text.splitlines()[0])
+
+    def test_starts_with_first_case_without_header(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100)]
+        self.assertEqual(lines[0], "私の番")
+        self.assertFalse(any("─" in l for l in lines))
 
     def test_empty(self):
-        text = plain("\n".join(cases.render(self.dir, 40, 10, self.NOW)))
+        text = plain("\n".join(cases.render(self.dir, 40, 10)))
         self.assertIn("案件はありません", text)
 
 
 class HeadingStyleTest(Base):
     """区分名を変えても、見出しの色が名前に付いてくること。"""
 
-    NOW = dt.datetime(2026, 11, 5, 16, 40)
     # 区分名を変える前（あなたの番 / 外の待ち / あとでやること）と同じ色。
     EXPECTED = {
         "TODO": ("▶ TODO", "\x1b[1;38;2;224;175;104m"),  # yellow
@@ -238,13 +239,13 @@ class HeadingStyleTest(Base):
 
     def test_headings_in_case_file_are_colored(self):
         self.write()
-        out = "\n".join(cases.render(self.dir, 80, 100, self.NOW))
+        out = "\n".join(cases.render(self.dir, 80, 100))
         for name, (label, style) in self.EXPECTED.items():
             self.assertIn(f"{style}{label}{cases.RESET}", out, name)
 
     def test_unknown_section_uses_other(self):
         self.write(text="# t\n\n## メモ\n- 何か\n")
-        out = "\n".join(cases.render(self.dir, 80, 100, self.NOW))
+        out = "\n".join(cases.render(self.dir, 80, 100))
         self.assertIn(f"{cases.STYLE['other']}メモ{cases.RESET}", out)
 
 
@@ -263,6 +264,36 @@ class BoardReloadTest(Base):
                 cases.board(self.dir, once=False, width=40, height=10)
         execv.assert_called_once()
         self.assertEqual(execv.call_args.args[1][1], str(SCRIPT))
+
+    def run_board(self, ticks, on_tick=None):
+        """board を ticks 回まわし、描き直した回数を返す。"""
+        out = mock.Mock()
+        count = [0]
+
+        def sleep(_):
+            count[0] += 1
+            if on_tick:
+                on_tick(count[0])
+            if count[0] >= ticks:
+                raise KeyboardInterrupt
+
+        with (
+            mock.patch.object(cases.time, "sleep", sleep),
+            mock.patch.object(cases.sys, "stdout", new=out),
+            mock.patch.object(cases.signal, "signal"),
+        ):
+            cases.board(self.dir, once=False, width=40, height=10)
+        return sum(1 for c in out.write.call_args_list if c.args[0].startswith("\x1b[H\x1b[2J"))
+
+    def test_redraws_only_when_files_change(self):
+        p = self.write()
+        self.assertEqual(self.run_board(3), 1)
+
+        def touch(n):
+            if n == 1:
+                p.write_text(p.read_text() + "\n## Later\n- もう 1 つ\n")
+
+        self.assertEqual(self.run_board(3, touch), 2)
 
 
 if __name__ == "__main__":
