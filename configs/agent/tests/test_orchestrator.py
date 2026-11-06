@@ -56,6 +56,13 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("形式の直しのことは書かず", section)
 
 
+    def test_orchestrator_shows_body_when_asking_approval(self):
+        text = ORCH.read_text(encoding="utf-8")
+        section = text.split("### 承認をもらって実行する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
+        self.assertIn("preview", section)
+        self.assertIn("本文そのもの", section)
+        self.assertIn("承認の記録で確認ダイアログを省くときも", section)
+
 
 HARNESS = r"""
 set -l sock $argv[1]

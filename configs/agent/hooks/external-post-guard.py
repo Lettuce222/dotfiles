@@ -17,7 +17,11 @@ Rules (exit 2 so the agent fixes the draft):
 When the prose passes:
   - if the orchestrator recorded a one-shot approval for exactly this call
     (approvals.py), consume it and return permissionDecision "allow";
-  - otherwise return "ask" so the user reviews the operation first.
+  - otherwise return "ask" so the user reviews the operation first. The
+    reason shown in the dialog carries the destination (the gh command with
+    inline bodies elided, or the MCP tool and its non-prose fields) and the
+    body that would be sent (files given with --body-file / -F key=@file are
+    read), cut after BODY_LIMIT characters.
 
 No service or tool names are hard-coded; prose is found by key name, as in
 textlint-mcp.sh.
@@ -250,6 +254,59 @@ def problems(text):
     return out
 
 
+BODY_LIMIT = 1500
+FIELD_LIMIT = 120
+BODY_FLAGS = ("-b", "--body")
+
+
+def cut(text, limit):
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n…（先頭 {limit} 文字で切りました。全体は {len(text)} 文字）"
+
+
+def gh_destination(argv):
+    """The gh command line with inline bodies replaced, so the target stays readable."""
+    out = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in BODY_FLAGS and i + 1 < len(argv):
+            out += [a, "<本文>"]
+            i += 2
+            continue
+        if a.startswith("--body="):
+            a = "--body=<本文>"
+        elif a in ("-f", "-F", "--field", "--raw-field") and i + 1 < len(argv):
+            key, _, val = argv[i + 1].partition("=")
+            if PROSE_KEY.match(key) and not val.startswith("@"):
+                out += [a, key + "=<本文>"]
+                i += 2
+                continue
+        out.append(a)
+        i += 1
+    return shlex.join(out)
+
+
+def mcp_destination(tool, tin):
+    """The MCP tool and its non-prose fields (channel, thread, issue key, ...)."""
+    lines = [f"ツール: {tool}"]
+    for k, v in tin.items():
+        if isinstance(v, str) and PROSE_KEY.match(k):
+            continue
+        shown = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+        lines.append(f"{k}: {cut(shown, FIELD_LIMIT)}")
+    return "\n".join(lines)
+
+
+def ask_reason(destination, body):
+    reason = "外部に送る文面です。送る前に内容を確認してください。\n\n送り先:\n" + destination
+    if body.strip():
+        reason += "\n\n本文:\n" + cut(body, BODY_LIMIT)
+    return reason
+
+
 def decide(decision, reason):
     json.dump(
         {
@@ -310,6 +367,9 @@ def main(argv=None):
             if not re.search(r"\bgh\s+(pr|issue|api)\b", command):
                 return 0
             writes, body = [command], command
+            destination = command
+        else:
+            destination = "\n".join(gh_destination(argv) for argv in writes)
         if not writes:
             return 0
     else:
@@ -318,6 +378,7 @@ def main(argv=None):
         if not prose:
             return 0
         body = "\n\n".join(prose)
+        destination = mcp_destination(data.get("tool_name"), tin)
 
     found = problems(body)
     if found:
@@ -329,8 +390,8 @@ def main(argv=None):
         decide("allow", "窓口で承認済みの操作です: " + (record.get("note") or record.get("id", "")))
         return 0
 
-    reason = "外部に送る文面です。送る前に内容を確認してください。"
-    decide("ask", reason + (f"（{why}）" if why else ""))
+    reason = ask_reason(destination, body)
+    decide("ask", reason + (f"\n\n（{why}）" if why else ""))
     return 0
 
 

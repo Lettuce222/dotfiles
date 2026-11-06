@@ -68,6 +68,53 @@ class GuardTest(unittest.TestCase):
         self.assertAsk(self.bash("gh pr comment 12 --body ok"))
         self.assertAsk(self.run_hook({"text": "hello"}, tool_name="mcp__slack__send"))
 
+    def reason(self, r):
+        self.assertAsk(r)
+        return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_ask_shows_body_file_and_destination(self):
+        draft = Path(self.tmp.name) / "reply.md"
+        draft.write_text("レビューありがとうございます。直しました。", encoding="utf-8")
+        why = self.reason(self.bash(f"gh pr comment 809 -R o/r --body-file {draft}"))
+        self.assertIn("gh pr comment 809 -R o/r", why)
+        self.assertIn("レビューありがとうございます。直しました。", why)
+
+    def test_ask_shows_field_file_body(self):
+        draft = Path(self.tmp.name) / "c.md"
+        draft.write_text("行コメントの本文", encoding="utf-8")
+        why = self.reason(self.bash(f"gh api repos/o/r/pulls/3/comments -F body=@{draft}"))
+        self.assertIn("repos/o/r/pulls/3/comments", why)
+        self.assertIn("行コメントの本文", why)
+
+    def test_ask_shows_inline_body_once(self):
+        why = self.reason(self.bash("gh pr comment 12 --body 'これで直りました'"))
+        self.assertIn("gh pr comment 12 --body '<本文>'", why)
+        self.assertEqual(why.count("これで直りました"), 1)
+
+    def test_ask_shows_mcp_body_and_destination(self):
+        why = self.reason(
+            self.run_hook(
+                {"channel_id": "C123", "thread_ts": "1.2", "text": "お知らせです"},
+                tool_name="mcp__slack__send",
+            )
+        )
+        self.assertIn("mcp__slack__send", why)
+        self.assertIn("channel_id: C123", why)
+        self.assertIn("thread_ts: 1.2", why)
+        self.assertIn("お知らせです", why)
+
+    def test_long_body_is_cut_with_a_note(self):
+        draft = Path(self.tmp.name) / "long.md"
+        draft.write_text("あ" * 5000 + "末尾", encoding="utf-8")
+        why = self.reason(self.bash(f"gh pr comment 1 --body-file {draft}"))
+        self.assertNotIn("末尾", why)
+        self.assertIn("切りました", why)
+
+    def test_state_change_without_body_shows_command(self):
+        why = self.reason(self.bash("gh pr ready 12"))
+        self.assertIn("gh pr ready 12", why)
+        self.assertNotIn("本文:", why)
+
     def test_state_changes_ask(self):
         # permissions.ask で確認していた操作は、hook が ask を返す
         for cmd in (
