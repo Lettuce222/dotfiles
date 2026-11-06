@@ -21,6 +21,12 @@ When the prose passes:
 
 No service or tool names are hard-coded; prose is found by key name, as in
 textlint-mcp.sh.
+
+Drafts can be checked with the same rules before anything is sent:
+  external-post-guard.py --check <file>...
+prints the problems of each file and exits 1 if any file has one (0 if all
+pass). The rules do not depend on the destination: Markdown and Slack links
+are both accepted.
 """
 
 import json
@@ -244,7 +250,6 @@ def problems(text):
     return out
 
 
-
 def decide(decision, reason):
     json.dump(
         {
@@ -270,7 +275,28 @@ def take_approval(data):
     return approvals.take(data.get("tool_name"), data.get("tool_input") or {}, data.get("session_id"))
 
 
-def main():
+def check_files(paths):
+    """`--check <file>...`: report rule violations in drafts without a hook payload."""
+    if not paths:
+        print("usage: external-post-guard.py --check <file>...", file=sys.stderr)
+        return 2
+    status = 0
+    for path in paths:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            print(f"{path}: ファイルがありません", file=sys.stderr)
+            return 2
+        found = problems(p.read_text(errors="replace"))
+        if found:
+            status = 1
+            print(f"{path}:\n" + "\n".join(found))
+    return status
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--check"]:
+        return check_files(argv[1:])
     data = json.load(sys.stdin)
     tin = data.get("tool_input") or {}
     command = tin.get("command", "") if data.get("tool_name") == "Bash" else None

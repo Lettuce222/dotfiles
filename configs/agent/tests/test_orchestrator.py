@@ -43,6 +43,19 @@ class SkillRulesTest(unittest.TestCase):
         self.assertNotIn("右下", text)
         self.assertNotIn("右上", text)
 
+    def test_thread_checks_drafts_before_reporting(self):
+        text = THREAD.read_text(encoding="utf-8")
+        self.assertIn("external-post-guard.py --check <下書き>", text)
+        self.assertIn("このチェックの手順は、報告に書かない", text)
+
+    def test_orchestrator_fixes_format_without_asking(self):
+        text = ORCH.read_text(encoding="utf-8")
+        section = text.split("## 外に出す文面を送る", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("文面のチェック", section)
+        self.assertIn("ユーザーに聞かず", section)
+        self.assertIn("形式の直しのことは書かず", section)
+
+
 
 HARNESS = r"""
 set -l sock $argv[1]

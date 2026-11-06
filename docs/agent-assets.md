@@ -60,6 +60,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
 - コマンドは`&&`・`;`・`|`・改行で分け、`bash -c`・`eval`・`$(…)`の中も見る。`env`や`X=y`を前に付けても同じに扱う。引数の文字列の中に書いたghの文字（`approvals.py add --command 'gh …'`など）は実行ではないので対象にしない
 - `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
+- 送る前の下書きは`external-post-guard.py --check <file>...`で同じ決まりに当てられる。指摘をファイルごとに標準出力へ出し、指摘があればexit 1、無ければ0、ファイルが無いときは2で終わる。決まりは送り先で変わらない（MarkdownのリンクもSlackのリンクも通す）ので、送り先は渡さない
 - ghの書き込みを`settings.json`の`permissions.ask`には書かない。PreToolUse hookの`allow`ではaskのルールを飛ばせず、承認の記録があってもダイアログが出てしまうため。確認はこのhookの`ask`で出す
 
 テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py configs/agent/tests/test_approvals.py`で実行する。
@@ -104,6 +105,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 - 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
 - 承認と外に出す文面: スレッドは下書きや準備までで止まり、窓口が送る。窓口はAskUserQuestionで承認をもらい、承認の記録（`approvals.py`）を書いてから実行するので、確認ダイアログは出ない。記録と一致しない操作には、今までどおり`external-post-guard.py`がダイアログを出す。スレッドは記録を書かない
+- 文面の形式の直し: スレッドは「送信の確認待ち」を報告する前に、下書きをtextlintと`external-post-guard.py --check`に通して直しておく。窓口で送るときに文面のチェックに止められたら、窓口はユーザーに聞かずにスレッドへ直しを頼み、直ったものを送る。ユーザーには送った結果だけを伝え、形式の直しのことは伝えない
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
 - スレッドの要判断: 窓口がAskUserQuestionでユーザーに聞き、答えをSendMessageでスレッドに返す（止まっていれば`--resume`）。窓口は自分で選ばない
 - スレッドのブロック: 窓口は、どのスレッドが何で止まったかをユーザーに伝える。止まった操作を代わりに実行しない。確認ダイアログが出たままのスレッドは`claude agents --json`の`waitingFor`で気づき、ユーザーに`claude agents`でそのスレッドを開いて答えてもらう

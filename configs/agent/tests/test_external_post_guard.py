@@ -123,5 +123,51 @@ class GuardTest(unittest.TestCase):
         self.assertPass(self.run_hook({"query": "x"}, tool_name="mcp__slack__search"))
 
 
+class CheckFileTest(unittest.TestCase):
+    """--check <file>: 送る前の下書きに、hook と同じ文面の決まりを当てる。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def draft(self, name, text):
+        p = Path(self.tmp.name) / name
+        p.write_text(text, encoding="utf-8")
+        return str(p)
+
+    def check(self, *paths):
+        return subprocess.run(
+            [sys.executable, str(HOOK), "--check", *paths],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_clean_draft_passes(self):
+        path = self.draft("ok.md", "[ABC-12](https://example.com/ABC-12) は 11/4(水) に直す。<https://x|#3>\n")
+        r = self.check(path)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "")
+
+    def test_problems_are_listed_per_file(self):
+        bad = self.draft("bad.md", "ABC-12 と #34 は 11/4 に直す。\n")
+        ok = self.draft("ok.md", "問題なし\n")
+        r = self.check(ok, bad)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(bad, r.stdout)
+        self.assertNotIn(ok, r.stdout)
+        for word in ("ABC-12", "#34", "11/4"):
+            self.assertIn(word, r.stdout)
+
+    def test_missing_file_is_an_error(self):
+        r = self.check(str(Path(self.tmp.name) / "none.md"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_no_file_is_an_error(self):
+        self.assertEqual(self.check().returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
