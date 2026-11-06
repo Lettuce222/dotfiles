@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tmux のマウスバインドから呼ばれ、ペイン内の OSC 8 ハイパーリンクを開く。
-#   file:// のテキスト・ディレクトリ → tmux display-popup の中で nvim で開く
+#   file:// のテキスト               → tmux display-popup の中で nvim で開く
+#   file:// のディレクトリ           → OS の既定の opener（macOS なら Finder）
 #   file:// のテキストでないファイル  → OS の既定の opener（画像ならプレビューなど）
 #   それ以外の URL                    → OS の既定の opener（macOS: open, Linux: xdg-open）
 #
@@ -63,7 +64,9 @@ case $url in
     path=$(percent_decode "$rest")
 
     if [ -d "$path" ]; then
-      dir=$path
+      # フォルダは Finder（Linux ならファイルマネージャ）で開く。画像をドラッグして使えるように。
+      system_open "$path"
+      exit 0
     elif [ -e "$path" ]; then
       # 画像や PDF などテキストでないファイルは既定のアプリ（プレビューなど）で開く。
       if [ -s "$path" ] && is_binary "$path"; then

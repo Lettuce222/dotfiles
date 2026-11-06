@@ -27,7 +27,7 @@ disable-model-invocation: true
 
 - 短くする。伝えるのは作業の中身（進み具合、結果、判断が要ること）だけ。`notify_when_idle` の購読、idle の知らせの重複、購読し直したかどうかなど、窓口の段取りは書かない。idle の知らせが来ても中身に変化が無ければ、返事は省くか 1 行で済ませる。
 - PR やチケットの ID・URL は Markdown のリンク（`[#123](https://…)`）で書く。
-- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す。例: `[proposal.md](file:///Users/me/hub/threads/x/proposal.md)`。クリックすると tmux の popup の nvim で開く（画像などは既定のアプリで開く）。開かないと言われたら、tmux の OSC 8 と `open-link.sh` を調べるスレッドを起動する。
+- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す。例: `[proposal.md](file:///Users/me/hub/threads/x/proposal.md)`。クリックすると、テキストのファイルは tmux の popup の nvim で、フォルダは Finder で開く（画像などは既定のアプリで開く）。開かないと言われたら、tmux の OSC 8 と `open-link.sh` を調べるスレッドを起動する。
 - 返事は、送る前に `/tmp/reply-<YYYYMMDD-HHMMSS>.md` に書き、`echo '{"tool_input":{"file_path":"<path>"}}' | ~/.claude/hooks/textlint-markdown.sh` に通す。指摘をすべて直してから、その文面をそのまま返す。短い返事も同じ。textlint の `ai-words-ja` が出す語（AI っぽい言い回し）は、指摘が無くても最初から使わず、平易な言葉で書く。この手順のことは返事に書かない。
 
 ## 承認が要る操作

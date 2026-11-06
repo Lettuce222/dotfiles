@@ -77,7 +77,7 @@ Slack の投稿、PR のコメント・レビュー・reviewer の指定、Jira�
 ## 書き方
 
 - PR やチケットの ID・URL は Markdown のリンク（`[#123](https://…)`）で書く。
-- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す（`[README.md](file:///path/to/README.md)`）。
+- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す（`[README.md](file:///path/to/README.md)`）。クリックすると、テキストのファイルは tmux の popup の nvim で、フォルダは Finder で開く。
 
 ## 共有の環境
 

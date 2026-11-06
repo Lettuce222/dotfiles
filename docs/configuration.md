@@ -38,6 +38,12 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 テスト: `python3 -m unittest tests/test_install_links_only.py`
 
+## tmuxのリンクのクリック
+
+tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/open-link.sh`が開く。`file://`のテキストのファイルはpopupのnvimで、フォルダはFinder（Linuxでは`xdg-open`）で、画像などテキストでないファイルとそれ以外のURLは既定のアプリで開く。フォルダをFinderで開くのは、画像をGitHubなどへドラッグして使うため。
+
+テスト: `python3 -m unittest tests/test_open_link.py`
+
 ## 新しいアプリ設定
 
 1. `configs/{app}/`に設定を置く。
