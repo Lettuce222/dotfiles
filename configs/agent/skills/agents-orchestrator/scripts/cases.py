@@ -46,7 +46,8 @@ sweep の出力（1 行に 1 つ）:
   prs は [{"url", "state", "reviewDecision", "isDraft", "reviews": [{"author", "state"}]}]（reviews は人ごとの最新のレビュー）
 
 スレッドの節:
-  `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（名前・状態・いまの作業）。
+  `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
+  状態は名前の左の印と色だけで表し、状態の名前は出さない。
   窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
   作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
   needs（止まったとき）・output.result（終わったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
@@ -373,12 +374,13 @@ STYLE = {
 }
 LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
 
-# スレッドの状態ごとの (印, 名前, 色)。窓口の番は TODO と、動いているは Waiting とそろえる。
+# スレッドの状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
+# 窓口の番は TODO と、動いているは Waiting とそろえる。確認ダイアログは窓口の番と同じ色で印を変える。
 THREAD_STATE = {
-    "blocked": ("▶", "窓口の番", STYLE[MINE]),
-    "dialog": ("▶", "確認ダイアログ", STYLE[MINE]),
-    "working": ("●", "動いている", STYLE[WAITING]),
-    "done": ("✓", "終わった", STYLE["dim"]),
+    "blocked": ("▶", STYLE[MINE]),
+    "dialog": ("?", STYLE[MINE]),
+    "working": ("●", STYLE[WAITING]),
+    "done": ("✓", STYLE["dim"]),
 }
 THREAD_ORDER = ("dialog", "blocked", "working")  # これ以外（done など）は後ろ
 THREADS_TITLE = "スレッド"
@@ -647,7 +649,7 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, leve
         return []
     rows = [[(THREADS_TITLE, STYLE["title"], None)]]
     for t in threads:
-        mark, label, style = THREAD_STATE.get(t.state, ("・", t.state, STYLE["dim"]))
+        mark, style = THREAD_STATE.get(t.state, ("・", STYLE["dim"]))
         done = t.state not in THREAD_ORDER
         url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
         rows.append(
@@ -655,7 +657,6 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, leve
                 [
                     (f"{mark} ", style, None),
                     (t.name, STYLE["dim"] if done else STYLE["text"], url),
-                    (" " + label, style, None),
                 ],
                 width,
                 1,

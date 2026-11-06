@@ -393,19 +393,28 @@ class ThreadsTest(Base):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse())]
         self.assertEqual(lines[0], "スレッド")
-        self.assertEqual(lines[1], " ▶ impl-dialog 確認ダイアログ")
+        self.assertEqual(lines[1], " ? impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
-        self.assertIn(" ● impl-new 動いている", lines)
-        self.assertIn(" ✓ research-done 終わった", lines)
+        self.assertIn(" ● impl-new", lines)
+        self.assertIn(" ✓ research-done", lines)
         self.assertEqual(lines[lines.index("私の番") - 1], "")
-        self.assertLess(lines.index(" ✓ research-done 終わった"), lines.index("私の番"))
+        self.assertLess(lines.index(" ✓ research-done"), lines.index("私の番"))
 
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
-        self.assertIn(f"{cases.STYLE[cases.MINE]} 窓口の番{cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.WAITING]} 動いている{cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE['dim']} 終わった{cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.MINE]}▶ {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.MINE]}? {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]}● {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE['dim']}✓ {cases.RESET}", out)
+        for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
+            self.assertNotIn(word, out)
         self.assertIn("\x1b]8;;file:///tmp/r2\x1b\\", out)
+
+    def test_each_state_has_its_own_mark_and_color(self):
+        looks = list(cases.THREAD_STATE.values())
+        self.assertEqual(len(set(looks)), len(looks))
+        marks = [mark for mark, _ in looks]
+        self.assertEqual(len(set(marks)), len(marks))
 
     def test_no_section_without_threads(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")

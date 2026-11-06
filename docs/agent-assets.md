@@ -123,9 +123,9 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`・`claude`だけで動く。サブコマンドは次の3つ。
 
-- `board`: 案件の一覧を描き（見出しや区切り線は出さず、スレッドの節が無ければ1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`のテキストはpopupのnvim、フォルダはFinder）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す。案件の上に、スレッドの節（`スレッド`の1行のあと、1スレッドを名前と状態の1行と、いまの作業の1行で出す）を置く
+- `board`: 案件の一覧を描き（見出しや区切り線は出さず、スレッドの節が無ければ1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`のテキストはpopupのnvim、フォルダはFinder）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す。案件の上に、スレッドの節（`スレッド`の1行のあと、1スレッドを状態の印と名前の1行と、いまの作業の1行で出す）を置く
   - データは5秒ごとの`claude agents --json --all`。backgroundのスレッドだけを出し、窓口（`AGENT_ORCHESTRATOR_NAME`、既定は`orchestrator`）と見張り（`chore-hub-watch`）は出さない。`claude rm`したスレッドは出ない
-  - 状態は、確認ダイアログ（`waitingFor`がある）・窓口の番（`state`が`blocked`）・動いている・終わったの順に並べる。窓口の番はTODOの黄、動いているはWaitingの水色、終わったは灰色。名前は作業場所（`cwd`）のフォルダへのリンク
+  - 状態は、確認ダイアログ（`waitingFor`がある）・窓口の番（`state`が`blocked`）・動いている・終わったの順に並べる。状態の名前は出さず、名前の左の印と色だけで表す（確認ダイアログは黄の`?`、窓口の番はTODOと同じ黄の`▶`、動いているはWaitingと同じ水色の`●`、終わったは灰色の`✓`）。印の凡例は出さない。名前は作業場所（`cwd`）のフォルダへのリンク
   - いまの作業は、`claude agents`に要約の欄が無いので、ジョブの状態ファイル（`~/.claude/jobs/<id>/state.json`、`CLAUDE_CONFIG_DIR`で変わる）から取る。止まったときは`needs`、終わったときは`output.result`、それ以外は`detail`（Claude Codeが付ける短い要約）。どれも無ければ起動時の依頼（`intent`）の先頭。Claude Codeの内部のファイルなので、読めなければ説明を出さないだけにする
   - 1行に入らなければ末尾を`…`で切る。高さが足りないときは、資料とLaterのあとに、終わったスレッドの説明を畳む
   - `claude agents`が失敗したら、スレッドの節を「claude agents を読めませんでした」の1行にして、案件はそのまま描く
