@@ -1,4 +1,4 @@
-# orchestrator が窓口と claude agents を起動する前に source する。
+# orchestrator が窓口と案件の一覧を起動する前に source する。
 # 非対話の fish では conf.d/00-init.fish の mise / direnv が動かないので、
 # 起動ディレクトリ（worktree など）の環境を明示的に取り込む。
 

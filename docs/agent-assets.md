@@ -80,17 +80,21 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
 
-- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右上のペインに案件の一覧（下の「案件の一覧」を参照）、右下のペインに`claude agents`を開く。窓口と`claude agents`はauto modeで起動する。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
+- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。窓口はauto modeで起動する。スレッドとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
-- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、人に判断を求めるときは必ずAskUserQuestionで止まる。止まったスレッドは`claude agents`の一覧で入力待ちとして上に出るので、ユーザーはそこで選んで答える
+- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、スレッドはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。確認ダイアログやauto modeのブロックで進めなくなったときは「ブロック」を送って止まる
 - `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けたWaitingは`cases.py sweep`で消す
 
 窓口の振る舞いは`agents-orchestrator`の表にまとめている。
 
+ペインの構成と、スレッドがAskUserQuestionを使わないことは`python3 -m unittest configs/agent/tests/test_orchestrator.py`で確かめる。レイアウトは専用のtmuxソケット（`-L`）で組んで見るので、いつものtmuxサーバーには触らない。
+
 - 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
 - 外に出す文面: スレッドは下書きまでで止まり、窓口が送る。送る直前の確認ダイアログ（MCPは`external-post-guard.py`、ghは`permissions.ask`）を承認とする
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
-- 状況の一覧: `claude agents --json`とスレッドの報告を合わせて、「スレッド」「止まった理由」「あなたの番」「資料」の表にし、次の行動を1件だけAskUserQuestionで提案する
+- スレッドの要判断: 窓口がAskUserQuestionでユーザーに聞き、答えをSendMessageでスレッドに返す（止まっていれば`--resume`）。窓口は自分で選ばない
+- スレッドのブロック: 窓口は、どのスレッドが何で止まったかをユーザーに伝える。止まった操作を代わりに実行しない。確認ダイアログが出たままのスレッドは`claude agents --json`の`waitingFor`で気づき、ユーザーに`claude agents`でそのスレッドを開いて答えてもらう
+- 状況の一覧: `claude agents --json`とスレッドの報告を合わせて、「スレッド」「止まった理由」「あなたの番」「資料」の表にし、案件の一覧（右のペイン）と合わせて、次の行動を1件だけAskUserQuestionで提案する
 
 ### 案件の一覧
 
