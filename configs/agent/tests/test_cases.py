@@ -303,8 +303,8 @@ class BoardReloadTest(Base):
         self.write()
         self.fetch_threads.side_effect = [
             [cases.Thread("impl-a", "working", "直している")],
-            [cases.Thread("impl-a", "done", "直した")],
-            [cases.Thread("impl-a", "done", "直した")],
+            [cases.Thread("impl-a", "blocked", "決めてほしい")],
+            [cases.Thread("impl-a", "blocked", "決めてほしい")],
         ]
         with mock.patch.object(cases, "THREAD_POLL", 0):
             self.assertEqual(self.run_board(3), 2)
@@ -344,7 +344,13 @@ class ThreadsTest(Base):
 
     def test_hides_orchestrator_watch_and_interactive(self):
         names = [t.name for t in self.parse()]
-        self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old", "research-done"])
+        self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old"])
+
+    def test_hides_done_threads(self):
+        names = [t.name for t in self.parse()]
+        self.assertNotIn("research-done", names)
+        other = [{"id": "x", "kind": "background", "name": "impl-x", "state": "failed"}]
+        self.assertEqual(self.parse(other), [])
 
     def test_orchestrator_name_follows_env(self):
         with mock.patch.dict(os.environ, {"AGENT_ORCHESTRATOR_NAME": "hub"}):
@@ -354,7 +360,6 @@ class ThreadsTest(Base):
     def test_summary_sources(self):
         by = {t.name: t for t in self.parse()}
         self.assertEqual(by["impl-blocked"].summary, "指摘 2 を直すか決める")
-        self.assertEqual(by["research-done"].summary, "report.md にまとめた")
         self.assertEqual(by["impl-new"].summary, "テストを足している")
         self.assertEqual(by["impl-old"].summary, "#12 のレビューに答える - 詳しく")
         self.assertEqual(by["impl-dialog"].state, "dialog")
@@ -396,16 +401,17 @@ class ThreadsTest(Base):
         self.assertEqual(lines[1], " ? impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
         self.assertIn(" ● impl-new", lines)
-        self.assertIn(" ✓ research-done", lines)
+        self.assertIn(" ● impl-old", lines)
+        self.assertNotIn(" ✓ research-done", lines)
         self.assertEqual(lines[lines.index("私の番") - 1], "")
-        self.assertLess(lines.index(" ✓ research-done"), lines.index("私の番"))
+        self.assertLess(lines.index(" ● impl-old"), lines.index("私の番"))
 
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
         self.assertIn(f"{cases.STYLE[cases.MINE]}▶ {cases.RESET}", out)
         self.assertIn(f"{cases.STYLE[cases.MINE]}? {cases.RESET}", out)
         self.assertIn(f"{cases.STYLE[cases.WAITING]}● {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE['dim']}✓ {cases.RESET}", out)
+        self.assertNotIn("✓", out)
         for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
             self.assertNotIn(word, out)
         self.assertIn("\x1b]8;;file:///tmp/r2\x1b\\", out)
@@ -419,6 +425,12 @@ class ThreadsTest(Base):
     def test_no_section_without_threads(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, [])]
+        self.assertEqual(lines[0], "私の番")
+
+    def test_no_section_when_all_threads_are_done(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        done = [a for a in AGENTS if a.get("state") == "done"]
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse(done))]
         self.assertEqual(lines[0], "私の番")
 
     def test_failure_keeps_cases(self):
@@ -437,15 +449,6 @@ class ThreadsTest(Base):
             self.assertLessEqual(cases.text_width(line), 30, line)
         self.assertTrue(lines[1].endswith("…"))
         self.assertTrue(lines[2].endswith("…"))
-
-    def test_folds_done_summaries_before_truncating(self):
-        self.write()
-        threads = self.parse()
-        full = cases.render(self.dir, 80, 100, threads)
-        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 3, threads)))
-        self.assertNotIn("report.md にまとめた", folded)
-        self.assertIn("テストを足している", folded)
-        self.assertNotIn("… ほか", folded)
 
 
 if __name__ == "__main__":

@@ -47,10 +47,11 @@ sweep の出力（1 行に 1 つ）:
 
 スレッドの節:
   `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
+  出すのは、確認ダイアログ・窓口の番・動いているのスレッドだけ。終わったものは出さず、出すものが無ければ節ごと出さない。
   状態は名前の左の印と色だけで表し、状態の名前は出さない。
   窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
   作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
-  needs（止まったとき）・output.result（終わったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
+  needs（止まったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
   claude agents が失敗しても、案件の一覧はそのまま描く。
 
 gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh・claude だけで動かす。
@@ -380,9 +381,8 @@ THREAD_STATE = {
     "blocked": ("▶", STYLE[MINE]),
     "dialog": ("?", STYLE[MINE]),
     "working": ("●", STYLE[WAITING]),
-    "done": ("✓", STYLE["dim"]),
 }
-THREAD_ORDER = ("dialog", "blocked", "working")  # これ以外（done など）は後ろ
+THREAD_ORDER = ("dialog", "blocked", "working")  # これ以外（done など）は出さない
 THREADS_TITLE = "スレッド"
 
 INLINE_RE = re.compile(
@@ -540,7 +540,7 @@ HIDDEN_THREADS = ("chore-hub-watch",)
 @dataclass(frozen=True)
 class Thread:
     name: str
-    state: str  # THREAD_STATE のキーか、claude agents の state のまま
+    state: str  # THREAD_STATE のキー
     summary: str
     cwd: str | None = None
     started: int = 0
@@ -566,11 +566,8 @@ def one_line(text) -> str:
 
 
 def thread_summary(state: str, job: dict) -> str:
-    output = job.get("output")
-    result = output.get("result") if isinstance(output, dict) else None
-    order = {"blocked": ("needs",), "done": ("result",)}.get(state, ())
-    for key in (*order, "detail"):
-        text = one_line(result if key == "result" else job.get(key))
+    for key in ("needs", "detail") if state == "blocked" else ("detail",):
+        text = one_line(job.get(key))
         if text:
             return text
     intent = one_line(job.get("intent"))
@@ -580,7 +577,7 @@ def thread_summary(state: str, job: dict) -> str:
 
 
 def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
-    """`claude agents --json --all` の出力から、出すスレッドを並べる。"""
+    """`claude agents --json --all` の出力から、出すスレッド（THREAD_ORDER の状態のもの）を並べる。"""
     hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_THREADS}
     threads = []
     for a in agents if isinstance(agents, list) else []:
@@ -595,6 +592,8 @@ def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
         if a.get("waitingFor"):
             state = "dialog"
             summary = f"{a['waitingFor']}: {summary}" if summary else a["waitingFor"]
+        if state not in THREAD_ORDER:
+            continue
         started = a.get("startedAt")
         threads.append(
             Thread(name, state, summary, a.get("cwd"), started if isinstance(started, int) else 0)
@@ -641,28 +640,27 @@ def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
     return line
 
 
-def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, level: int):
-    """スレッドの節の行。level 1 で、終わったスレッドの説明を出さない。"""
+def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
+    """スレッドの節の行。"""
     if threads is None:
         return [[(f"{THREADS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
     if not threads:
         return []
     rows = [[(THREADS_TITLE, STYLE["title"], None)]]
     for t in threads:
-        mark, style = THREAD_STATE.get(t.state, ("・", STYLE["dim"]))
-        done = t.state not in THREAD_ORDER
+        mark, style = THREAD_STATE[t.state]
         url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
         rows.append(
             clip(
                 [
                     (f"{mark} ", style, None),
-                    (t.name, STYLE["dim"] if done else STYLE["text"], url),
+                    (t.name, STYLE["text"], url),
                 ],
                 width,
                 1,
             )
         )
-        if t.summary and not (done and level >= 1):
+        if t.summary:
             rows.append(clip(inline(t.summary, STYLE["dim"], jira), width, 3))
     rows.append([])
     return rows
@@ -670,15 +668,15 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, leve
 
 def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) -> list[str]:
     """スレッドの節と案件の一覧を描く。見出しや区切り線は出さない。
-    threads が空ならスレッドの節を出さず、1 行目から案件にする。None は読めなかったとき。"""
+    出すスレッドが無ければスレッドの節を出さず、1 行目から案件にする。None は読めなかったとき。"""
     width = max(width, 20)
     jira = jira_base()
     cases = sorted(load_cases(d), key=sort_key)
     empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
 
-    # 入りきらなければ、資料、Later、終わったスレッドの説明、Waiting の次の手、の順に畳む。
-    for t_level, c_level in ((0, 0), (0, 1), (0, 2), (1, 2), (1, 3)):
-        head = thread_rows(threads, width, jira, t_level) + empty
+    # 入りきらなければ、資料、Later、Waiting の次の手、の順に畳む。
+    head = thread_rows(threads, width, jira) + empty
+    for c_level in range(4):
         body = case_rows(cases, width, jira, c_level)
         if len(head) + len(body) <= height:
             break
