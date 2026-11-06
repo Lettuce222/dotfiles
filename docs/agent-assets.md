@@ -52,19 +52,32 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 ### 外部送信の確認
 
-`external-post-guard.py`はClaude Codeの`PreToolUse`で、外に出る文面を送る前に確かめる。対象は全MCP toolのうち本文らしいkeyを持つ入力と、`gh pr`・`gh issue`の作成・コメント・編集と`gh api`の本文。
+`external-post-guard.py`はClaude Codeの`PreToolUse`で、外に出る文面や操作を実行する前に確かめる。対象は全MCP toolのうち本文らしいkeyを持つ入力と、ghの書き込み（`gh pr`の`create`・`comment`・`review`・`merge`・`ready`・`edit`・`close`・`reopen`、`gh issue`の`create`・`comment`・`edit`・`close`・`reopen`、読むだけでない`gh api`）。
 
 - リンクになっていないチケットID（`ABC-123`）とPR番号（`#123`）があればexit 2で止める。リンクの表示名はIDそのものにする
 - 曜日のない日付（`11/4`、`11月4日`、`2026-11-04`）があればexit 2で止める。`11/4(水)`のように日付の直後に曜日を書く
-- 通った場合は`permissionDecision: "ask"`を返し、送る前に必ず利用者に文面を確認させる
+- 通った場合、窓口の承認の記録と一致すれば`permissionDecision: "allow"`を返して記録を消す（下の「承認の記録」を参照）。一致しなければ`"ask"`を返し、利用者に確認させる
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
+- コマンドは`&&`・`;`・`|`・改行で分け、`bash -c`・`eval`・`$(…)`の中も見る。`env`や`X=y`を前に付けても同じに扱う。引数の文字列の中に書いたghの文字（`approvals.py add --command 'gh …'`など）は実行ではないので対象にしない
 - `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
-- いまは`Bash`向けの登録を一時的に外している（確認でたびたび止まるため）。MCP toolへの登録は残している。戻すときは`PreToolUse`の`Bash` matcherの先頭に`{"type": "command", "if": "Bash(*gh *)", "command": "~/.claude/hooks/external-post-guard.py", "timeout": 30}`を足す
-- 代わりに、`settings.json`の`permissions.ask`で、gh の書き込み（`gh pr create`・`comment`・`review`・`merge`・`ready`・`edit`・`close`、`gh issue`の作成・コメント・編集、`gh api`の`-X`/`--method`での書き込み・`body=`の付いた呼び出し・`--input`・graphqlの`mutation`）に確認ダイアログを出す。auto modeでもaskのルールは必ず確認を出し、`&&`などでつないだコマンドの中でも一致する。パスで呼んだとき用に`*/gh …`も並べている。文字列の一致なので、`gh api`の書き込みのすべてを捕まえられるわけではない
+- ghの書き込みを`settings.json`の`permissions.ask`には書かない。PreToolUse hookの`allow`ではaskのルールを飛ばせず、承認の記録があってもダイアログが出てしまうため。確認はこのhookの`ask`で出す
 
-テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py`で実行する。
+テストは`python3 -m unittest configs/agent/tests/test_external_post_guard.py configs/agent/tests/test_approvals.py`で実行する。
 
 `textlint-mcp.sh`と同じく、特定のserviceやtool名には依存させない。
+
+### 承認の記録
+
+窓口（`orchestrator`）でユーザーがAskUserQuestionで承認した操作は、確認ダイアログをもう一度出さずに通す。窓口が承認の直後に`approvals.py`で記録を書き、`external-post-guard.py`が記録と一致する呼び出しにだけ`allow`を返す。
+
+- 置き場所: `~/hub/state/approvals/<id>.json`（`AGENT_APPROVALS_DIR`か`AGENT_ORCHESTRATOR_HOME`で変わる）。1操作1件
+- 書き方: `python3 ~/.claude/hooks/approvals.py add bash --command '<コマンド>'`、MCPは`add mcp --tool <ツール名> --params '<本文以外の引数のJSON>' --body-file <下書き> --body-key <本文のkey>`。`list`で今ある記録を出す
+- Bashはコマンドの文字列全体（前後の空白を除く）が一致したときだけ通す。`--body-file`、`-F key=@file`、`--input`で読むファイルは、記録したときのsha256と同じであることも確かめる
+- MCPはツール名、本文以外のtop-levelの引数（過不足なく）、本文のsha256（前後の空白を除く）が一致したときだけ通す
+- 記録は30分（`--ttl`）で切れ、1回使うと消える。切れた記録はhookが見つけたときに消す
+- 窓口のセッションの呼び出しでだけ使う。hookに渡る`session_id`を`claude agents --json`で引き、名前が`orchestrator`（`AGENT_ORCHESTRATOR_NAME`）のときだけ記録を使う。スレッドも同じユーザーでファイルを書けるので、この確かめでスレッドが自分の送信を承認できないようにしている
+- 文面の決まり（リンク、曜日）は記録があっても確かめ、違反すればexit 2で止める。このとき記録は消さない
+- 不安定さを許す作り: MCPでは`textlint-mcp.sh`と並んで動くので、textlintが止めたときも記録は消えている。そのときは窓口が記録を書き直す。コマンドの書き方が記録と1文字でも違うとダイアログに戻る
 
 ### tmuxのサーバーを守る
 
@@ -90,7 +103,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 ペインの構成と、スレッドがAskUserQuestionを使わないことは`python3 -m unittest configs/agent/tests/test_orchestrator.py`で確かめる。レイアウトは専用のtmuxソケット（`-L`）で組んで見るので、いつものtmuxサーバーには触らない。
 
 - 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
-- 外に出す文面: スレッドは下書きまでで止まり、窓口が送る。送る直前の確認ダイアログ（MCPは`external-post-guard.py`、ghは`permissions.ask`）を承認とする
+- 承認と外に出す文面: スレッドは下書きや準備までで止まり、窓口が送る。窓口はAskUserQuestionで承認をもらい、承認の記録（`approvals.py`）を書いてから実行するので、確認ダイアログは出ない。記録と一致しない操作には、今までどおり`external-post-guard.py`がダイアログを出す。スレッドは記録を書かない
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
 - スレッドの要判断: 窓口がAskUserQuestionでユーザーに聞き、答えをSendMessageでスレッドに返す（止まっていれば`--resume`）。窓口は自分で選ばない
 - スレッドのブロック: 窓口は、どのスレッドが何で止まったかをユーザーに伝える。止まった操作を代わりに実行しない。確認ダイアログが出たままのスレッドは`claude agents --json`の`waitingFor`で気づき、ユーザーに`claude agents`でそのスレッドを開いて答えてもらう
@@ -124,6 +137,6 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 `--worktree`の作るworktreeは、どのリポジトリでも`git status`に出ないよう、`configs/git/ignore`で無視する。片付けは`claude rm <id>`で、worktreeも安全なら一緒に消える。
 
-外への送信の確認（`external-post-guard.py`、`permissions.ask`）とtextlintは、`settings.json`の設定なので、窓口でもスレッドでもそのまま動く。
+外への送信の確認（`external-post-guard.py`）とtextlintは、`settings.json`の設定なので、窓口でもスレッドでもそのまま動く。承認の記録で通るのは窓口のセッションだけ。
 
 以前の窓口（tmuxのwindowでworkerを動かす`hub`、ダッシュボードの`hub-dash`、`configs/tmux/scripts/agent-hub/`、承認済みの提案を通す`outbox-guard.py`など）は消した。中身はtag `hub-v1-20261104`で見られる（`git show hub-v1-20261104:<path>`か、そのtagからブランチを作る）。

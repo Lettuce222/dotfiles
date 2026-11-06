@@ -4,7 +4,9 @@
 Targets:
   - MCP tools whose input carries prose under body-like keys (Slack messages,
     issue/PR comments, page bodies, ...).
-  - Bash `gh pr|issue create|comment|edit|review` and `gh api` calls with a body.
+  - Bash commands that run a gh write: `gh pr create|comment|review|merge|
+    ready|edit|close|reopen`, `gh issue create|comment|edit|close|reopen`, and
+    `gh api` calls that are not plain reads. gh may be called by path.
 
 Rules (exit 2 so the agent fixes the draft):
   1. Every ticket ID (ABC-123) and PR/issue number (#123) must be a link whose
@@ -12,8 +14,10 @@ Rules (exit 2 so the agent fixes the draft):
   2. Every date (11/4, 11月4日, 2026-11-04) must be followed by its weekday in
      parentheses, e.g. `11/4(水)`.
 
-When the prose passes, return permissionDecision "ask" so the user reviews
-the wording before anything is sent.
+When the prose passes:
+  - if the orchestrator recorded a one-shot approval for exactly this call
+    (approvals.py), consume it and return permissionDecision "allow";
+  - otherwise return "ask" so the user reviews the operation first.
 
 No service or tool names are hard-coded; prose is found by key name, as in
 textlint-mcp.sh.
@@ -63,29 +67,113 @@ def read_file(path):
     return p.read_text(errors="replace") if p.is_file() else ""
 
 
-GH_WRITE = re.compile(r"\bgh\s+(pr|issue)\s+(create|comment|edit|review)\b|\bgh\s+api\b")
-SHELL_OPS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
+PR_WRITES = {"create", "comment", "review", "merge", "ready", "edit", "close", "reopen"}
+ISSUE_WRITES = {"create", "comment", "edit", "close", "reopen"}
+SEPARATOR = re.compile(r"^[();<>|&\n]+$")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+WRAPPERS = {"env", "command", "builtin", "exec", "time", "nohup", "sudo", "xargs", "timeout"}
+SHELLS = {"sh", "bash", "zsh", "dash", "fish"}
 
 
-def gh_body(command):
-    """Return the body text of a gh write command, or None if not one."""
-    if not GH_WRITE.search(command):
-        return None
-    try:
-        args = shlex.split(command)
-    except ValueError:
-        return command
-    if is_gh_api_read(args):
-        return None
+def simple_commands(command):
+    """Split a shell command line into argv lists at operators and newlines."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""
+    argv = []
+    for tok in lex:
+        if SEPARATOR.match(tok):
+            if argv:
+                yield argv
+            argv = []
+        else:
+            argv.append(tok)
+    if argv:
+        yield argv
+
+
+def unwrap(argv, depth):
+    """Strip env assignments and wrappers; descend into `sh -c` and `eval`."""
+    i = 0
+    while i < len(argv):
+        if ASSIGNMENT.match(argv[i]):
+            i += 1
+        elif argv[i] in WRAPPERS:
+            i += 1
+            while i < len(argv) and (argv[i].startswith("-") or ASSIGNMENT.match(argv[i])):
+                i += 1
+        else:
+            break
+    argv = argv[i:]
+    if not argv:
+        return []
+    name = os.path.basename(argv[0])
+    if depth < 3 and name in SHELLS and "-c" in argv[1:-1]:
+        return gh_writes(argv[argv.index("-c") + 1], depth + 1)
+    if depth < 3 and name == "eval":
+        return gh_writes(" ".join(argv[1:]), depth + 1)
+    return [argv]
+
+
+def is_write(argv):
+    if not argv or not is_gh(argv[0]) or len(argv) < 2:
+        return False
+    group, sub = argv[1], (argv[2] if len(argv) > 2 else "")
+    if group == "pr":
+        return sub in PR_WRITES
+    if group == "issue":
+        return sub in ISSUE_WRITES
+    if group == "api":
+        return not is_gh_api_read(argv)
+    return False
+
+
+def substitutions(token):
+    """Bodies of `$(...)` and backquote substitutions inside a token."""
+    out = []
+    i = token.find("$(")
+    while i != -1:
+        level, j = 1, i + 2
+        while j < len(token) and level:
+            level += {"(": 1, ")": -1}.get(token[j], 0)
+            j += 1
+        out.append(token[i + 2 : j - 1] if level == 0 else token[i + 2 :])
+        i = token.find("$(", j)
+    out += re.findall(r"`([^`]*)`", token)
+    return out
+
+
+def gh_writes(command, depth=0):
+    """argv lists of the gh writes in a command line.
+
+    Text that only appears inside a quoted argument (for example the command
+    handed to `approvals.py add --command '...'`) is not a gh call, but a
+    command substitution inside one is.
+    """
+    out = []
+    for argv in simple_commands(command):
+        out += [a for a in unwrap(argv, depth) if is_write(a)]
+        if depth < 3:
+            for tok in argv:
+                for inner in substitutions(tok):
+                    out += gh_writes(inner, depth + 1)
+    return out
+
+
+def gh_body(argv):
+    """Return the body text a gh write sends."""
     parts = []
     i = 0
-    while i < len(args):
-        a = args[i]
-        nxt = args[i + 1] if i + 1 < len(args) else None
+    while i < len(argv):
+        a = argv[i]
+        nxt = argv[i + 1] if i + 1 < len(argv) else None
         i += 1
         if a == "--body-file" and nxt is not None:
             parts.append(read_file(nxt))
             i += 1
+        elif a.startswith("--body-file="):
+            parts.append(read_file(a.split("=", 1)[1]))
         elif a in ("-b", "--body") and nxt is not None:
             parts.append(nxt)
             i += 1
@@ -105,8 +193,8 @@ def is_gh(arg):
 
 
 def is_gh_api_read(args):
-    """True for a lone `gh api` call that only reads (GET without a payload)."""
-    if not args or not is_gh(args[0]) or args[1:2] != ["api"] or any(a in SHELL_OPS for a in args):
+    """True for a `gh api` call that only reads (GET without a payload)."""
+    if not args or not is_gh(args[0]) or args[1:2] != ["api"]:
         return False
     method = None
     payload = False
@@ -171,14 +259,32 @@ def decide(decision, reason):
     )
 
 
+def take_approval(data):
+    """Consume a matching one-shot approval. Returns (record, reason)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.dont_write_bytecode = True  # keep __pycache__ out of the hooks directory
+    try:
+        import approvals
+    except ImportError:
+        return None, None
+    return approvals.take(data.get("tool_name"), data.get("tool_input") or {}, data.get("session_id"))
+
+
 def main():
     data = json.load(sys.stdin)
     tin = data.get("tool_input") or {}
     command = tin.get("command", "") if data.get("tool_name") == "Bash" else None
 
     if command is not None:
-        body = gh_body(command)
-        if body is None:
+        try:
+            writes = gh_writes(command)
+            body = "\n\n".join(gh_body(argv) for argv in writes)
+        except ValueError:
+            # Unparsable (unbalanced quotes): check the raw text conservatively.
+            if not re.search(r"\bgh\s+(pr|issue|api)\b", command):
+                return 0
+            writes, body = [command], command
+        if not writes:
             return 0
     else:
         prose = []
@@ -192,7 +298,13 @@ def main():
         print("送信をブロックしました。下書きを直してから送り直してください。\n" + "\n".join(found), file=sys.stderr)
         return 2
 
-    decide("ask", "外部に送る文面です。送る前に内容を確認してください。")
+    record, why = take_approval(data)
+    if record:
+        decide("allow", "窓口で承認済みの操作です: " + (record.get("note") or record.get("id", "")))
+        return 0
+
+    reason = "外部に送る文面です。送る前に内容を確認してください。"
+    decide("ask", reason + (f"（{why}）" if why else ""))
     return 0
 
 
