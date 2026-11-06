@@ -26,7 +26,8 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
 
 Usage:
   cases.py board [--once] [--width N] [--height N]
-      案件の一覧を描く。--once が無ければ、ファイルの変化と端末の大きさの変化を見て描き直し続ける。
+      案件の一覧と、その上にスレッドの節（下の「スレッドの節」を参照）を描く。--once が無ければ、
+      ファイルの変化と端末の大きさの変化とスレッドの変化（THREAD_POLL 秒ごと）を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
       このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
@@ -44,7 +45,14 @@ sweep の出力（1 行に 1 つ）:
   {"action": "open", "case", "section", "item", "prs"}         Waiting で、まだ開いている PR がある項目
   prs は [{"url", "state", "reviewDecision", "isDraft", "reviews": [{"author", "state"}]}]（reviews は人ごとの最新のレビュー）
 
-gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh だけで動かす。
+スレッドの節:
+  `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（名前・状態・いまの作業）。
+  窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
+  作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
+  needs（止まったとき）・output.result（終わったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
+  claude agents が失敗しても、案件の一覧はそのまま描く。
+
+gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh・claude だけで動かす。
 """
 
 from __future__ import annotations
@@ -365,6 +373,16 @@ STYLE = {
 }
 LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
 
+# スレッドの状態ごとの (印, 名前, 色)。窓口の番は TODO と、動いているは Waiting とそろえる。
+THREAD_STATE = {
+    "blocked": ("▶", "窓口の番", STYLE[MINE]),
+    "dialog": ("▶", "確認ダイアログ", STYLE[MINE]),
+    "working": ("●", "動いている", STYLE[WAITING]),
+    "done": ("✓", "終わった", STYLE["dim"]),
+}
+THREAD_ORDER = ("dialog", "blocked", "working")  # これ以外（done など）は後ろ
+THREADS_TITLE = "スレッド"
+
 INLINE_RE = re.compile(
     r"\[(?P<lt>[^\]]+)\]\((?P<lu>[^)\s]+)\)"  # [text](url)
     r"|`(?P<code>[^`]+)`"
@@ -511,22 +529,159 @@ def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
     return rows
 
 
-def render(d: Path, width: int, height: int) -> list[str]:
-    """案件の一覧だけを描く。見出しや区切り線は出さず、1 行目から案件にする。"""
+# ---------------------------------------------------------------- スレッド
+
+THREAD_POLL = 5  # 秒。claude agents は 0.2 秒ほどで返るが、毎秒は呼ばない
+HIDDEN_THREADS = ("chore-hub-watch",)
+
+
+@dataclass(frozen=True)
+class Thread:
+    name: str
+    state: str  # THREAD_STATE のキーか、claude agents の state のまま
+    summary: str
+    cwd: str | None = None
+    started: int = 0
+
+
+def claude_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def job_state(job_id: str | None) -> dict:
+    """ジョブの状態ファイル。Claude Code の内部のファイルなので、読めなければ空にする。"""
+    if not job_id or "/" in job_id:
+        return {}
+    try:
+        data = json.loads((claude_dir() / "jobs" / job_id / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def one_line(text) -> str:
+    return " ".join(text.split()) if isinstance(text, str) else ""
+
+
+def thread_summary(state: str, job: dict) -> str:
+    output = job.get("output")
+    result = output.get("result") if isinstance(output, dict) else None
+    order = {"blocked": ("needs",), "done": ("result",)}.get(state, ())
+    for key in (*order, "detail"):
+        text = one_line(result if key == "result" else job.get(key))
+        if text:
+            return text
+    intent = one_line(job.get("intent"))
+    if intent.startswith("/"):  # 先頭のスキル（/agents-thread）は飛ばす
+        intent = intent.partition(" ")[2]
+    return intent
+
+
+def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
+    """`claude agents --json --all` の出力から、出すスレッドを並べる。"""
+    hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_THREADS}
+    threads = []
+    for a in agents if isinstance(agents, list) else []:
+        if not isinstance(a, dict) or a.get("kind") != "background":
+            continue
+        name = a.get("name") or a.get("id") or "?"
+        if name in hidden:
+            continue
+        state = a.get("state") or a.get("status") or "?"
+        job = job_state_fn(a.get("id"))
+        summary = thread_summary(state, job)
+        if a.get("waitingFor"):
+            state = "dialog"
+            summary = f"{a['waitingFor']}: {summary}" if summary else a["waitingFor"]
+        started = a.get("startedAt")
+        threads.append(
+            Thread(name, state, summary, a.get("cwd"), started if isinstance(started, int) else 0)
+        )
+    rank = {s: i for i, s in enumerate(THREAD_ORDER)}
+    threads.sort(key=lambda t: (rank.get(t.state, len(rank)), -t.started))
+    return threads
+
+
+def fetch_threads() -> list[Thread] | None:
+    """いまのスレッド。claude agents が呼べなければ None。"""
+    claude = shutil.which("claude")
+    if not claude:
+        return None
+    try:
+        proc = subprocess.run(
+            [claude, "agents", "--json", "--all"], capture_output=True, text=True, timeout=10, check=False
+        )
+        if proc.returncode != 0:
+            return None
+        return parse_threads(json.loads(proc.stdout))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
+    """1 行に収まらなければ、末尾を「…」にして切る。"""
+    lines = wrap(segs, width, indent, indent)
+    if len(lines) == 1:
+        return lines[0]
+    line, col = [], 0
+    for text, style, url in lines[0]:
+        buf = ""
+        for ch in text:
+            if col + char_width(ch) > width - 1:
+                break
+            buf += ch
+            col += char_width(ch)
+        if buf:
+            line.append((buf, style, url))
+        if col >= width - 1 or len(buf) < len(text):
+            break
+    line.append(("…", STYLE["dim"], None))
+    return line
+
+
+def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, level: int):
+    """スレッドの節の行。level 1 で、終わったスレッドの説明を出さない。"""
+    if threads is None:
+        return [[(f"{THREADS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
+    if not threads:
+        return []
+    rows = [[(THREADS_TITLE, STYLE["title"], None)]]
+    for t in threads:
+        mark, label, style = THREAD_STATE.get(t.state, ("・", t.state, STYLE["dim"]))
+        done = t.state not in THREAD_ORDER
+        url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
+        rows.append(
+            clip(
+                [
+                    (f"{mark} ", style, None),
+                    (t.name, STYLE["dim"] if done else STYLE["text"], url),
+                    (" " + label, style, None),
+                ],
+                width,
+                1,
+            )
+        )
+        if t.summary and not (done and level >= 1):
+            rows.append(clip(inline(t.summary, STYLE["dim"], jira), width, 3))
+    rows.append([])
+    return rows
+
+
+def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) -> list[str]:
+    """スレッドの節と案件の一覧を描く。見出しや区切り線は出さない。
+    threads が空ならスレッドの節を出さず、1 行目から案件にする。None は読めなかったとき。"""
     width = max(width, 20)
     jira = jira_base()
     cases = sorted(load_cases(d), key=sort_key)
-    rows: list[list[tuple[str, str, str | None]]] = []
+    empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
 
-    if not cases:
-        rows.append([("案件はありません", STYLE["dim"], None)])
-
-    # 入りきらなければ、資料、Later、Waiting の次の手、の順に畳む。
-    for level in range(4):
-        body = case_rows(cases, width, jira, level)
-        if len(rows) + len(body) <= height:
+    # 入りきらなければ、資料、Later、終わったスレッドの説明、Waiting の次の手、の順に畳む。
+    for t_level, c_level in ((0, 0), (0, 1), (0, 2), (1, 2), (1, 3)):
+        head = thread_rows(threads, width, jira, t_level) + empty
+        body = case_rows(cases, width, jira, c_level)
+        if len(head) + len(body) <= height:
             break
-    rows += body
+    rows = head + body
 
     if len(rows) > height:
         hidden = len(rows) - (height - 1)
@@ -562,7 +717,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
 
     if once:
         w, h = size()
-        sys.stdout.write("\n".join(render(d, w, h)) + "\n")
+        sys.stdout.write("\n".join(render(d, w, h, fetch_threads())) + "\n")
         return 0
 
     resized = [True]
@@ -571,6 +726,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
     out.write("\x1b[?25l")  # カーソルを隠す
     last = None
     code = seen = code_signature()
+    threads, polled = None, None
     try:
         while True:
             now_code = code_signature()
@@ -581,12 +737,14 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
                 os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
             seen = now_code
             w, h = size()
-            key = (signature(d), w, h)
+            if polled is None or time.monotonic() - polled >= THREAD_POLL:
+                threads, polled = fetch_threads(), time.monotonic()
+            key = (signature(d), w, h, threads)
             if key != last or resized[0]:
                 resized[0] = False
                 last = key
                 try:
-                    lines = render(d, w, h)
+                    lines = render(d, w, h, threads)
                 except Exception as e:  # 描けなくてもペインは閉じない
                     lines = [f"cases: 描けませんでした: {e}"]
                 out.write("\x1b[H\x1b[2J" + "\r\n".join(lines))

@@ -121,7 +121,7 @@ disable-model-invocation: true
 
 ユーザーに「状況」と聞かれたとき、起動したとき、スレッドからの報告を受けて状況が変わったときに、一覧を出す。
 
-一覧は、`claude agents --json` から作るスレッドの表と、右のペインの案件の一覧で出す。
+一覧は、`claude agents --json` から作るスレッドの表と、右のペインの案件の一覧で出す。右のペインの上にも、スレッドごとの状態といまの作業が出る（`cases.py board` のスレッドの節）。ペインは見るだけのもので、表を作るときは `claude agents --json` と報告から作る。
 
 1. `claude agents --json` で、各スレッドの `state`・`status`・`waitingFor` を取る。
 2. 各スレッドの最後の報告（`agents-thread` の 3 行の形）と合わせて、表にする。報告がまだ無いスレッドは、`state` と `waitingFor` から書く。`waitingFor` が確認ダイアログを指していれば、「ブロック: 確認ダイアログ」と書く（下の「スレッドがブロックしたとき」を参照）。

@@ -93,7 +93,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
 
-- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。窓口はauto modeで起動する。スレッドとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
+- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。案件の一覧の上には、スレッドの節（いまどのスレッドが何をしているか）も出す。窓口はauto modeで起動する。スレッドとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
 - `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、スレッドはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。確認ダイアログやauto modeのブロックで進めなくなったときは「ブロック」を送って止まる
 - `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けたWaitingは`cases.py sweep`で消す
@@ -118,9 +118,14 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - Waitingの項目は` → `のあとに、待ちが解けたらやることを書ける。解けると、そこが「TODO」に移る
 - 3つの節が空になった案件は`done/`に移す（消さない）
 
-`agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`だけで動く。サブコマンドは次の3つ。
+`agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`・`claude`だけで動く。サブコマンドは次の3つ。
 
-- `board`: 案件の一覧を描き（見出しや区切り線は出さず、1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`のテキストはpopupのnvim、フォルダはFinder）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す
+- `board`: 案件の一覧を描き（見出しや区切り線は出さず、スレッドの節が無ければ1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`のテキストはpopupのnvim、フォルダはFinder）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す。案件の上に、スレッドの節（`スレッド`の1行のあと、1スレッドを名前と状態の1行と、いまの作業の1行で出す）を置く
+  - データは5秒ごとの`claude agents --json --all`。backgroundのスレッドだけを出し、窓口（`AGENT_ORCHESTRATOR_NAME`、既定は`orchestrator`）と見張り（`chore-hub-watch`）は出さない。`claude rm`したスレッドは出ない
+  - 状態は、確認ダイアログ（`waitingFor`がある）・窓口の番（`state`が`blocked`）・動いている・終わったの順に並べる。窓口の番はTODOの黄、動いているはWaitingの水色、終わったは灰色。名前は作業場所（`cwd`）のフォルダへのリンク
+  - いまの作業は、`claude agents`に要約の欄が無いので、ジョブの状態ファイル（`~/.claude/jobs/<id>/state.json`、`CLAUDE_CONFIG_DIR`で変わる）から取る。止まったときは`needs`、終わったときは`output.result`、それ以外は`detail`（Claude Codeが付ける短い要約）。どれも無ければ起動時の依頼（`intent`）の先頭。Claude Codeの内部のファイルなので、読めなければ説明を出さないだけにする
+  - 1行に入らなければ末尾を`…`で切る。高さが足りないときは、資料とLaterのあとに、終わったスレッドの説明を畳む
+  - `claude agents`が失敗したら、スレッドの節を「claude agents を読めませんでした」の1行にして、案件はそのまま描く
 - `sweep`: Waitingのうち、` → `の前のPRがすべてmerge・close済みの項目を消し、` → `のあとを「TODO」に移す。したことと、残ったPR付きの項目の状態（`reviewDecision`など）をJSON Linesで出す。見張りが30分ごとに実行し、レビュー待ちが解けたかなどの判断は見張りがする
 - `resolve <案件> <行の一部>`: 1つの項目を消す。Waitingなら` → `のあとを「TODO」に移す
 

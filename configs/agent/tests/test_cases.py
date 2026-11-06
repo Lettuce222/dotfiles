@@ -2,7 +2,7 @@
 
 実行: python3 -m unittest configs/agent/tests/test_cases.py
 
-gh は呼ばない（sweep には PR の状態を返す関数を渡す）。
+gh は呼ばない（sweep には PR の状態を返す関数を渡す）。claude agents も呼ばない（fetch_threads を差し替える）。
 """
 
 import importlib.util
@@ -20,6 +20,7 @@ spec = importlib.util.spec_from_file_location("cases", SCRIPT)
 cases = importlib.util.module_from_spec(spec)
 sys.modules["cases"] = cases  # dataclass が自分のモジュールを引くため
 spec.loader.exec_module(cases)
+REAL_FETCH_THREADS = cases.fetch_threads
 
 PR1 = "https://github.com/o/r/pull/1"
 PR2 = "https://github.com/o/r/pull/2"
@@ -62,6 +63,9 @@ class Base(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"AGENT_ORCHESTRATOR_HOME": self.tmp.name})
         env.start()
         self.addCleanup(env.stop)
+        fetch = mock.patch.object(cases, "fetch_threads", return_value=[])
+        self.fetch_threads = fetch.start()
+        self.addCleanup(fetch.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -294,6 +298,145 @@ class BoardReloadTest(Base):
                 p.write_text(p.read_text() + "\n## Later\n- もう 1 つ\n")
 
         self.assertEqual(self.run_board(3, touch), 2)
+
+    def test_redraws_when_threads_change(self):
+        self.write()
+        self.fetch_threads.side_effect = [
+            [cases.Thread("impl-a", "working", "直している")],
+            [cases.Thread("impl-a", "done", "直した")],
+            [cases.Thread("impl-a", "done", "直した")],
+        ]
+        with mock.patch.object(cases, "THREAD_POLL", 0):
+            self.assertEqual(self.run_board(3), 2)
+        self.assertEqual(self.fetch_threads.call_count, 3)
+
+
+AGENTS = [
+    {"id": "o1", "kind": "background", "name": "orchestrator", "state": "working", "startedAt": 9},
+    {"id": "w1", "kind": "background", "name": "chore-hub-watch", "state": "working", "startedAt": 9},
+    {"pid": 1, "kind": "interactive", "name": "dotfiles-54", "status": "idle", "startedAt": 9},
+    {"id": "d1", "kind": "background", "name": "research-done", "state": "done", "cwd": "/tmp/d", "startedAt": 5},
+    {"id": "r1", "kind": "background", "name": "impl-old", "state": "working", "cwd": "/tmp/r", "startedAt": 1},
+    {"id": "r2", "kind": "background", "name": "impl-new", "state": "working", "cwd": "/tmp/r2", "startedAt": 2},
+    {"id": "b1", "kind": "background", "name": "impl-blocked", "state": "blocked", "startedAt": 3},
+    {
+        "id": "p1",
+        "kind": "background",
+        "name": "impl-dialog",
+        "status": "waiting",
+        "waitingFor": "permission prompt",
+        "state": "blocked",
+        "startedAt": 4,
+    },
+]
+JOBS = {
+    "d1": {"detail": "途中の説明", "output": {"result": "report.md にまとめた"}},
+    "r1": {"intent": "/agents-thread #12 のレビューに答える\n- 詳しく"},
+    "r2": {"detail": "テストを足している", "intent": "/agents-thread 何か"},
+    "b1": {"detail": "止まった", "needs": "指摘 2 を直すか決める"},
+    "p1": {"detail": "gh api を呼ぶ"},
+}
+
+
+class ThreadsTest(Base):
+    def parse(self, agents=AGENTS):
+        return cases.parse_threads(agents, lambda i: JOBS.get(i, {}))
+
+    def test_hides_orchestrator_watch_and_interactive(self):
+        names = [t.name for t in self.parse()]
+        self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old", "research-done"])
+
+    def test_orchestrator_name_follows_env(self):
+        with mock.patch.dict(os.environ, {"AGENT_ORCHESTRATOR_NAME": "hub"}):
+            names = [t.name for t in self.parse()]
+        self.assertIn("orchestrator", names)
+
+    def test_summary_sources(self):
+        by = {t.name: t for t in self.parse()}
+        self.assertEqual(by["impl-blocked"].summary, "指摘 2 を直すか決める")
+        self.assertEqual(by["research-done"].summary, "report.md にまとめた")
+        self.assertEqual(by["impl-new"].summary, "テストを足している")
+        self.assertEqual(by["impl-old"].summary, "#12 のレビューに答える - 詳しく")
+        self.assertEqual(by["impl-dialog"].state, "dialog")
+        self.assertEqual(by["impl-dialog"].summary, "permission prompt: gh api を呼ぶ")
+
+    def test_bad_input_gives_no_threads(self):
+        self.assertEqual(cases.parse_threads({"not": "a list"}), [])
+        self.assertEqual(cases.parse_threads([1, None, "x"]), [])
+
+    def test_job_state_reads_state_json(self):
+        job = Path(self.tmp.name) / "claude" / "jobs" / "abc"
+        job.mkdir(parents=True)
+        (job / "state.json").write_text('{"detail": "作業中"}')
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(job.parents[1])}):
+            self.assertEqual(cases.job_state("abc"), {"detail": "作業中"})
+            self.assertEqual(cases.job_state("missing"), {})
+            self.assertEqual(cases.job_state("../abc"), {})
+            self.assertEqual(cases.job_state(None), {})
+
+    def test_fetch_failures_return_none(self):
+        real = REAL_FETCH_THREADS  # Base が差し替える前の本物
+        ok = mock.Mock(returncode=0, stdout="[]")
+        with mock.patch.object(cases.shutil, "which", return_value="/bin/claude"):
+            with mock.patch.object(cases.subprocess, "run", return_value=ok):
+                self.assertEqual(real(), [])
+            for result in (mock.Mock(returncode=1, stdout=""), mock.Mock(returncode=0, stdout="not json")):
+                with mock.patch.object(cases.subprocess, "run", return_value=result):
+                    self.assertIsNone(real())
+            timeout = cases.subprocess.TimeoutExpired("claude", 10)
+            with mock.patch.object(cases.subprocess, "run", side_effect=timeout):
+                self.assertIsNone(real())
+        with mock.patch.object(cases.shutil, "which", return_value=None):
+            self.assertIsNone(real())
+
+    def test_section_above_cases(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse())]
+        self.assertEqual(lines[0], "スレッド")
+        self.assertEqual(lines[1], " ▶ impl-dialog 確認ダイアログ")
+        self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
+        self.assertIn(" ● impl-new 動いている", lines)
+        self.assertIn(" ✓ research-done 終わった", lines)
+        self.assertEqual(lines[lines.index("私の番") - 1], "")
+        self.assertLess(lines.index(" ✓ research-done 終わった"), lines.index("私の番"))
+
+    def test_state_colors_and_cwd_link(self):
+        out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
+        self.assertIn(f"{cases.STYLE[cases.MINE]} 窓口の番{cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]} 動いている{cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE['dim']} 終わった{cases.RESET}", out)
+        self.assertIn("\x1b]8;;file:///tmp/r2\x1b\\", out)
+
+    def test_no_section_without_threads(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100, [])]
+        self.assertEqual(lines[0], "私の番")
+
+    def test_failure_keeps_cases(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100, None)]
+        self.assertIn("claude agents を読めませんでした", lines[0])
+        self.assertIn("私の番", lines)
+        self.assertIn("   • やる", lines)
+
+    def test_long_lines_are_clipped_to_one_line(self):
+        long = [cases.Thread("impl-" + "x" * 40, "working", "とても長い説明" * 10)]
+        lines = [plain(l) for l in cases.render(self.dir, 30, 100, long)]
+        # 節の名前、名前、説明、空行、案件はありません
+        self.assertEqual(len(lines), 5)
+        for line in lines:
+            self.assertLessEqual(cases.text_width(line), 30, line)
+        self.assertTrue(lines[1].endswith("…"))
+        self.assertTrue(lines[2].endswith("…"))
+
+    def test_folds_done_summaries_before_truncating(self):
+        self.write()
+        threads = self.parse()
+        full = cases.render(self.dir, 80, 100, threads)
+        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 3, threads)))
+        self.assertNotIn("report.md にまとめた", folded)
+        self.assertIn("テストを足している", folded)
+        self.assertNotIn("… ほか", folded)
 
 
 if __name__ == "__main__":
