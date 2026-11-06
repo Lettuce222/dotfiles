@@ -70,16 +70,36 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 ### 承認の記録
 
-窓口（`orchestrator`）でユーザーがAskUserQuestionで承認した操作は、確認ダイアログをもう一度出さずに通す。窓口が承認の直後に`approvals.py`で記録を書き、`external-post-guard.py`が記録と一致する呼び出しにだけ`allow`を返す。
+窓口（`orchestrator`）でユーザーがAskUserQuestionで承認した操作は、確認ダイアログをもう一度出さずに通す。窓口が承認の直後に`approvals.py`で記録を書き、`external-post-guard.py`と`approval-gate.py`が記録と一致する呼び出しにだけ`allow`を返す。スレッドが実行する操作も、窓口がスレッド用の記録を書いて通す（下の「スレッドの確認ダイアログを窓口に回す」を参照）。
 
 - 置き場所: `~/hub/state/approvals/<id>.json`（`AGENT_APPROVALS_DIR`か`AGENT_ORCHESTRATOR_HOME`で変わる）。1操作1件
-- 書き方: `python3 ~/.claude/hooks/approvals.py add bash --command '<コマンド>'`、MCPは`add mcp --tool <ツール名> --params '<本文以外の引数のJSON>' --body-file <下書き> --body-key <本文のkey>`。`list`で今ある記録を出す
+- 書き方: `python3 ~/.claude/hooks/approvals.py add bash [--thread <スレッド名>] --command '<コマンド>'`、MCPは`add mcp --tool <ツール名> --params '<本文以外の引数のJSON>' --body-file <下書き> --body-key <本文のkey>`。`list`で今ある記録を出す
 - Bashはコマンドの文字列全体（前後の空白を除く）が一致したときだけ通す。`--body-file`、`-F key=@file`、`--input`で読むファイルは、記録したときのsha256と同じであることも確かめる
 - MCPはツール名、本文以外のtop-levelの引数（過不足なく）、本文のsha256（前後の空白を除く）が一致したときだけ通す
 - 記録は30分（`--ttl`）で切れ、1回使うと消える。切れた記録はhookが見つけたときに消す
-- 窓口のセッションの呼び出しでだけ使う。hookに渡る`session_id`を`claude agents --json`で引き、名前が`orchestrator`（`AGENT_ORCHESTRATOR_NAME`）のときだけ記録を使う。スレッドも同じユーザーでファイルを書けるので、この確かめでスレッドが自分の送信を承認できないようにしている
+- 記録を使えるのは、記録が向けたセッションの呼び出しだけ。hookに渡る`session_id`を`claude agents --json`で引く。`--thread`を付けない記録は、名前が`orchestrator`（`AGENT_ORCHESTRATOR_NAME`）のセッションでだけ使う。`add … --thread <スレッド名>`の記録は、その名前のbackgroundのセッション（スレッド）でだけ使う。名前で結ぶので、スレッドを`--resume`しても使える
+- 記録を書けるのは窓口だけ。`approvals.py add`は、呼んだセッション（Claude CodeがBashに渡す`CLAUDE_CODE_SESSION_ID`）が窓口でなければexit 3で断る。Claude Codeの外から実行しても断る。`approval-gate.py`も、窓口以外のセッションが記録を書く呼び出し（`approvals.py … add`、記録の置き場所を含むBash、そこへのWrite・Edit）をdenyする。スレッドも同じユーザーでファイルを書けるので、これらはうっかりを防ぐ確かめで、悪意のあるプロセスは防げない
+- `--thread`の名前は、`claude agents --json --all`にあるスレッドの名前でなければ断る。MCPの記録は、本文の無い呼び出し（リアクション、状態の変更）なら`--body-file`を付けずに書け、そのときは本文を持たない呼び出しにだけ一致する
 - 文面の決まり（リンク、曜日）は記録があっても確かめ、違反すればexit 2で止める。このとき記録は消さない
 - 不安定さを許す作り: MCPでは`textlint-mcp.sh`と並んで動くので、textlintが止めたときも記録は消えている。そのときは窓口が記録を書き直す。コマンドの書き方が記録と1文字でも違うとダイアログに戻る
+
+### スレッドの確認ダイアログを窓口に回す
+
+スレッド（`claude --bg`で起動したbackgroundのセッション）の画面は誰も見ていないので、確認ダイアログが出るとスレッドが止まったままになる。`approval-gate.py`は、スレッドではダイアログの代わりに実行を断り、承認を窓口で聞く流れに乗せる。
+
+- `approval-gate.py permission`: Claude Codeの`PermissionRequest`（全tool）で動く。このeventはダイアログを出す直前にだけ発火するので、hookの`ask`、`permissions.ask`、auto modeがブロックを重ねて確認に戻ったときなど、ダイアログの出どころによらず同じに扱える
+  - そのセッション向けの承認の記録と一致すれば`allow`を返し、記録を消す
+  - スレッド（`claude agents --json`で`kind`が`background`、名前が窓口でないもの）なら`deny`を返す。`message`に、止めた操作と、「要判断」で窓口に報告して止まり、承認が届いたら同じコマンドを変えずに実行し直すことを書く
+  - 窓口や、窓口と関係ない対話のセッション、`claude agents --json`で引けないセッションでは何も返さず、今までどおりダイアログを出す
+- `approval-gate.py pre`: `PreToolUse`（`Bash`、`Write`・`Edit`などの編集、全MCP tool）で動く
+  - 窓口以外のセッションが承認の記録を書く呼び出しをdenyする（上の「承認の記録」を参照）
+  - そのセッション向けの記録と一致すれば`allow`を返して記録を消す。ダイアログを経ずに断られる操作（auto modeの分類器のブロック）を、承認のあとに通すため。ghの書き込みと本文を持つMCPの呼び出しは`external-post-guard.py`が記録を使うので、ここでは触らない（2つのhookで同じ記録を取り合わないように）
+  - 記録が1件も無く、記録を書く呼び出しでもなければ、`claude agents --json`を呼ばずにすぐ終わる
+- 流れ: スレッドが止められる → 「要判断」でコマンドの全文と目的を窓口に報告 → 窓口がAskUserQuestionで聞く → 承認されたら`approvals.py add … --thread <スレッド名>`で記録を書き、スレッドに実行し直すよう返す → スレッドが同じコマンドを実行し、記録と一致する1回だけ通る
+- 承認していない操作は今までどおり通らない。記録が無いか一致しなければ、スレッドではdeny、窓口ではダイアログになる
+- docsで決まっていないこと: PreToolUseの`allow`がauto modeの分類器を飛ばすかは書かれていない。飛ばさなければ、承認のあとでも分類器にブロックされ、スレッドは「ブロック」を報告する。auto modeのブロックは`PermissionRequest`を通らない（Claudeに理由が返るだけ）ので、スレッドのスキルで「要判断」に回させている
+
+`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_approvals.py`。
 
 ### tmuxのサーバーを守る
 
@@ -97,7 +117,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 - `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。案件の一覧の上には、スレッドの節（いまどのスレッドが何をしているか）も出す。窓口はauto modeで起動する。スレッドとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でスレッドを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <スレッド名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/threads/<スレッド名>/`で起動する。起動したら`notify_when_idle`のSendMessageを送り、終わったスレッドの続きは`--resume`で頼む
-- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、スレッドはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。確認ダイアログやauto modeのブロックで進めなくなったときは「ブロック」を送って止まる
+- `agents-thread`（skill）: スレッドの決まり。窓口が依頼の先頭に`/agents-thread`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、スレッドはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。承認が要る実行をhookやauto modeに止められたときも、コマンドの全文と目的を付けた「要判断」を送り、承認が届いたら同じコマンドを実行し直す。それ以外で進めなくなったときは「ブロック」を送って止まる
 - `agents-watch`（skill）: 見張りのスレッド`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けたWaitingは`cases.py sweep`で消す
 
 窓口の振る舞いは`agents-orchestrator`の表にまとめている。
@@ -109,7 +129,8 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - 文面の形式の直し: スレッドは「送信の確認待ち」を報告する前に、下書きをtextlintと`external-post-guard.py --check`に通して直しておく。窓口で送るときに文面のチェックに止められたら、窓口はユーザーに聞かずにスレッドへ直しを頼み、直ったものを送る。ユーザーには送った結果だけを伝え、形式の直しのことは伝えない
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにスレッドを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
 - スレッドの要判断: 窓口がAskUserQuestionでユーザーに聞き、答えをSendMessageでスレッドに返す（止まっていれば`--resume`）。窓口は自分で選ばない
-- スレッドのブロック: 窓口は、どのスレッドが何で止まったかをユーザーに伝える。止まった操作を代わりに実行しない。確認ダイアログが出たままのスレッドは`claude agents --json`の`waitingFor`で気づき、ユーザーに`claude agents`でそのスレッドを開いて答えてもらう
+- スレッドの実行の承認: スレッドでは確認ダイアログを出さず、`approval-gate.py`が代わりに断る。スレッドはコマンドの全文と目的を付けた「要判断」を窓口に送り、窓口がAskUserQuestionで聞いて、承認されたらそのスレッド用の承認の記録を書いて返す。スレッドは同じコマンドを実行し直す。force push、共有のmainへのpush、ファイルの削除など、承認の表で承認が要るものもこの流れに乗せる
+- スレッドのブロック: 窓口は、どのスレッドが何で止まったかをユーザーに伝える。止まった操作を代わりに実行しない。確認ダイアログが出たままのスレッド（`claude agents --json`の`waitingFor`）があれば、hookが動いていないので調べる
 - 状況の一覧: `claude agents --json`とスレッドの報告を合わせて、「スレッド」「止まった理由」「あなたの番」「資料」の表にし、案件の一覧（右のペイン）と合わせて、次の行動を1件だけAskUserQuestionで提案する
 
 ### 案件の一覧

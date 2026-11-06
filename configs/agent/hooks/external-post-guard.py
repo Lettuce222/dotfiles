@@ -16,7 +16,9 @@ Rules (exit 2 so the agent fixes the draft):
 
 When the prose passes:
   - if the orchestrator recorded a one-shot approval for exactly this call
-    (approvals.py), consume it and return permissionDecision "allow";
+    and for this session (approvals.py: the orchestrator itself, or the
+    thread named in the record), consume it and return permissionDecision
+    "allow";
   - otherwise return "ask" so the user reviews the operation first. The
     reason shown in the dialog carries the destination (the gh command with
     inline bodies elided, or the MCP tool and its non-prose fields) and the

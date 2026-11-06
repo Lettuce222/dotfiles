@@ -56,6 +56,23 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("形式の直しのことは書かず", section)
 
 
+    def test_thread_asks_orchestrator_to_approve_runs(self):
+        text = THREAD.read_text(encoding="utf-8")
+        section = text.split("## 実行の承認を求める", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("要判断", section)
+        self.assertIn("1 文字も変えずに実行し直す", section)
+        self.assertIn("コマンドの全文", section)
+        self.assertNotIn("窓口が `claude agents --json` で気づいて", text)
+
+    def test_orchestrator_approves_thread_runs_without_attach(self):
+        text = ORCH.read_text(encoding="utf-8")
+        section = text.split("### スレッドの実行を承認する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
+        self.assertIn("AskUserQuestion", section)
+        self.assertIn("--thread <スレッド名>", section)
+        self.assertIn("preview", section)
+        self.assertNotIn("claude attach", text)
+        self.assertNotIn("そのスレッドを選んでダイアログに答えて", text)
+
     def test_orchestrator_shows_body_when_asking_approval(self):
         text = ORCH.read_text(encoding="utf-8")
         section = text.split("### 承認をもらって実行する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]

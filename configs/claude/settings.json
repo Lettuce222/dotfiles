@@ -100,6 +100,28 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "^(Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/approval-gate.py pre",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/approval-gate.py permission",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [

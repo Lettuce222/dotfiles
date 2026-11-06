@@ -2,8 +2,9 @@
 """One-shot approvals for operations the user approved in the orchestrator.
 
 The orchestrator writes one record per approved operation right after the user
-approves it (AskUserQuestion). external-post-guard.py then lets exactly that
-operation run without a permission prompt, once, before the record expires.
+approves it (AskUserQuestion). external-post-guard.py and approval-gate.py
+then let exactly that operation run without a permission prompt, once, before
+the record expires.
 
 Records live in ~/hub/state/approvals/<id>.json (AGENT_APPROVALS_DIR, or
 $AGENT_ORCHESTRATOR_HOME/state/approvals). A record is honored only when:
@@ -14,18 +15,27 @@ $AGENT_ORCHESTRATOR_HOME/state/approvals). A record is honored only when:
             body file the command reads (--body-file, -F key=@file, --input)
             still has the hash it had when the record was written;
       MCP:  the tool name, every non-prose top-level field, and the hash of
-            the prose (Slack text, comment body, ...) taken from the draft,
-  - the call comes from the orchestrator session: the hook's session_id
-    belongs to the `claude agents --json` entry named "orchestrator"
-    (AGENT_ORCHESTRATOR_NAME). Threads can write files too, so this check is
-    what keeps a thread from approving its own posts.
+            the prose (Slack text, comment body, ...) taken from the draft
+            (a record without a draft matches only calls without prose),
+  - the call comes from the session the record is for. The hook's
+    session_id is looked up in `claude agents --json`:
+      a record without --thread is for the orchestrator (the entry named
+        "orchestrator", AGENT_ORCHESTRATOR_NAME);
+      a record with --thread <name> is for that background thread only, so
+        a thread can run an operation the user approved in the orchestrator
+        without a dialog nobody would answer.
 
 A matching record is deleted before the call runs, so it works once.
 
+Only the orchestrator writes records: `add` refuses unless the calling
+session (CLAUDE_CODE_SESSION_ID) is the orchestrator, and approval-gate.py
+denies tool calls from other sessions that would write records. Threads run as
+the same user, so these checks catch mistakes; they are not a sandbox.
+
 CLI (run by the orchestrator):
-  approvals.py add bash --command '<exact command>' [--ttl SECONDS] [--note TEXT]
+  approvals.py add bash --command '<exact command>' [--thread NAME] [--ttl SECONDS] [--note TEXT]
   approvals.py add mcp --tool <tool name> --params '<json of the other fields>'
-                       --body-file <draft> [--body-key text] [--ttl] [--note]
+                       [--body-file <draft> [--body-key text]] [--thread NAME] [--ttl] [--note]
   approvals.py list
 """
 
@@ -93,7 +103,7 @@ def body_files(command):
 # --- records ---------------------------------------------------------------
 
 
-def new_record(kind, ttl, note, **fields):
+def new_record(kind, ttl, note, thread=None, **fields):
     now = time.time()
     return {
         "id": time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + "-" + uuid.uuid4().hex[:8],
@@ -101,25 +111,31 @@ def new_record(kind, ttl, note, **fields):
         "created_at": now,
         "expires_at": now + ttl,
         "note": note or "",
+        "thread": thread or None,
         **fields,
     }
 
 
-def bash_record(command, ttl=DEFAULT_TTL, note=""):
+def bash_record(command, ttl=DEFAULT_TTL, note="", thread=None):
     files = {}
     for f in body_files(command):
         digest = sha_file(f)
         if digest is None:
             raise ValueError(f"本文のファイルが読めません: {f}")
         files[f] = digest
-    return new_record("bash", ttl, note, command=command.strip(), files=files)
+    return new_record("bash", ttl, note, thread, command=command.strip(), files=files)
 
 
-def mcp_record(tool, params, body_file, body_key=None, ttl=DEFAULT_TTL, note=""):
+def mcp_record(tool, params, body_file=None, body_key=None, ttl=DEFAULT_TTL, note="", thread=None):
     if not isinstance(params, dict):
         raise ValueError("--params は JSON の object にする")
     if any(PROSE_KEY.match(k) for k in params):
         raise ValueError("本文は --params に入れず --body-file で渡す")
+    if body_file is None:
+        if body_key is not None:
+            raise ValueError("--body-key には --body-file も付ける")
+        # A call without prose (a reaction, a status change).
+        return new_record("mcp", ttl, note, thread, tool=tool, params=params, body_key=None, body_sha256=None)
     p = Path(body_file).expanduser()
     if not p.is_file():
         raise ValueError(f"本文のファイルが読めません: {body_file}")
@@ -129,6 +145,7 @@ def mcp_record(tool, params, body_file, body_key=None, ttl=DEFAULT_TTL, note="")
         "mcp",
         ttl,
         note,
+        thread,
         tool=tool,
         params=params,
         body_key=body_key,
@@ -157,7 +174,7 @@ def load_all(directory=None, now=None):
         try:
             rec = json.loads(path.read_text())
             expired = float(rec.get("expires_at", 0)) <= now
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, AttributeError):
             expired = True
             rec = None
         if expired:
@@ -198,6 +215,8 @@ def match(rec, tool_name, tool_input):
         params = rec.get("params") or {}
         if set(others) != set(params) or not all(same_value(others[k], params[k]) for k in params):
             return False, None
+        if rec.get("body_sha256") is None:
+            return not prose, None
         key = rec.get("body_key")
         if key is not None:
             if set(prose) != {key}:
@@ -212,25 +231,66 @@ def match(rec, tool_name, tool_input):
     return False, None
 
 
-def session_name(session_id):
-    """Name of the running Claude Code session with this id, or None."""
+# --- sessions --------------------------------------------------------------
+
+
+def orchestrator_name():
+    return os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator"
+
+
+def agents(include_stopped=False):
+    """Entries of `claude agents --json` (empty when claude is unavailable)."""
     claude = shutil.which("claude")
-    if not session_id or not claude:
-        return None
+    if not claude:
+        return []
+    cmd = [claude, "agents", "--json"] + (["--all"] if include_stopped else [])
     try:
-        out = subprocess.run(
-            [claude, "agents", "--json"], capture_output=True, text=True, timeout=10, check=False
-        ).stdout
-        for a in json.loads(out):
-            if a.get("sessionId") == session_id:
-                return a.get("name")
-    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False).stdout
+        data = json.loads(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    return [a for a in data if isinstance(a, dict)] if isinstance(data, list) else []
+
+
+def session_entry(session_id):
+    """The `claude agents --json` entry of the running session with this id, or None."""
+    if not session_id:
         return None
+    for a in agents():
+        if a.get("sessionId") == session_id:
+            return a
     return None
 
 
+def session_name(session_id):
+    """Name of the running Claude Code session with this id, or None."""
+    entry = session_entry(session_id)
+    return entry.get("name") if entry else None
+
+
+def is_orchestrator(entry):
+    return bool(entry) and entry.get("name") == orchestrator_name()
+
+
+def is_thread(entry):
+    """A background session other than the orchestrator: a thread it started."""
+    return (
+        bool(entry)
+        and entry.get("kind") == "background"
+        and entry.get("name") not in (None, "", orchestrator_name())
+    )
+
+
+def allowed_for(rec, entry):
+    """Whether the session described by entry may use the record."""
+    thread = rec.get("thread")
+    if thread:
+        return is_thread(entry) and entry.get("name") == thread
+    return is_orchestrator(entry)
+
+
 def take(tool_name, tool_input, session_id, directory=None, now=None):
-    """Consume the record that approves this call.
+    """Consume the record that approves this call for this session.
 
     Returns (record, None) when approved, else (None, reason or None).
     """
@@ -244,16 +304,30 @@ def take(tool_name, tool_input, session_id, directory=None, now=None):
             near_miss = why
     if not candidates:
         return None, near_miss
-    orchestrator = os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator"
-    if session_name(session_id) != orchestrator:
-        return None, "承認の記録は窓口のセッションでだけ使えます"
-    for path, rec in candidates:
+    entry = session_entry(session_id)
+    mine = [(p, r) for p, r in candidates if allowed_for(r, entry)]
+    if not mine:
+        return None, "承認の記録は、窓口か記録に書いたスレッドのセッションでだけ使えます"
+    for path, rec in mine:
         try:
             path.unlink()
         except FileNotFoundError:
             continue  # someone else took it first
         return rec, None
     return None, near_miss
+
+
+def has_records(directory=None):
+    return any(True for _ in load_all(directory))
+
+
+def writer_is_orchestrator():
+    """`add` is run by the orchestrator's Bash, which sets CLAUDE_CODE_SESSION_ID."""
+    return is_orchestrator(session_entry(os.environ.get("CLAUDE_CODE_SESSION_ID")))
+
+
+def known_thread(name):
+    return any(is_thread(a) and a.get("name") == name for a in agents(include_stopped=True))
 
 
 # --- CLI -------------------------------------------------------------------
@@ -269,12 +343,13 @@ def main(argv=None):
         p = kinds.add_parser(name)
         p.add_argument("--ttl", type=int, default=DEFAULT_TTL, help="有効な秒数（既定 1800）")
         p.add_argument("--note", default="", help="何を承認したか（ダイアログの代わりに記録に残す）")
+        p.add_argument("--thread", default=None, help="この記録を使えるスレッドの名前（付けなければ窓口だけ）")
         if name == "bash":
             p.add_argument("--command", required=True, help="実行するコマンドそのもの")
         else:
             p.add_argument("--tool", required=True, help="MCP のツール名（mcp__…）")
             p.add_argument("--params", default="{}", help="本文以外の引数の JSON")
-            p.add_argument("--body-file", required=True, help="本文の下書き")
+            p.add_argument("--body-file", default=None, help="本文の下書き（本文の無い呼び出しでは付けない）")
             p.add_argument("--body-key", default=None, help="本文を入れる key（text、body など）")
 
     sub.add_parser("list")
@@ -285,11 +360,22 @@ def main(argv=None):
             print(json.dumps(rec, ensure_ascii=False))
         return 0
 
+    if not writer_is_orchestrator():
+        print("approvals.py: 承認の記録を書けるのは窓口（orchestrator）のセッションだけです", file=sys.stderr)
+        return 3
+    if args.thread and not known_thread(args.thread):
+        print(
+            f"approvals.py: スレッドが見つかりません: {args.thread}（claude agents --json --all の name を書く）",
+            file=sys.stderr,
+        )
+        return 2
     try:
         if args.kind == "bash":
-            rec = bash_record(args.command, args.ttl, args.note)
+            rec = bash_record(args.command, args.ttl, args.note, args.thread)
         else:
-            rec = mcp_record(args.tool, json.loads(args.params), args.body_file, args.body_key, args.ttl, args.note)
+            rec = mcp_record(
+                args.tool, json.loads(args.params), args.body_file, args.body_key, args.ttl, args.note, args.thread
+            )
     except ValueError as e:
         print(f"approvals.py: {e}", file=sys.stderr)
         return 2
