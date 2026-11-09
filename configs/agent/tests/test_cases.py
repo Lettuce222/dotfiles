@@ -402,7 +402,7 @@ class ThreadsTest(Base):
         self.assertEqual(lines[0], "スレッド")
         self.assertEqual(lines[1], " ⏸ impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
-        spin = cases.SPINNER[0]
+        spin = cases.THREAD_STATE["working"][0]
         self.assertIn(f" {spin} impl-new", lines)
         self.assertIn(f" {spin} impl-old", lines)
         self.assertIn(" ✔ research-done", lines)
@@ -413,7 +413,7 @@ class ThreadsTest(Base):
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
         self.assertIn(f"{cases.STYLE[cases.MINE]}⏸ {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.SPINNER[0]} {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.THREAD_STATE["working"][0]} {cases.RESET}", out)
         self.assertIn(f"{cases.STYLE[cases.LATER]}✔ {cases.RESET}", out)
         for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
             self.assertNotIn(word, out)
@@ -425,22 +425,12 @@ class ThreadsTest(Base):
         self.assertEqual(cases.THREAD_STATE["dialog"], cases.THREAD_STATE["blocked"])
 
     def test_marks_are_one_column_wide(self):
-        for mark in (*cases.SPINNER, *(m for m, _ in cases.THREAD_STATE.values())):
+        for mark in (m for m, _ in cases.THREAD_STATE.values()):
             self.assertEqual(cases.char_width(mark), 1, mark)
 
-    def test_spinner_advances_with_frame_and_wraps(self):
+    def test_working_mark_is_a_fixed_icon(self):
         t = [cases.Thread("impl-a", "working", "")]
-        first = [plain(l) for l in cases.render(self.dir, 60, 100, t, 0)]
-        second = [plain(l) for l in cases.render(self.dir, 60, 100, t, 1)]
-        wrapped = [plain(l) for l in cases.render(self.dir, 60, 100, t, len(cases.SPINNER))]
-        self.assertEqual(first[1], f" {cases.SPINNER[0]} impl-a")
-        self.assertEqual(second[1], f" {cases.SPINNER[1]} impl-a")
-        self.assertEqual(wrapped, first)
-
-    def test_only_working_threads_spin(self):
-        self.assertTrue(cases.spinning([cases.Thread("a", "working", "")]))
-        for threads in (None, [], [cases.Thread("a", "blocked", ""), cases.Thread("b", "done", "")]):
-            self.assertFalse(cases.spinning(threads))
+        self.assertEqual(plain(cases.render(self.dir, 60, 100, t)[1]), " ⟳ impl-a")
 
     def test_screen_overwrites_without_clearing_first(self):
         self.assertEqual(cases.screen(["a", "b"]), "\x1b[Ha\x1b[K\r\nb\x1b[K\x1b[J")
