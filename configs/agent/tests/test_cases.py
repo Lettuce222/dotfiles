@@ -287,7 +287,7 @@ class BoardReloadTest(Base):
             mock.patch.object(cases.signal, "signal"),
         ):
             cases.board(self.dir, once=False, width=40, height=10)
-        return sum(1 for c in out.write.call_args_list if c.args[0].startswith("\x1b[H\x1b[2J"))
+        return sum(1 for c in out.write.call_args_list if c.args[0].startswith("\x1b[H"))
 
     def test_redraws_only_when_files_change(self):
         p = self.write()
@@ -344,11 +344,13 @@ class ThreadsTest(Base):
 
     def test_hides_orchestrator_watch_and_interactive(self):
         names = [t.name for t in self.parse()]
-        self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old"])
+        self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old", "research-done"])
 
-    def test_hides_done_threads(self):
-        names = [t.name for t in self.parse()]
-        self.assertNotIn("research-done", names)
+    def test_done_thread_has_no_summary(self):
+        by = {t.name: t for t in self.parse()}
+        self.assertEqual((by["research-done"].state, by["research-done"].summary), ("done", ""))
+
+    def test_hides_threads_of_other_states(self):
         other = [{"id": "x", "kind": "background", "name": "impl-x", "state": "failed"}]
         self.assertEqual(self.parse(other), [])
 
@@ -398,38 +400,68 @@ class ThreadsTest(Base):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse())]
         self.assertEqual(lines[0], "スレッド")
-        self.assertEqual(lines[1], " ? impl-dialog")
+        self.assertEqual(lines[1], " ⏸ impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
-        self.assertIn(" ● impl-new", lines)
-        self.assertIn(" ● impl-old", lines)
-        self.assertNotIn(" ✓ research-done", lines)
+        spin = cases.SPINNER[0]
+        self.assertIn(f" {spin} impl-new", lines)
+        self.assertIn(f" {spin} impl-old", lines)
+        self.assertIn(" ✔ research-done", lines)
         self.assertEqual(lines[lines.index("私の番") - 1], "")
-        self.assertLess(lines.index(" ● impl-old"), lines.index("私の番"))
+        self.assertLess(lines.index(f" {spin} impl-old"), lines.index(" ✔ research-done"))
+        self.assertLess(lines.index(" ✔ research-done"), lines.index("私の番"))
 
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
-        self.assertIn(f"{cases.STYLE[cases.MINE]}▶ {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.MINE]}? {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.WAITING]}● {cases.RESET}", out)
-        self.assertNotIn("✓", out)
+        self.assertIn(f"{cases.STYLE[cases.MINE]}⏸ {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.SPINNER[0]} {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.LATER]}✔ {cases.RESET}", out)
         for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
             self.assertNotIn(word, out)
         self.assertIn("\x1b]8;;file:///tmp/r2\x1b\\", out)
 
-    def test_each_state_has_its_own_mark_and_color(self):
-        looks = list(cases.THREAD_STATE.values())
-        self.assertEqual(len(set(looks)), len(looks))
-        marks = [mark for mark, _ in looks]
-        self.assertEqual(len(set(marks)), len(marks))
+    def test_stopped_working_and_done_look_different(self):
+        looks = {cases.THREAD_STATE[s] for s in ("blocked", "working", "done")}
+        self.assertEqual(len(looks), 3)
+        self.assertEqual(cases.THREAD_STATE["dialog"], cases.THREAD_STATE["blocked"])
+
+    def test_marks_are_one_column_wide(self):
+        for mark in (*cases.SPINNER, *(m for m, _ in cases.THREAD_STATE.values())):
+            self.assertEqual(cases.char_width(mark), 1, mark)
+
+    def test_spinner_advances_with_frame_and_wraps(self):
+        t = [cases.Thread("impl-a", "working", "")]
+        first = [plain(l) for l in cases.render(self.dir, 60, 100, t, 0)]
+        second = [plain(l) for l in cases.render(self.dir, 60, 100, t, 1)]
+        wrapped = [plain(l) for l in cases.render(self.dir, 60, 100, t, len(cases.SPINNER))]
+        self.assertEqual(first[1], f" {cases.SPINNER[0]} impl-a")
+        self.assertEqual(second[1], f" {cases.SPINNER[1]} impl-a")
+        self.assertEqual(wrapped, first)
+
+    def test_only_working_threads_spin(self):
+        self.assertTrue(cases.spinning([cases.Thread("a", "working", "")]))
+        for threads in (None, [], [cases.Thread("a", "blocked", ""), cases.Thread("b", "done", "")]):
+            self.assertFalse(cases.spinning(threads))
+
+    def test_screen_overwrites_without_clearing_first(self):
+        self.assertEqual(cases.screen(["a", "b"]), "\x1b[Ha\x1b[K\r\nb\x1b[K\x1b[J")
+
+    def test_done_threads_fold_first(self):
+        self.write("a", "# 私の番\n\n## TODO\n- やる\n")
+        threads = [cases.Thread("impl-a", "working", ""), cases.Thread("old", "done", "")]
+        tall = [plain(l) for l in cases.render(self.dir, 60, 100, threads)]
+        self.assertIn(" ✔ old", tall)
+        short = [plain(l) for l in cases.render(self.dir, 60, len(tall) - 1, threads)]
+        self.assertNotIn(" ✔ old", short)
+        self.assertIn("   • やる", short)
 
     def test_no_section_without_threads(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, [])]
         self.assertEqual(lines[0], "私の番")
 
-    def test_no_section_when_all_threads_are_done(self):
+    def test_no_section_when_no_thread_is_shown(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
-        done = [a for a in AGENTS if a.get("state") == "done"]
+        done = [{"id": "x", "kind": "background", "name": "impl-x", "state": "stopped"}]
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse(done))]
         self.assertEqual(lines[0], "私の番")
 

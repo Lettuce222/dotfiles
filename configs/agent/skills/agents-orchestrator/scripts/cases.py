@@ -47,8 +47,9 @@ sweep の出力（1 行に 1 つ）:
 
 スレッドの節:
   `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
-  出すのは、確認ダイアログ・窓口の番・動いているのスレッドだけ。終わったものは出さず、出すものが無ければ節ごと出さない。
-  状態は名前の左の印と色だけで表し、状態の名前は出さない。
+  出すのは、確認ダイアログ・窓口の番・動いている・完了のスレッドだけ。stopped・failed などは出さず、出すものが無ければ節ごと出さない。
+  状態は名前の左の印と色だけで表し、状態の名前は出さない。動いているスレッドの印は回るスピナーにする。
+  完了のスレッドは名前だけを出し、ペインに入りきらなければ最初に畳む。
   窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
   作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
   needs（止まったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
@@ -376,13 +377,16 @@ STYLE = {
 LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
 
 # スレッドの状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
-# 窓口の番は TODO と、動いているは Waiting とそろえる。確認ダイアログは窓口の番と同じ色で印を変える。
+# 答えを待って止まっている（確認ダイアログ・窓口の番）は TODO と、動いているは Waiting と、完了は Later の緑とそろえる。
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPINNER_INTERVAL = 0.2  # 秒。動いているスレッドがあるときの描き直しの間隔
 THREAD_STATE = {
-    "blocked": ("▶", STYLE[MINE]),
-    "dialog": ("?", STYLE[MINE]),
-    "working": ("●", STYLE[WAITING]),
+    "blocked": ("⏸", STYLE[MINE]),
+    "dialog": ("⏸", STYLE[MINE]),
+    "working": (SPINNER[0], STYLE[WAITING]),
+    "done": ("✔", STYLE[LATER]),
 }
-THREAD_ORDER = ("dialog", "blocked", "working")  # これ以外（done など）は出さない
+THREAD_ORDER = ("dialog", "blocked", "working", "done")  # これ以外（stopped、failed など）は出さない
 THREADS_TITLE = "スレッド"
 
 INLINE_RE = re.compile(
@@ -566,6 +570,8 @@ def one_line(text) -> str:
 
 
 def thread_summary(state: str, job: dict) -> str:
+    if state == "done":  # 完了は名前だけを出す
+        return ""
     for key in ("needs", "detail") if state == "blocked" else ("detail",):
         text = one_line(job.get(key))
         if text:
@@ -640,8 +646,8 @@ def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
     return line
 
 
-def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
-    """スレッドの節の行。"""
+def thread_rows(threads: list[Thread] | None, width: int, jira: str | None, frame: int = 0):
+    """スレッドの節の行。frame はスピナーのコマの番号。"""
     if threads is None:
         return [[(f"{THREADS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
     if not threads:
@@ -649,6 +655,8 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
     rows = [[(THREADS_TITLE, STYLE["title"], None)]]
     for t in threads:
         mark, style = THREAD_STATE[t.state]
+        if t.state == "working":
+            mark = SPINNER[frame % len(SPINNER)]
         url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
         rows.append(
             clip(
@@ -666,7 +674,7 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
     return rows
 
 
-def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) -> list[str]:
+def render(d: Path, width: int, height: int, threads: list[Thread] | None = (), frame: int = 0) -> list[str]:
     """スレッドの節と案件の一覧を描く。見出しや区切り線は出さない。
     出すスレッドが無ければスレッドの節を出さず、1 行目から案件にする。None は読めなかったとき。"""
     width = max(width, 20)
@@ -674,9 +682,10 @@ def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) 
     cases = sorted(load_cases(d), key=sort_key)
     empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
 
-    # 入りきらなければ、資料、Later、Waiting の次の手、の順に畳む。
-    head = thread_rows(threads, width, jira) + empty
-    for c_level in range(4):
+    # 入りきらなければ、完了のスレッド、資料、Later、Waiting の次の手、の順に畳む。
+    active = None if threads is None else [t for t in threads if t.state != "done"]
+    for shown, c_level in [(threads, 0), *((active, level) for level in range(4))]:
+        head = thread_rows(shown, width, jira, frame) + empty
         body = case_rows(cases, width, jira, c_level)
         if len(head) + len(body) <= height:
             break
@@ -687,6 +696,15 @@ def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) 
         rows = rows[: height - 1]
         rows.append([(f"… ほか {hidden} 行", STYLE["dim"], d.as_uri() if d.is_dir() else None)])
     return [paint(r) for r in rows]
+
+
+def screen(lines: list[str]) -> str:
+    """画面全体を描く文字列。先に消さず行ごとに上書きして、短い間隔で描いてもちらつかないようにする。"""
+    return "\x1b[H" + "\r\n".join(f"{line}\x1b[K" for line in lines) + "\x1b[J"
+
+
+def spinning(threads: list[Thread] | None) -> bool:
+    return any(t.state == "working" for t in threads or ())
 
 
 def signature(d: Path) -> tuple:
@@ -725,30 +743,34 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
     out.write("\x1b[?25l")  # カーソルを隠す
     last = None
     code = seen = code_signature()
+    checked = time.monotonic()
     threads, polled = None, None
     try:
         while True:
-            now_code = code_signature()
-            # 書き換えの途中で読まないよう、変わったあと 1 秒落ち着いてから起動し直す。
-            if now_code is not None and now_code != code and now_code == seen:
-                out.write("\x1b[?25h")
-                out.flush()
-                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
-            seen = now_code
+            if time.monotonic() - checked >= 1:
+                checked = time.monotonic()
+                now_code = code_signature()
+                # 書き換えの途中で読まないよう、変わったあと 1 秒落ち着いてから起動し直す。
+                if now_code is not None and now_code != code and now_code == seen:
+                    out.write("\x1b[?25h")
+                    out.flush()
+                    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
+                seen = now_code
             w, h = size()
             if polled is None or time.monotonic() - polled >= THREAD_POLL:
                 threads, polled = fetch_threads(), time.monotonic()
-            key = (signature(d), w, h, threads)
+            frame = int(time.monotonic() / SPINNER_INTERVAL) if spinning(threads) else 0
+            key = (signature(d), w, h, threads, frame)
             if key != last or resized[0]:
                 resized[0] = False
                 last = key
                 try:
-                    lines = render(d, w, h, threads)
+                    lines = render(d, w, h, threads, frame)
                 except Exception as e:  # 描けなくてもペインは閉じない
                     lines = [f"cases: 描けませんでした: {e}"]
-                out.write("\x1b[H\x1b[2J" + "\r\n".join(lines))
+                out.write(screen(lines))
                 out.flush()
-            time.sleep(1)
+            time.sleep(SPINNER_INTERVAL if spinning(threads) else 1)
     except KeyboardInterrupt:
         return 0
     finally:
