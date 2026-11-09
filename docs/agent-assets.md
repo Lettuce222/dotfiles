@@ -155,7 +155,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 
 テストは`python3 -m unittest configs/agent/tests/test_cases.py`で実行する。
 
-`agents-watch`の`scripts/watch.py`は、`gh api graphql`で読むだけのスクリプト。状態は`~/hub/state/`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_WATCH_STATE`で変わる）に置く。
+`agents-watch`の`scripts/watch.py`は、`gh api graphql`で読むだけのスクリプト。`hours`が`watch-heartbeat`に時刻を書き、窓口は`stale`で見張りの停止に気づく。状態は`~/hub/state/`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_WATCH_STATE`で変わる）に置く。
 
 - `seen.txt`: 知らせ済みの出来事のkey。初回は今あるものを記録し、コメント以外だけを出す
 - `events.jsonl`: 知らせた出来事を1行に1つ追記する（`source`、`kind`、`key`、`url`、`title`、`at`）。あとでGTDの受信箱などから読めるよう、形を変えずに追記だけする

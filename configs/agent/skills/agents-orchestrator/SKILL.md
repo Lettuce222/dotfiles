@@ -154,7 +154,7 @@ disable-model-invocation: true
 | research-tmp-x | 動いている | 無し | |
 
 - 並べる順は、ユーザーの番があるもの（要判断、送信の確認待ち、ブロック）を上に、動いているもの、完了したものの順。
-- 見張りのスレッド `chore-hub-watch` は表に入れない。止まっているときだけ、表の下に 1 行で書く。
+- 見張りのスレッド `chore-hub-watch` は表に入れない。止まっているときだけ、表の下に 1 行で書く。`python3 ~/.claude/skills/agents-watch/scripts/watch.py stale` が何か出したときも、止まっているとみなす（`state` が動いていても、空振りしていることがある）。
 - 見張りから届いて、まだ手を付けていない出来事があれば、表の下に「未着手の出来事」として 1 件 1 行で並べる。
 - 案件の一覧は右のペインに出ているので、表に写さない。次の行動の提案は、スレッドの表と案件の「TODO」の両方から選ぶ。
 
@@ -177,8 +177,12 @@ GitHub と Slack の新しい出来事は、見張りのスレッド `chore-hub-
 
 起動したときと、状況の一覧を出すときに、`claude agents --json --all` で `chore-hub-watch` を探す。動いていなければ（見つからない、`stopped`・`failed`・`done`）、起こし直す。
 
+次の 3 つを、`&&` でつながず 1 本ずつ別の Bash で実行する（sandbox の除外は 1 本のコマンドにしか当たらない）。
+
 ```sh
-mkdir -p ~/hub/threads/chore-hub-watch && cd ~/hub/threads/chore-hub-watch && claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
+mkdir -p ~/hub/threads/chore-hub-watch
+cd ~/hub/threads/chore-hub-watch
+claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 ```
 
 - 前の `chore-hub-watch` が残っていれば、`claude rm <id>` で消してから起動する（名前がぶつかるため）。

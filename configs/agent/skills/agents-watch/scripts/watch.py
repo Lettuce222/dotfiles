@@ -6,13 +6,15 @@ GitHub へは `gh api graphql` で問い合わせるだけで、何も書き込�
 状態は state ディレクトリ（既定は ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state、AGENT_WATCH_STATE で変える）に置く。
 - seen.txt: 知らせ済みの出来事の key を 1 行に 1 つ
 - events.jsonl: 知らせた出来事を 1 行に 1 つ（あとで GTD の受信箱などから読めるよう、追記だけする）
+- watch-heartbeat: hours を最後に実行した時刻（ISO 8601）。見張りが止まっていないかを stale で確かめる
 - watch.json: 設定（無くてよい）。キーはすべて省略できる
     {"ignore_authors": [], "work_days": [1, 2, 3, 4, 5], "work_start": 9, "work_end": 19}
   ignore_authors は、自分の PR へのコメントを知らせない作者（CI の bot など）。
   work_days は ISO の曜日（月 = 1）、work_start・work_end は時（work_end の時は含まない）。
 
 Usage:
-  watch.py hours            勤務時間なら終了コード 0、外なら 1
+  watch.py hours            心拍を記録し、勤務時間なら終了コード 0、外なら 1
+  watch.py stale            勤務時間内で心拍が 1 時間より古い（か無い）ときだけ 1 行出す。終了コードは常に 0
   watch.py prs [--dry-run]
       GitHub の新しい出来事を JSON Lines で標準出力に出し、seen.txt と events.jsonl に記録する。
       初回（seen.txt が無いとき）は今あるものをすべて記録し、コメント以外だけを出す。
@@ -40,6 +42,8 @@ DEFAULTS = {
     "work_start": 9,
     "work_end": 19,
 }
+
+STALE_AFTER = dt.timedelta(hours=1)
 
 PR_COMMON = "number title url isDraft headRefOid repository{nameWithOwner}"
 
@@ -109,12 +113,33 @@ def record(directory: Path, events: list[dict], extra_keys: list[str] = ()) -> N
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def write_heartbeat(directory: Path, now: dt.datetime) -> None:
+    """記録に失敗しても hours の判定は止めない。"""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "watch-heartbeat").write_text(now.isoformat(timespec="seconds") + "\n")
+    except OSError as e:
+        print(f"watch.py: 心拍を書けません: {e}", file=sys.stderr)
+
+
+def read_heartbeat(directory: Path) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat((directory / "watch-heartbeat").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 判定（純粋な関数）
 
 
 def in_work_hours(now: dt.datetime, cfg: dict) -> bool:
     return now.isoweekday() in cfg["work_days"] and cfg["work_start"] <= now.hour < cfg["work_end"]
+
+
+def is_stale(last: dt.datetime | None, now: dt.datetime, cfg: dict) -> bool:
+    """勤務時間内で、心拍が無いか STALE_AFTER より古いか。心拍は勤務時間外にも書かれる。"""
+    return in_work_hours(now, cfg) and (last is None or now - last > STALE_AFTER)
 
 
 def event_keys(event: dict) -> list[str]:
@@ -281,6 +306,7 @@ def main(argv: list[str] | None = None, now: dt.datetime | None = None, stdin=No
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("hours")
+    sub.add_parser("stale")
     p = sub.add_parser("prs")
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("seen")
@@ -290,7 +316,14 @@ def main(argv: list[str] | None = None, now: dt.datetime | None = None, stdin=No
 
     directory = state_dir()
     now = now or dt.datetime.now().astimezone()
+    if args.cmd == "stale":
+        last = read_heartbeat(directory)
+        if is_stale(last, now, load_config(directory)):
+            when = last.isoformat(timespec="minutes") if last else "記録なし"
+            print(f"見張りが止まっている可能性があります（最後の心拍: {when}）")
+        return 0
     if args.cmd == "hours":
+        write_heartbeat(directory, now)
         return 0 if in_work_hours(now, load_config(directory)) else 1
     if args.cmd == "prs":
         return cmd_github(args, directory, now)

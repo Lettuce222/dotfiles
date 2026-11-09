@@ -177,5 +177,48 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+class HeartbeatTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"AGENT_WATCH_STATE": tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def stale_output(self, now):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(watch.main(["stale"], now=now), 0)
+        return out.getvalue()
+
+    def test_hours_writes_heartbeat_even_outside_work_hours(self):
+        night = NOW.replace(hour=23)
+        self.assertEqual(watch.main(["hours"], now=night), 1)
+        self.assertEqual(watch.read_heartbeat(watch.state_dir()), night)
+
+    def test_recent_heartbeat_is_not_stale(self):
+        watch.main(["hours"], now=NOW)
+        self.assertEqual(self.stale_output(NOW + dt.timedelta(minutes=59)), "")
+
+    def test_old_heartbeat_is_stale_in_work_hours(self):
+        watch.main(["hours"], now=NOW)
+        self.assertIn("見張り", self.stale_output(NOW + dt.timedelta(minutes=61)))
+
+    def test_missing_heartbeat_is_stale_in_work_hours(self):
+        self.assertIn("記録なし", self.stale_output(NOW))
+
+    def test_not_stale_outside_work_hours(self):
+        self.assertEqual(self.stale_output(NOW.replace(hour=23)), "")
+
+
+class SkillFrontmatterTest(unittest.TestCase):
+    def test_model_can_invoke_the_skill(self):
+        # /loop の cron の発火は、モデルが Skill ツールで読み込むことがある。
+        # disable-model-invocation を付けると拒否され、見張りが空振りする。
+        text = (SCRIPT.parents[1] / "SKILL.md").read_text(encoding="utf-8")
+        frontmatter = text.split("---", 2)[1]
+        self.assertNotIn("disable-model-invocation", frontmatter)
+
+
 if __name__ == "__main__":
     unittest.main()

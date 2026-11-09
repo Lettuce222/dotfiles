@@ -1,7 +1,6 @@
 ---
 name: agents-watch
-description: 窓口（orchestrator）が起動する見張りのスレッド chore-hub-watch の決まり。/loop で 30 分ごとに呼ばれ、GitHub の自分宛てのレビュー依頼・自分の PR の動きと、Slack の自分宛てのメンションを読み、新しい出来事だけを窓口に知らせる。案件の一覧の Waiting が解けていたら消す。GitHub・Slack には書き込まない。
-disable-model-invocation: true
+description: 窓口（orchestrator）が起動する見張りのスレッド chore-hub-watch の決まり。/loop で 30 分ごとに呼ばれ、GitHub の自分宛てのレビュー依頼・自分の PR の動きと、Slack の自分宛てのメンションを読み、新しい出来事だけを窓口に知らせる。案件の一覧の Waiting が解けていたら消す。GitHub・Slack には書き込まない。見張りのスレッドで /agents-watch が届いたときだけ使う。
 ---
 
 # 見張りのスレッド
@@ -28,7 +27,7 @@ disable-model-invocation: true
    - `comment`: 自分の PR への、ほかの人の新しいコメント（PR ごとにまとめる。`note` は書いた人）
 3. Slack: brucke-slack の `slack_search_public_and_private` で、自分宛てのメンションを読む。
    - 自分の user ID は、ツールの説明（`Current logged in user's user_id is …`）か、`slack_read_user_profile`（引数なし）で分かる。
-   - `keywords: ["<@自分の ID>"]`、`channel_types: "public_channel,private_channel"`（DM は読まない）、`filters: "after:<昨日の日付 YYYY-MM-DD>"`、`sort: "timestamp"`、`include_context: false`、`natural_language_query: ""`。
+   - `keywords: ["<@自分の ID>"]`、`channel_types: "public_channel,private_channel"`（DM は読まない）、`filters: "after:<7 日前の日付 YYYY-MM-DD>"`（`after:` はその日を含まない。勤務時間外や週末、見張りが止まっていたあいだのメンションも拾えるよう広めに読み、知らせ済みは `seen` で除く）、`sort: "timestamp"`、`include_context: false`、`natural_language_query: ""`。
    - 自分が書いたメッセージは除く。
    - 1 件ごとに `{"key": "slack:<channel ID>/<ts>", "url": "<permalink>", "title": "<#チャンネル名> <書いた人>: <要点を 1 行>", "kind": "mention"}` を作り、まとめて `watch.py seen slack` の標準入力に渡す。出てきたものだけが新しい出来事で、もう記録済み。
 4. 案件の一覧: `python3 ~/.claude/skills/agents-orchestrator/scripts/cases.py sweep` を実行する（案件の形と決まりは `agents-orchestrator` の「案件の一覧」）。Waiting のうち、` → ` の前の PR がすべて merge・close 済みのものは、スクリプトがもう消し、` → ` のあとを「TODO」に移している。出力の 1 行ごとに次のように扱う。
