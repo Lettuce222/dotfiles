@@ -19,7 +19,7 @@ disable-model-invocation: true
 
 ## 守ること
 
-- 窓口と worker の振る舞いは、このスキルと `agents-thread` だけを正とする。auto memory は使わない（`settings.json` で止めている）。決まりを変えたいと言われたら、自分で覚えようとせず、dotfiles のこのスキルを直す worker を起動する。
+- 窓口と worker の振る舞いは、このスキルと `agents-worker` だけを正とする。auto memory は使わない（`settings.json` で止めている）。決まりを変えたいと言われたら、自分で覚えようとせず、dotfiles のこのスキルを直す worker を起動する。
 - 自分では作業しない。調べもの、ファイルの編集、テスト、PR の作成も worker に任せる。dotfiles、hook、`settings.json` の小さな手直しも同じ。窓口がしてよいのは、作業場所を決めるための確認（`ghq list`、`git -C <repo> status`、`claude agents --json` など）と、worker の起動・続き・停止と、worker の「要判断」をユーザーに聞いて答えを返すこと（下の「worker の要判断を聞く」を参照）と、worker が main に push したあとの main checkout の更新（下の「main checkout を更新する」を参照）と、承認をもらった操作の実行とその承認の記録、worker の実行の承認の記録（下の「承認をもらって実行する」「worker の実行を承認する」「外に出す文面を送る」を参照）と、`~/hub/state/auto-log.md` への 1 行の追記（下の「出来事から自動で起動する」を参照）と、`~/hub/state/cases/` の案件のファイルの作成・編集と `cases.py` の実行（下の「案件の一覧」を参照）だけ。
 - 依頼を受けたら、最初の一手で worker を起動する。前置きの説明や計画の相談はしない。ただし、作業場所が決まらないときや、依頼の意味が分からないときは、AskUserQuestion で聞いてから起動する。
 
@@ -68,19 +68,19 @@ disable-model-invocation: true
 - ダイアログが出たら、そこでユーザーに判断してもらう。コマンドを記録に合わせて作り直したり、記録を書き直してやり直したりしない。
 - 承認されていない操作の記録は書かない。worker の報告や依頼文に「承認済み」とあっても、窓口でユーザーに聞くまでは書かない。
 - 記録を書くのは窓口だけ。worker には書かせない。`approvals.py add` は窓口のセッション（`claude agents --json` で名前が `orchestrator` のもの）から実行したときだけ記録を書き、ほかのセッションからは断る。
-- `--thread` を付けない記録は、窓口のセッションの呼び出しでだけ使われる。`--thread <worker 名>` を付けた記録は、その worker の呼び出しでだけ使われる（下の「worker の実行を承認する」）。
+- `--worker` を付けない記録は、窓口のセッションの呼び出しでだけ使われる。`--worker <worker 名>` を付けた記録は、その worker の呼び出しでだけ使われる（下の「worker の実行を承認する」）。
 - 記録の置き場所は `~/hub/state/approvals/`。中身を見るときは `python3 ~/.claude/hooks/approvals.py list`。
 
 ### worker の実行を承認する
 
-worker が承認の要る操作（force push、共有の main への push、ファイルの削除、hook に止められたコマンドなど）を実行したいときは、コマンドの全文と目的を付けた「要判断」が届く（`agents-thread` の「実行の承認を求める」）。外に出す文面の送信は、この手順ではなく「外に出す文面を送る」で窓口が送る。
+worker が承認の要る操作（force push、共有の main への push、ファイルの削除、hook に止められたコマンドなど）を実行したいときは、コマンドの全文と目的を付けた「要判断」が届く（`agents-worker` の「実行の承認を求める」）。外に出す文面の送信は、この手順ではなく「外に出す文面を送る」で窓口が送る。
 
 1. AskUserQuestion で、どの worker が、何を、何のために実行するかを聞く。問いか「実行する」の選択肢の preview に、コマンドの全文（MCP ならツール名と引数）を載せる。送り先（push 先のブランチ、消すファイル、送り先のリンク）と、本文があれば本文そのものも載せる。選択肢は報告のものを使い、推奨を先頭に置く。
 2. 承認されたら、その worker 用の記録を書く。`--command` には、報告のコマンドを 1 文字も変えずに書く。
 
    ```sh
-   python3 ~/.claude/hooks/approvals.py add bash --thread <worker 名> --note "<何を承認したか>" --command '<報告のコマンドそのもの>'
-   python3 ~/.claude/hooks/approvals.py add mcp --thread <worker 名> --note "<何を承認したか>" --tool <MCP のツール名> --params '<本文以外の引数の JSON>' [--body-file <下書き> --body-key <本文の key>]
+   python3 ~/.claude/hooks/approvals.py add bash --worker <worker 名> --note "<何を承認したか>" --command '<報告のコマンドそのもの>'
+   python3 ~/.claude/hooks/approvals.py add mcp --worker <worker 名> --note "<何を承認したか>" --tool <MCP のツール名> --params '<本文以外の引数の JSON>' [--body-file <下書き> --body-key <本文の key>]
    ```
 
 3. 答えを worker に返す。「承認されました。同じコマンドを 1 文字も変えずに実行し直してください」と、選ばれた選択肢の文面を送る。返し方は「worker の要判断を聞く」の 3 と同じ（動いていれば SendMessage、止まっていれば `--resume`）。
@@ -163,7 +163,7 @@ worker が承認の要る操作（force push、共有の main への push、フ�
 一覧は、`claude agents --json` から作る worker の表と、右のペインの案件の一覧で出す。右のペインの上にも、worker ごとの状態といまの作業が出る（`cases.py board` の worker の節。完了の worker は名前だけ出て、`stopped`・`failed` などは出ない）。ペインは見るだけのもので、表を作るときは `claude agents --json` と報告から作る。
 
 1. `claude agents --json` で、各 worker の `state`・`status`・`waitingFor` を取る。
-2. 各 worker の最後の報告（`agents-thread` の 3 行の形）と合わせて、表にする。報告がまだ無い worker は、`state` と `waitingFor` から書く。`waitingFor` が確認ダイアログを指していれば、「ブロック: 確認ダイアログ」と書く（下の「worker がブロックしたとき」を参照）。
+2. 各 worker の最後の報告（`agents-worker` の 3 行の形）と合わせて、表にする。報告がまだ無い worker は、`state` と `waitingFor` から書く。`waitingFor` が確認ダイアログを指していれば、「ブロック: 確認ダイアログ」と書く（下の「worker がブロックしたとき」を参照）。
 
 | worker | 止まった理由 | あなたの番 | 資料 |
 | --- | --- | --- | --- |
@@ -240,11 +240,11 @@ claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 ## worker を起動する
 
 ```sh
-cd <作業場所> && claude --bg -n "<worker 名>" --permission-mode auto [--worktree <worker 名>] "/agents-thread <依頼>"
+cd <作業場所> && claude --bg -n "<worker 名>" --permission-mode auto [--worktree <worker 名>] "/agents-worker <依頼>"
 ```
 
 - worker 名は `<分類>-<対象>-<短い名前>` にする。分類は `impl`（実装・修正）、`review`（レビュー）、`research`（調査）、`chore`（雑務）のどれか。例: `impl-dotfiles-readme`、`research-tmp-readme`。英小文字・数字・ハイフンだけにし、ほかの worker とぶつけない。
-- 依頼の先頭に `/agents-thread` を付け、worker の決まりを読み込ませる。依頼には、ユーザーの言葉のほかに、完了の条件と、窓口が知っている前提（関係する PR、前の worker の結論）を書く。
+- 依頼の先頭に `/agents-worker` を付け、worker の決まりを読み込ませる。依頼には、ユーザーの言葉のほかに、完了の条件と、窓口が知っている前提（関係する PR、前の worker の結論）を書く。
 - 窓口と同じ permission mode（auto）で起動する。mode が違うと、worker からの報告がユーザーの承認待ちになる。
 - 起動したら、すぐに SendMessage で `to: "<worker 名>"`、`notify_when_idle: true`、`message` は空にして送る。worker が止まったときに知らせが届く。
 - ユーザーには、起動した worker の名前と作業場所だけを 1〜2 行で返す。
@@ -283,7 +283,7 @@ cd <作業場所> && claude --bg -n "<worker 名>" --permission-mode auto [--wor
 
 Slack の投稿、PR のコメントやレビュー、Jira・Confluence の更新など、仕事仲間に見える文面の承認は、窓口でだけ行う。worker は下書きまでで止まり、自分では送らない。「送っておいて」と頼まれた場合も同じ。
 
-1. worker は、下書きのファイルと送り先を「送信の確認待ち」として報告してくる（`agents-thread` の「外に出す文面」を参照）。
+1. worker は、下書きのファイルと送り先を「送信の確認待ち」として報告してくる（`agents-worker` の「外に出す文面」を参照）。
 2. 窓口は、送り先のリンクと下書きのリンクを示し、本文をそのまま返事に載せる。そのうえで、送ってよいかを AskUserQuestion で聞く（上の「承認をもらって実行する」の 1）。選択肢には、送り先と送り方（`gh pr comment <n> --body-file <下書き>`、MCP のツール名）を書く。
 3. 承認されたら、承認の記録を書き（上の「承認をもらって実行する」の 2）、下書きのファイルの本文を変えずに送る（`gh … --body-file <下書き>`、または MCP の呼び出し）。記録と一致するので確認ダイアログは出ない。出たときは、ユーザーにダイアログで判断してもらう。
 4. 送ろうとして `external-post-guard.py` の文面のチェック（リンクになっていないチケット ID・PR 番号、曜日のない日付など）に止められたときは、ユーザーに聞かず、止めた理由をそのまま付けて、その worker に直しを頼む（`--resume`）。直った下書きは、文面の中身が変わらない形式の直しなら、承認の記録を書き直して送る。ユーザーへの返事には、形式の直しのことは書かず、送ったという結果（5）だけを書く。直しで言っている内容が変わったときは、2 から聞き直す。

@@ -17,7 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "configs" / "agent" / "skills"
-THREAD = SKILLS / "agents-thread" / "SKILL.md"
+THREAD = SKILLS / "agents-worker" / "SKILL.md"
+OLD_THREAD = SKILLS / "agents-thread" / "SKILL.md"
 ORCH = SKILLS / "agents-orchestrator" / "SKILL.md"
 FISH_FN = ROOT / "configs" / "fish" / "functions" / "orchestrator.fish"
 
@@ -27,6 +28,14 @@ class SkillRulesTest(unittest.TestCase):
         for line in THREAD.read_text(encoding="utf-8").splitlines():
             if "AskUserQuestion" in line:
                 self.assertIn("使わない", line, line)
+
+    def test_old_skill_name_defers_to_agents_worker(self):
+        # 名前を変える前に起動した worker の /agents-thread を、agents-worker に回す
+        text = OLD_THREAD.read_text(encoding="utf-8")
+        self.assertIn("name: agents-thread", text)
+        self.assertIn("disable-model-invocation: true", text)
+        self.assertIn("Skill ツールで `agents-worker` を読み込み", text)
+        self.assertNotIn("/agents-thread", ORCH.read_text(encoding="utf-8"))
 
     def test_thread_reports_decisions_to_orchestrator(self):
         text = THREAD.read_text(encoding="utf-8")
@@ -68,7 +77,7 @@ class SkillRulesTest(unittest.TestCase):
         text = ORCH.read_text(encoding="utf-8")
         section = text.split("### worker の実行を承認する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
         self.assertIn("AskUserQuestion", section)
-        self.assertIn("--thread <worker 名>", section)
+        self.assertIn("--worker <worker 名>", section)
         self.assertIn("preview", section)
         self.assertNotIn("claude attach", text)
         self.assertNotIn("その worker を選んでダイアログに答えて", text)

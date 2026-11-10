@@ -710,7 +710,7 @@ def thread_summary(state: str, job: dict) -> str:
         if text:
             return text
     intent = one_line(job.get("intent"))
-    if intent.startswith("/"):  # 先頭のスキル（/agents-thread）は飛ばす
+    if intent.startswith("/"):  # 先頭のスキル（/agents-worker）は飛ばす
         intent = intent.partition(" ")[2]
     return intent
 

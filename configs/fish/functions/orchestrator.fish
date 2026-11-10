@@ -1,7 +1,7 @@
 function orchestrator --description '窓口（claude -n orchestrator）と案件の一覧の window を開く'
     # 小さな窓口の構成。左に窓口の Claude Code、右に案件の一覧（ケースボード）を置く。
     # worker とのやりとりは窓口に集約するので、claude agents のペインは置かない。
-    # 窓口の決まりはスキル agents-orchestrator に、worker の決まりは agents-thread に書く。
+    # 窓口の決まりはスキル agents-orchestrator に、worker の決まりは agents-worker に書く。
     set -l session orchestrator
     set -l name orchestrator
     set -l dir (test -n "$AGENT_ORCHESTRATOR_HOME"; and echo $AGENT_ORCHESTRATOR_HOME; or echo $HOME/hub)

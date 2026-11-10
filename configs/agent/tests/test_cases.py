@@ -391,8 +391,8 @@ AGENTS = [
 ]
 JOBS = {
     "d1": {"detail": "途中の説明", "output": {"result": "report.md にまとめた"}},
-    "r1": {"intent": "/agents-thread #12 のレビューに答える\n- 詳しく"},
-    "r2": {"detail": "テストを足している", "intent": "/agents-thread 何か"},
+    "r1": {"intent": "/agents-worker #12 のレビューに答える\n- 詳しく"},
+    "r2": {"detail": "テストを足している", "intent": "/agents-worker 何か"},
     "b1": {"detail": "止まった", "needs": "指摘 2 を直すか決める"},
     "p1": {"detail": "gh api を呼ぶ"},
 }

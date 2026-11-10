@@ -19,9 +19,9 @@ $AGENT_ORCHESTRATOR_HOME/state/approvals). A record is honored only when:
             (a record without a draft matches only calls without prose),
   - the call comes from the session the record is for. The hook's
     session_id is looked up in `claude agents --json`:
-      a record without --thread is for the orchestrator (the entry named
+      a record without --worker is for the orchestrator (the entry named
         "orchestrator", AGENT_ORCHESTRATOR_NAME);
-      a record with --thread <name> is for that background worker only, so
+      a record with --worker <name> is for that background worker only, so
         a worker can run an operation the user approved in the orchestrator
         without a dialog nobody would answer.
 
@@ -33,9 +33,9 @@ denies tool calls from other sessions that would write records. Workers run as
 the same user, so these checks catch mistakes; they are not a sandbox.
 
 CLI (run by the orchestrator):
-  approvals.py add bash --command '<exact command>' [--thread NAME] [--ttl SECONDS] [--note TEXT]
+  approvals.py add bash --command '<exact command>' [--worker NAME] [--ttl SECONDS] [--note TEXT]
   approvals.py add mcp --tool <tool name> --params '<json of the other fields>'
-                       [--body-file <draft> [--body-key text]] [--thread NAME] [--ttl] [--note]
+                       [--body-file <draft> [--body-key text]] [--worker NAME] [--ttl] [--note]
   approvals.py list
 """
 
@@ -111,7 +111,7 @@ def new_record(kind, ttl, note, thread=None, **fields):
         "created_at": now,
         "expires_at": now + ttl,
         "note": note or "",
-        "thread": thread or None,
+        "worker": thread or None,
         **fields,
     }
 
@@ -283,7 +283,7 @@ def is_thread(entry):
 
 def allowed_for(rec, entry):
     """Whether the session described by entry may use the record."""
-    thread = rec.get("thread")
+    thread = rec.get("worker") or rec.get("thread")  # "thread": records written before the rename
     if thread:
         return is_thread(entry) and entry.get("name") == thread
     return is_orchestrator(entry)
@@ -343,7 +343,13 @@ def main(argv=None):
         p = kinds.add_parser(name)
         p.add_argument("--ttl", type=int, default=DEFAULT_TTL, help="有効な秒数（既定 1800）")
         p.add_argument("--note", default="", help="何を承認したか（ダイアログの代わりに記録に残す）")
-        p.add_argument("--thread", default=None, help="この記録を使える worker の名前（付けなければ窓口だけ）")
+        p.add_argument(
+            "--worker",
+            "--thread",  # 名前を変える前の書き方。動いている窓口が古い決まりで書いても通す
+            dest="thread",
+            default=None,
+            help="この記録を使える worker の名前（付けなければ窓口だけ）",
+        )
         if name == "bash":
             p.add_argument("--command", required=True, help="実行するコマンドそのもの")
         else:

@@ -235,9 +235,9 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(self.records(), [])
 
     def test_thread_name_must_exist(self):
-        r = self.add("bash", "--command", "git push --force", "--thread", "impl-nope")
+        r = self.add("bash", "--command", "git push --force", "--worker", "impl-nope")
         self.assertEqual(r.returncode, 2)
-        r = self.add("bash", "--command", "git push --force", "--thread", "orchestrator")
+        r = self.add("bash", "--command", "git push --force", "--worker", "orchestrator")
         self.assertEqual(r.returncode, 2)
         self.assertEqual(self.records(), [])
 
@@ -279,14 +279,14 @@ class ApprovalTest(unittest.TestCase):
 
     def test_thread_record_allows_that_thread_once(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "allow")
         self.assertEqual(self.records(), [])
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
 
     def test_thread_record_allows_in_pre_tool_use(self):
         cmd = "rm -rf build"
-        self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
         self.assertEqual(self.decision(self.gate("pre", {"command": cmd})), "allow")
         self.assertEqual(self.records(), [])
         r = self.gate("pre", {"command": cmd})
@@ -294,7 +294,7 @@ class ApprovalTest(unittest.TestCase):
 
     def test_thread_record_is_not_for_other_sessions_or_commands(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_THREAD)), "deny")
         self.assertIsNone(self.permission(self.gate("permission", {"command": cmd}, session=ORCH)))
         self.assertIsNone(self.permission(self.gate("permission", {"command": cmd}, session=INTERACTIVE)))
@@ -312,14 +312,14 @@ class ApprovalTest(unittest.TestCase):
 
     def test_expired_thread_record_is_denied(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--thread", THREAD_NAME, "--ttl", "1")
+        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME, "--ttl", "1")
         time.sleep(1.2)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
         self.assertEqual(self.records(), [])
 
     def test_thread_gh_write_with_record_is_allowed_by_the_guard(self):
         cmd = f"gh pr comment 12 --body-file {self.draft}"
-        self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
         # gh の書き込みは external-post-guard.py が記録を使う。gate の pre は触らない
         r = self.gate("pre", {"command": cmd})
         self.assertEqual((r.returncode, r.stdout), (0, ""))
@@ -332,10 +332,23 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(self.decision(self.hook({"command": cmd}, session=THREAD)), "ask")
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
 
+    def test_old_thread_option_and_record_still_work(self):
+        # 名前を変える前の --thread と、"thread" の key で書かれた記録も通す
+        cmd = "git push --force origin HEAD"
+        path = self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        rec = json.loads(path.read_text())
+        self.assertEqual(rec["worker"], THREAD_NAME)
+        self.assertNotIn("thread", rec)
+        rec["thread"] = rec.pop("worker")
+        path.write_text(json.dumps(rec))
+        self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_THREAD)), "deny")
+        self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "allow")
+        self.assertEqual(self.records(), [])
+
     def test_thread_mcp_record_without_body(self):
         tool = "mcp__slack__add_reaction"
         params = {"channel_id": "C1", "timestamp": "1.2", "name": "eyes"}
-        self.approve("mcp", "--tool", tool, "--params", json.dumps(params), "--thread", THREAD_NAME)
+        self.approve("mcp", "--tool", tool, "--params", json.dumps(params), "--worker", THREAD_NAME)
         self.assertEqual(self.permission(self.gate("permission", {**params, "name": "+1"}, tool_name=tool)), "deny")
         self.assertEqual(self.permission(self.gate("permission", params, tool_name=tool)), "allow")
         self.assertEqual(self.records(), [])
