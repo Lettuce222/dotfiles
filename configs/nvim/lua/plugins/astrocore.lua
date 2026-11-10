@@ -102,6 +102,16 @@ return {
           desc = "Copy relative path from project root",
         },
 
+        -- Copy absolute path
+        ["<Leader>yf"] = {
+          function()
+            local filepath = vim.fn.expand "%:p"
+            vim.fn.setreg("+", filepath)
+            vim.notify("Copied absolute path: " .. filepath, vim.log.levels.INFO)
+          end,
+          desc = "Copy absolute path",
+        },
+
         -- Copy GitHub permanent link
         ["<Leader>yg"] = {
           function()
