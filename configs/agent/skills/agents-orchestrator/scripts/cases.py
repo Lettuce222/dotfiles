@@ -16,6 +16,9 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
     ## Later
     - チケットを完了にする
 
+    ## 予定
+    - [11/12] 定例で報告する → 次の回の資料を作る
+
     ## 資料
     - [report.md](file:///Users/me/hub/threads/x/report.md)
 
@@ -25,7 +28,10 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
 - 見出しの次の行に `略称: <短い名前>` を書くと、TODO の一覧でその名前を案件の印にする。
 - Waiting の項目は ` → ` のあとに、待ちが解けたらやることを書ける。待ちが解けると
   その部分が「TODO」に移る。
-- 資料以外の 3 つの節に項目が無くなった案件は done/ に移す（sweep）。
+- 予定の項目は、準備が済んで、あとはその日に出るだけのもの。先頭に日付 `[11/12]` を書き、
+  ` → ` のあとに、予定が済んだらやることを書ける。日付が過ぎると sweep が消し、` → ` のあとを
+  「TODO」に移す。TODO の一覧には出さず、その下に目立たない形で出す。
+- 資料以外の 4 つの節に項目が無くなった案件は done/ に移す（sweep）。
 
 Usage:
   cases.py board [--once] [--width N] [--height N] [--by-case]
@@ -36,11 +42,12 @@ Usage:
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
       このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
-      Waiting の項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものを消す。
+      Waiting の項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものと、
+      予定の項目のうち、日付が今日より前のものを消す。
       ` → ` のあとがあれば「TODO」に移す。項目が無くなった案件は done/ に移す。
       したことと、残った PR 付きの項目の状態を JSON Lines で出す（下の「出力」を参照）。
   cases.py resolve <案件> <文字列> [--section Waiting]
-      節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。Waiting なら
+      節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。Waiting・予定なら
       ` → ` のあとを「TODO」に移す。<案件> はファイル名（.md は省略可）。
 
 sweep の出力（1 行に 1 つ）:
@@ -55,10 +62,11 @@ TODO の一覧:
   `!` が先）→ `!` のもの → ほか。同じ順位なら案件のファイル名の順、案件の中は書いた順。
   期日は、過ぎたもの・今日・明日をその言葉と色で目立たせ、ほかは `11/18（水）` の形で出す。
   各項目に案件の印（略称、無ければ見出しを縮めたもの）を添え、案件のファイルへのリンクにする。
-  一覧の下の「案件」の節に、全案件を 1 行ずつ（見出しと、Waiting・Later の件数）出す。見出しは
+  一覧の下の「案件」の節に、全案件を 1 行ずつ（見出しと、Waiting・Later・予定の件数）出す。見出しは
   案件のファイルへのリンクで、クリックすると Waiting・Later・資料を含む全文が開く。
-  入りきらなければ、完了のスレッド、案件の索引（1 行にまとめる）、TODO の 2 行目から先（1 行で切る）、
-  の順に畳み、それでも入らなければ末尾を切る。
+  一覧の下の「予定」の節に、全案件の予定を日付の順に 1 行ずつ、薄い色で出す（番号は付けない）。
+  入りきらなければ、完了のスレッド、予定（1 行にまとめる）、案件の索引（1 行にまとめる）、
+  TODO の 2 行目から先（1 行で切る）、の順に畳み、それでも入らなければ末尾を切る。
 
 スレッドの節:
   `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
@@ -93,7 +101,9 @@ MINE = "TODO"
 WAITING = "Waiting"
 LATER = "Later"
 REFS = "資料"
-TASK_SECTIONS = (MINE, WAITING, LATER)
+SCHEDULE = "予定"
+TASK_SECTIONS = (MINE, WAITING, LATER, SCHEDULE)
+NEXT_SECTIONS = (WAITING, SCHEDULE)  # ` → ` のあとに、済んだらやることを書く節
 ARROW = " → "
 
 SHORT_RE = re.compile(r"^略称[:：]\s*(.*)$")
@@ -320,6 +330,27 @@ def todos(cases: list[Case], today: dt.date) -> list[Todo]:
     return sorted(out, key=key)
 
 
+@dataclass
+class Event:
+    case: Case
+    text: str  # 日付を外した本文（` → ` のあとは外す）
+    date: dt.date | None
+
+
+def events(cases: list[Case], today: dt.date) -> list[Event]:
+    """全案件の予定を日付の順に並べる。日付の無いものは最後。"""
+    out = []
+    for c in cases:
+        for it in c.items(SCHEDULE):
+            date, _, rest = todo_marks(it.text, today)
+            out.append(Event(c, split_next(rest)[0], date))
+    return sorted(out, key=lambda e: (e.date or dt.date.max, e.case.slug))
+
+
+def event_date(text: str, today: dt.date) -> dt.date | None:
+    return todo_marks(text, today)[0]
+
+
 # ---------------------------------------------------------------- sweep
 
 
@@ -364,7 +395,8 @@ def closed(pr: dict | None) -> bool:
     return bool(pr) and pr.get("state") in ("MERGED", "CLOSED")
 
 
-def sweep(d: Path, states_fn=gh_pr_states, dry_run: bool = False) -> list[dict]:
+def sweep(d: Path, states_fn=gh_pr_states, dry_run: bool = False, today: dt.date | None = None) -> list[dict]:
+    today = today or current_date()
     cases = load_cases(d)
     urls = []
     for c in cases:
@@ -378,6 +410,20 @@ def sweep(d: Path, states_fn=gh_pr_states, dry_run: bool = False) -> list[dict]:
     actions: list[dict] = []
     for c in cases:
         changed = False
+        # 日付が過ぎた予定は済んだものとして消し、` → ` のあとを「TODO」に移す。
+        for it in list(c.items(SCHEDULE)):
+            date = event_date(it.text, today)
+            if date is None or date >= today:
+                continue
+            text = it.text
+            c.remove(SCHEDULE, it)
+            a = {"action": "removed", "case": c.slug, "section": SCHEDULE, "item": text}
+            _, nxt = split_next(text)
+            if nxt:
+                c.add(MINE, nxt)
+                a["next"] = nxt
+            actions.append(a)
+            changed = True
         for name in TASK_SECTIONS:
             for it in list(c.items(name)):
                 text = it.text
@@ -432,7 +478,7 @@ def resolve(d: Path, slug: str, needle: str, section: str = WAITING) -> dict:
     text = it.text
     case.remove(section, it)
     out = {"action": "removed", "case": slug, "section": section, "item": text}
-    if section == WAITING:
+    if section in NEXT_SECTIONS:
         _, nxt = split_next(text)
         if nxt:
             case.add(MINE, nxt)
@@ -453,6 +499,7 @@ STYLE = {
     MINE: "\x1b[1;38;2;224;175;104m",  # yellow
     WAITING: "\x1b[1;38;2;125;207;255m",  # cyan
     LATER: "\x1b[1;38;2;158;206;106m",  # green
+    SCHEDULE: "\x1b[3;38;2;86;95;137m",  # comment の斜体（こちらですることは無いので目立たせない）
     REFS: "\x1b[38;2;86;95;137m",  # comment
     "other": "\x1b[1;38;2;169;177;214m",
     "text": "\x1b[38;2;169;177;214m",
@@ -462,7 +509,7 @@ STYLE = {
     "urgent": "\x1b[1;38;2;247;118;142m",  # red
     "case": "\x1b[38;2;125;207;255m",  # cyan
 }
-LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
+LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", SCHEDULE: "◷ 予定", REFS: "資料"}
 
 # スレッドの状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
 # 答えを待って止まっている（確認ダイアログ・窓口の番）は TODO と、動いているは Waiting と、完了は Later の緑とそろえる。
@@ -612,7 +659,7 @@ def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
             for it in items:
                 segs = [("• ", STYLE["dim"], None)]
                 text = it.text
-                wait, nxt = split_next(text) if s.name == WAITING else (text, None)
+                wait, nxt = split_next(text) if s.name in NEXT_SECTIONS else (text, None)
                 segs.extend(inline(wait, STYLE["text"], jira))
                 if nxt and level < 3:
                     segs.append((ARROW, STYLE["dim"], None))
@@ -816,6 +863,27 @@ def todo_rows(items: list[Todo], width: int, jira: str | None, today: dt.date, c
     return rows
 
 
+def event_rows(items: list[Event], width: int, jira: str | None, today: dt.date, folded: bool):
+    """予定の行。目立たないよう薄い色で 1 行ずつ出す。folded なら件数と次の日付の 1 行にまとめる。"""
+    if not items:
+        return []
+    style = STYLE[SCHEDULE]
+    if folded:
+        nxt = next((e.date for e in items if e.date and e.date >= today), None)
+        tail = f"（次は {due_label(nxt, today)[0]}）" if nxt else ""
+        return [[(f"{LABEL[SCHEDULE]} {len(items)} 件{tail}", style, None)]]
+    rows = [[(LABEL[SCHEDULE], style, None)]]
+    for e in items:
+        segs = []
+        if e.date:
+            segs.append((due_label(e.date, today)[0] + " ", style, None))
+        segs.append((f"[{e.case.short}]", style, e.case.path.as_uri()))
+        segs.append((" ", "", None))
+        segs.extend(inline(e.text, style, jira))
+        rows.append(clip(segs, width, 1))
+    return rows
+
+
 def index_rows(cases: list[Case], d: Path, width: int, folded: bool):
     """案件の索引。見出しは案件のファイルへのリンク。folded なら 1 行にまとめる。"""
     if not cases:
@@ -825,7 +893,7 @@ def index_rows(cases: list[Case], d: Path, width: int, folded: bool):
     rows = [[(INDEX_TITLE, STYLE["title"], None)]]
     for c in sorted(cases, key=lambda c: c.slug):
         counts = []
-        for name, mark in ((WAITING, "◇"), (LATER, "・")):
+        for name, mark in ((WAITING, "◇"), (LATER, "・"), (SCHEDULE, "◷")):
             k = len(c.items(name))
             if k:
                 counts.append((f" {mark}{k}", STYLE[name], None))
@@ -860,14 +928,18 @@ def render(
 
     else:
         items = todos(cases, today)
-        # 入りきらなければ、完了のスレッド、案件の索引、TODO の 2 行目から先、の順に畳む。
-        layouts = [(threads, 0), (active, 0), (active, 1), (active, 2)]
+        sched = events(cases, today)
+        # 入りきらなければ、完了のスレッド、予定、案件の索引、TODO の 2 行目から先、の順に畳む。
+        layouts = [(threads, 0), (active, 0), (active, 1), (active, 2), (active, 3)]
 
         def build(level):
             if not cases:
                 return []
-            body = todo_rows(items, width, jira, today, clipped=level >= 2)
-            return body + [[]] + index_rows(cases, d, width, folded=level >= 1)
+            body = todo_rows(items, width, jira, today, clipped=level >= 3)
+            ev = event_rows(sched, width, jira, today, folded=level >= 1)
+            if ev:
+                body += [[]] + ev
+            return body + [[]] + index_rows(cases, d, width, folded=level >= 2)
 
     for shown, level in layouts:
         head = thread_rows(shown, width, jira) + empty

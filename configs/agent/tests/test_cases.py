@@ -143,6 +143,63 @@ class SweepTest(Base):
         self.assertEqual(actions[0]["prs"][0]["state"], "UNKNOWN")
 
 
+class ScheduleSweepTest(Base):
+    TEXT = (
+        "# t\n\n## TODO\n- やる\n\n## 予定\n"
+        "- [11/09] 定例に出る → 次の回の資料を作る\n- [11/10] 今日のレビュー会に出る\n- 日付の無い予定\n"
+    )
+
+    def test_removes_past_events_and_moves_next(self):
+        p = self.write(text=self.TEXT)
+        actions = cases.sweep(self.dir, states(), today=TODAY)
+        self.assertEqual(
+            actions,
+            [
+                {
+                    "action": "removed",
+                    "case": "x",
+                    "section": "予定",
+                    "item": "[11/09] 定例に出る → 次の回の資料を作る",
+                    "next": "次の回の資料を作る",
+                }
+            ],
+        )
+        # 今日の予定と日付の無い予定は残す
+        self.assertEqual(
+            p.read_text(),
+            "# t\n\n## TODO\n- やる\n- 次の回の資料を作る\n\n## 予定\n- [11/10] 今日のレビュー会に出る\n- 日付の無い予定\n",
+        )
+
+    def test_dry_run_does_not_write(self):
+        p = self.write(text=self.TEXT)
+        actions = cases.sweep(self.dir, states(), dry_run=True, today=TODAY)
+        self.assertEqual(actions[0]["section"], "予定")
+        self.assertEqual(p.read_text(), self.TEXT)
+
+    def test_case_with_only_upcoming_events_is_kept(self):
+        self.write(text="# t\n\n## 予定\n- [11/12] 定例に出る\n")
+        self.assertEqual(cases.sweep(self.dir, states(), today=TODAY), [])
+        self.assertTrue((self.dir / "x.md").exists())
+
+    def test_archives_case_when_last_event_passes(self):
+        self.write(text="# t\n\n## 予定\n- [11/09] 定例に出る\n")
+        actions = cases.sweep(self.dir, states(), today=TODAY)
+        self.assertEqual(actions[-1], {"action": "archived", "case": "x"})
+        self.assertTrue((self.dir / "done" / "x.md").exists())
+
+    def test_resolve_event_moves_next(self):
+        p = self.write(text=self.TEXT)
+        out = cases.resolve(self.dir, "x", "定例", section="予定")
+        self.assertEqual(out["next"], "次の回の資料を作る")
+        self.assertIn("- 次の回の資料を作る\n", p.read_text())
+
+    def test_cli_accepts_schedule_section(self):
+        self.write(text=self.TEXT)
+        with mock.patch.dict(os.environ, {"AGENT_CASES_DIR": str(self.dir)}), mock.patch("sys.stdout"):
+            self.assertEqual(cases.main(["resolve", "x", "日付の無い", "--section", "予定"]), 0)
+        self.assertNotIn("日付の無い", (self.dir / "x.md").read_text())
+
+
 class ResolveTest(Base):
     def test_resolve_moves_next(self):
         p = self.write()
@@ -232,6 +289,7 @@ class HeadingStyleTest(Base):
         "TODO": ("▶ TODO", "\x1b[1;38;2;224;175;104m"),  # yellow
         "Waiting": ("◇ Waiting", "\x1b[1;38;2;125;207;255m"),  # cyan
         "Later": ("・Later", "\x1b[1;38;2;158;206;106m"),  # green
+        "予定": ("◷ 予定", "\x1b[3;38;2;86;95;137m"),  # comment の斜体
     }
 
     def test_every_task_section_has_its_own_style_and_label(self):
@@ -244,7 +302,7 @@ class HeadingStyleTest(Base):
         self.assertEqual(len(set(styles)), len(styles))
 
     def test_headings_in_case_file_are_colored(self):
-        self.write()
+        self.write(text=SAMPLE + "\n## 予定\n- [11/12] 定例に出る\n")
         out = "\n".join(cases.render(self.dir, 80, 100, by_case=True))
         for name, (label, style) in self.EXPECTED.items():
             self.assertIn(f"{style}{label}{cases.RESET}", out, name)
@@ -584,6 +642,32 @@ class TodoBoardTest(Base):
         cut = todo_lines(self, 30, 4, threads=threads)
         self.assertEqual(len(cut), 4)
         self.assertTrue(cut[-1].startswith("… ほか"))
+
+    def test_events_are_listed_apart_from_todos(self):
+        self.write("a", "# 案件 A\n略称: A\n\n## TODO\n- やる\n\n## 予定\n- [11/18] 定例に出る → 次の準備\n")
+        self.write("b", "# 案件 B\n略称: B\n\n## 予定\n- [11/11] レビュー会に出る\n- 日付の無い予定\n")
+        lines = todo_lines(self)
+        # 予定は TODO の番号付きの一覧に入れない
+        self.assertEqual(lines[: lines.index("")], ["▶ TODO", " 1. [A] やる"])
+        at = lines.index("◷ 予定")
+        self.assertEqual(
+            lines[at + 1 : at + 4],
+            [" 明日 [B] レビュー会に出る", " 11/18（水） [A] 定例に出る", " [B] 日付の無い予定"],
+        )
+        self.assertIn(" 案件 B ◷2", lines)
+
+    def test_events_are_dim(self):
+        self.write("a", "# A\n略称: A\n\n## 予定\n- [11/18] 定例に出る\n")
+        out = "\n".join(cases.render(self.dir, 80, 100, today=TODAY))
+        self.assertIn(f"{cases.STYLE['予定']}定例に出る{cases.RESET}", out)
+
+    def test_folds_events_before_index(self):
+        self.write("a", "# A\n略称: A\n\n## TODO\n- やる\n\n## 予定\n- [11/09] 過ぎた会\n- [11/18] 定例\n- [11/20] 勉強会\n")
+        self.write("b", "# B\n\n## Later\n- あとで\n")
+        full = todo_lines(self, 40, 100)
+        folded = todo_lines(self, 40, len(full) - 1)
+        self.assertIn("◷ 予定 3 件（次は 11/18（水））", folded)
+        self.assertIn(" B ・1", folded)  # 索引はまだ畳まない
 
     def test_by_case_option(self):
         self.write("a", SAMPLE)
