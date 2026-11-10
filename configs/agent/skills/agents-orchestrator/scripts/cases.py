@@ -20,7 +20,7 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
     - [11/12] 定例で報告する → 次の回の資料を作る
 
     ## 資料
-    - [report.md](file:///Users/me/hub/threads/x/report.md)
+    - [report.md](file:///Users/me/hub/workers/x/report.md)
 
 - 項目は `- ` で始まる行。2 文字以上の字下げで続く行は、前の項目の続き。
 - TODO の項目は、先頭に期日 `[11/11]`（`[11/11（水）]` も可）と優先の印 `!` を書ける

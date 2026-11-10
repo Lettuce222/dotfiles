@@ -27,7 +27,7 @@ disable-model-invocation: true
 
 - 短くする。伝えるのは作業の中身（進み具合、結果、判断が要ること）だけ。`notify_when_idle` の購読、idle の知らせの重複、購読し直したかどうかなど、窓口の段取りは書かない。idle の知らせが来ても中身に変化が無ければ、返事は省くか 1 行で済ませる。
 - PR やチケットの ID・URL は Markdown のリンク（`[#123](https://…)`）で書く。
-- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す。例: `[proposal.md](file:///Users/me/hub/threads/x/proposal.md)`。クリックすると、Markdown は tmux の popup の leaf で、ほかのテキストのファイルは popup の nvim で、フォルダは Finder で開く（画像などは既定のアプリで開く）。開かないと言われたら、tmux の OSC 8 と `open-link.sh` を調べる worker を起動する。
+- ファイルやフォルダのパスは、`file://` のリンクでファイルそのもの（フォルダならフォルダ）を指す。例: `[proposal.md](file:///Users/me/hub/workers/x/proposal.md)`。クリックすると、Markdown は tmux の popup の leaf で、ほかのテキストのファイルは popup の nvim で、フォルダは Finder で開く（画像などは既定のアプリで開く）。開かないと言われたら、tmux の OSC 8 と `open-link.sh` を調べる worker を起動する。
 - 返事は、送る前に `/tmp/reply-<YYYYMMDD-HHMMSS>.md` に書き、`echo '{"tool_input":{"file_path":"<path>"}}' | ~/.claude/hooks/textlint-markdown.sh` に通す。指摘をすべて直してから、その文面をそのまま返す。短い返事も同じ。textlint の `ai-words-ja` が出す語（AI っぽい言い回し）は、指摘が無くても最初から使わず、平易な言葉で書く。この手順のことは返事に書かない。
 
 ## 承認が要る操作
@@ -37,7 +37,7 @@ disable-model-invocation: true
 | 区分 | 操作の例 | 扱い |
 | --- | --- | --- |
 | 読むだけ | gh の読み取り、Slack・Jira・Confluence の読み取り、リポジトリを読む、`claude agents --json` | 承認なし |
-| ローカルで閉じる | worktree や `~/hub/threads/` の中の編集、テスト、ビルド、worktree のブランチへのコミット、`/tmp` への下書き | 承認なし |
+| ローカルで閉じる | worktree や `~/hub/workers/` の中の編集、テスト、ビルド、worktree のブランチへのコミット、`/tmp` への下書き | 承認なし |
 | worker の起動 | 上の 2 つだけで済む依頼（レビューの下読み、CI の失敗の調査、返信の下書き） | 承認なし。下の「出来事から自動で起動する」の上限と記録に従う |
 | 自分のブランチへの push | PR の無い自分の作業ブランチ、自分の draft PR のブランチ、自分の PR の head を fast-forward で進める push、dotfiles の main | 承認なし。force push は承認（worker なら下の「worker の実行を承認する」） |
 | 仲間に見える | Slack の投稿・リアクション、PR のコメント・レビュー・reviewer の指定・draft PR の作成・ready・merge、Jira の起票・コメント・状態の変更、Confluence の更新 | 承認。窓口が AskUserQuestion で聞き、承認の記録を書いてから実行する（下の「承認をもらって実行する」「外に出す文面を送る」） |
@@ -119,7 +119,7 @@ worker が承認の要る操作（force push、共有の main への push、フ�
 - [11/12] 定例でデモを見せる → 定例で出た宿題を TODO に足す
 
 ## 資料
-- [report.md](file:///Users/me/hub/threads/x/report.md)
+- [report.md](file:///Users/me/hub/workers/x/report.md)
 ```
 
 - 1 案件 1 ファイル。ファイル名は英小文字・数字・ハイフンにする（例: `explore-wam-security-scan.md`）。案件は worker より大きい単位（PR の束、1 つの施策）で切る。worker が 1 つで済む小さな依頼は、ユーザーの番か Waiting が残るときだけ案件にする。
@@ -148,7 +148,7 @@ worker が承認の要る操作（force push、共有の main への push、フ�
 | 会議やユーザーの話で宿題が出た | 「TODO」か「Later」に足す。「TODO」なら期限を聞いて（分かれば）期日を付ける |
 | 予定に向けた準備（資料、下書き、デモ）が済み、あとは出るだけになった | 「TODO」から「予定」に移す。先頭に予定の日付を書き、次の回があるなら ` → ` のあとに次の準備を書く |
 | 期日が過ぎた・予定が動いた | 先頭の期日を直す。済んだなら行を消す |
-| worker を片付ける（`claude rm`） | 消す前に、その worker の最後の報告に残っている「TODO」と、まだ済んでいない待ちを案件に移す。報告のファイル（`~/hub/threads/` のもの）は資料に足す |
+| worker を片付ける（`claude rm`） | 消す前に、その worker の最後の報告に残っている「TODO」と、まだ済んでいない待ちを案件に移す。報告のファイル（`~/hub/workers/` のもの）は資料に足す |
 | 項目が済んだ（ユーザーが「やった」と言った、送った、届いた） | その行を消す。Waiting なら `python3 ~/.claude/skills/agents-orchestrator/scripts/cases.py resolve <案件> <行の一部>` で消し、` → ` のあとを「TODO」に移す。予定なら `--section 予定` を付ける |
 
 - ファイルは Edit で直す。見張りの worker が同時に書き換えることがあるので、直す前に Read し直す。
@@ -198,8 +198,8 @@ GitHub と Slack の新しい出来事は、見張りの worker `chore-hub-watch
 次の 3 つを、`&&` でつながず 1 本ずつ別の Bash で実行する（sandbox の除外は 1 本のコマンドにしか当たらない）。
 
 ```sh
-mkdir -p ~/hub/threads/chore-hub-watch
-cd ~/hub/threads/chore-hub-watch
+mkdir -p ~/hub/workers/chore-hub-watch
+cd ~/hub/workers/chore-hub-watch
 claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 ```
 
@@ -213,10 +213,10 @@ claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 
 | 出来事 | 窓口がすること | そのあとの提案 |
 | --- | --- | --- |
-| レビュー依頼 | 聞かずに `review-<repo>-<PR 番号>` を対象のリポジトリで起動し、下読みさせる（差分の要点、気になる箇所、行コメントの案を `~/hub/threads/` か `/tmp` に下書き） | 行コメントを送るか（送信は「外に出す文面を送る」） |
+| レビュー依頼 | 聞かずに `review-<repo>-<PR 番号>` を対象のリポジトリで起動し、下読みさせる（差分の要点、気になる箇所、行コメントの案を `~/hub/workers/` か `/tmp` に下書き） | 行コメントを送るか（送信は「外に出す文面を送る」） |
 | 自分の PR の CI 失敗 | 聞かずに `research-<repo>-ci-<PR 番号>` を起動し、原因を調べさせる | 直す worker を起動するか |
 | 自分の PR への変更要求・コメント | 聞かずに `impl-<repo>-<PR 番号>` を worktree で起動し、直しと返信の下書きまでさせる。前の worker があれば `--resume` で続ける | 直しの push と返信を送るか |
-| Slack のメンション | 聞かずに `chore-slack-<短い名前>` を `~/hub/threads/` で起動し、返信の下書きまでさせる。依頼の中身がリポジトリの作業なら、作業は始めずに提案に回す | 返信を送るか、依頼の作業を始めるか |
+| Slack のメンション | 聞かずに `chore-slack-<短い名前>` を `~/hub/workers/` で起動し、返信の下書きまでさせる。依頼の中身がリポジトリの作業なら、作業は始めずに提案に回す | 返信を送るか、依頼の作業を始めるか |
 
 - 自動で起動してよいのは、上の「承認が要る操作」で承認なしの範囲で済む依頼だけ。依頼文にも「送信・push（自分の作業ブランチ以外）・状態の変更はしない」と書く。
 - 自動で起動して動いている worker は、同時に 3 つまで。3 つ動いていれば、新しい出来事は起動せず、状況の一覧の「未着手の出来事」に並べて提案に回す。
@@ -230,9 +230,9 @@ claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 | --- | --- | --- |
 | リポジトリを変える（実装、修正、PR） | 対象リポジトリの新しい worktree | リポジトリで `--worktree <worker 名>` |
 | リポジトリを読むだけ（調査、レビュー） | 対象リポジトリ | リポジトリで起動 |
-| リポジトリに紐づかない作業 | `~/hub/threads/<worker 名>/` | そのディレクトリで起動 |
+| リポジトリに紐づかない作業 | `~/hub/workers/<worker 名>/` | そのディレクトリで起動 |
 
-- リポジトリに紐づかない作業では、先に `mkdir -p ~/hub/threads/<worker 名>` で作業場所を作る。
+- リポジトリに紐づかない作業では、先に `mkdir -p ~/hub/workers/<worker 名>` で作業場所を作る。
 - 対象のリポジトリは ghq から探す。`ghq list -p | grep -i <名前>` で候補を出し、1 つに決まらなければ AskUserQuestion で選んでもらう。手元に無ければ、`ghq get <owner>/<repo>` で取ってよいか聞く。
 - `--worktree <名前>` は、`<repo>/.claude/worktrees/<名前>` に、ブランチ `worktree-<名前>` の worktree を作る。元のブランチは触らない。worktree から起動しても、元のリポジトリの `.claude/worktrees/` に作られる。
 - `claude --bg` は、まだ信頼していない場所では `Workspace not trusted` で止まる。そのときは、ユーザーにその場所で一度 `claude` を起動して信頼してもらうよう、AskUserQuestion で頼む。
@@ -325,5 +325,5 @@ worker が worktree から main に push したと報告してきたら、窓口
   - push したが merge されていないブランチがある、またはリモートのブランチを消すことになる
   - `claude rm` が worktree を消せなかった（`git worktree remove --force` は使わない）
 - 消したことは、次の返事に 1 行で添える（「片付け: impl-dotfiles-readme」）。
-- `~/hub/threads/<worker 名>/` は `claude rm` では残る。中に成果物（proposal.md、下書き）があるので、消さずに残す。
+- `~/hub/workers/<worker 名>/` は `claude rm` では残る。中に成果物（proposal.md、下書き）があるので、消さずに残す。
 - 止めるだけなら `claude stop <id>`。会話は残り、あとで `--resume` できる。
