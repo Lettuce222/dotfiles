@@ -124,7 +124,7 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
 | `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずworkerに任せる、承認の要る操作、案件の一覧の書き方 | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
-| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと | なし |
+| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの仕方（`git commit`を単独の1本で実行し、rebaseはユーザーに頼む） | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
 | `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
 | `configs/agent/skills/commit-push/` | 未コミットの変更を意図ごとにコミットしてpushする | なし |
@@ -161,7 +161,7 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 | `configs/agent/tests/test_cases.py` | `cases.py` |
 | `configs/agent/tests/test_agents_watch.py` | `watch.py` |
 | `configs/agent/tests/test_md_to_gdocs.py` | `md_to_gdocs.py` |
-| `configs/agent/tests/test_orchestrator.py` | `orchestrator`のペインの構成、workerがAskUserQuestionを使わないこと、`agents-thread`が`agents-worker`に回すこと |
+| `configs/agent/tests/test_orchestrator.py` | `orchestrator`のペインの構成、workerがAskUserQuestionを使わないこと、workerのコミットの決まり、`agents-thread`が`agents-worker`に回すこと |
 
 `~/hub/`（窓口の作業場所、リポジトリに紐づかないworkerの作業場所`~/hub/workers/`、案件の中身、承認の記録、見張りの状態）はdotfilesの外にあり、追跡しない。前の窓口（hub、hub-dash）は消してあり、中身はtag `hub-v1-20261104`で見られる。
 

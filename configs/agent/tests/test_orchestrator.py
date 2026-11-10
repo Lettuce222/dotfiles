@@ -65,6 +65,20 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("形式の直しのことは書かず", section)
 
 
+    def test_worker_commits_with_a_lone_git_commit(self):
+        # sandbox の除外は 1 本の git commit にしか当たらず、そのときだけ署名できる
+        text = WORKER.read_text(encoding="utf-8")
+        section = text.split("## コミット", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("別々の Bash", section)
+        self.assertIn("`git -C <dir> commit` は使わない", section)
+        self.assertIn("-F <ファイル>", section)
+        self.assertIn("-c commit.gpgsign=false", section)
+        self.assertIn("「ブロック」で報告", section)
+        self.assertIn("`git rebase`", section)
+        self.assertIn("%G?", section)
+        push = text.split("## push", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("rebase し、`git push origin HEAD:main`", push)
+
     def test_worker_asks_orchestrator_to_approve_runs(self):
         text = WORKER.read_text(encoding="utf-8")
         section = text.split("## 実行の承認を求める", 1)[1].split("\n## ", 1)[0]

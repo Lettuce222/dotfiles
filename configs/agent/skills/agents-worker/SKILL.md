@@ -44,11 +44,21 @@ worker では確認ダイアログを出さない。ダイアログが出る場�
 - 承認の表で承認が要る操作（force push、ほかの人のブランチや共有の main への push、ファイルの削除、仕事仲間に見える操作など）は、hook に止められなくても、実行する前にこの手順で承認を求める。
 - 承認の記録（`~/.claude/hooks/approvals.py`、`~/hub/state/approvals/`）は書かない。記録を書けるのは窓口だけで、worker から書こうとすると hook に断られる。
 
+## コミット
+
+コミットには署名が要る（git の設定で `commit.gpgsign = true`）。署名の鍵は ssh-agent にあり、sandbox の中のコマンドからは届かない。sandbox の除外に `git commit *` があるので、1 本だけの `git commit` は sandbox の外で動き、署名できる。
+
+- 作業場所（worktree）に `cd` してから、`git add` と `git commit` を別々の Bash で実行する。
+- `git commit` は、それだけのコマンドにする。`git -C <dir> commit` は使わない。`&&` や `;` やパイプでほかのコマンドとつながない（`git add … && git commit …` は sandbox の中で動き、署名で止まる）。メッセージは `-F <ファイル>` か `-m` で渡す。
+- 署名で止まったとき（120 秒を超えて返ってこない、passphrase のエラーが出る）は、`-c commit.gpgsign=false` や `--no-gpg-sign` で署名を外したり、別の書き方を試したりしない。実行したコマンドと出たエラーを「ブロック」で報告して止まる。
+- `git rebase`（`git pull --rebase` も）は sandbox の中で動き、コミットを署名し直せない。rebase が要るときは自分では実行せず、手元で実行してもらう手順（`cd <worktree>` と実行するコマンド）を「ブロック」で報告し、ユーザーに頼む。
+- コミットしたら `git log -1 --format='%h %G? %s'` で `%G?` が `G` か確かめる。`G` でなければ「ブロック」で報告する。
+
 ## push
 
 - 自分の作業ブランチ（PR の無いもの、自分の draft PR のもの）への push は、聞かずにしてよい。force push はしない。
 - PR の head が `worktree-<名前>` でなく直接 push できないときは、作業ブランチのコミットで PR の head を fast-forward で進めてよい。直前に `git fetch` し、`git merge-base --is-ancestor origin/<PR の head> <コミット>` が成功したときだけ `git push origin <コミット>:<PR の head>` を実行する。fast-forward にならないときは、「要判断」を報告して止まる。
-- main に直接 push する決まりのリポジトリ（dotfiles など。リポジトリの `CLAUDE.md` を見る）では、push の前に `git fetch` して `origin/main` に rebase し、`git push origin HEAD:main` で push する。
+- main に直接 push する決まりのリポジトリ（dotfiles など。リポジトリの `CLAUDE.md` を見る）では、push の前に `git fetch` し、`git merge-base --is-ancestor origin/main HEAD` で `origin/main` の上に乗っているか確かめてから、`git push origin HEAD:main` で push する。乗っていなければ rebase が要るので、上の「コミット」のとおり手順を報告してユーザーに頼む。
 - worktree の外（main checkout、`~/.claude`、`~/hub` の自分の作業場所の外）は変えない。main checkout の pull は窓口がする。外で要る手順（`./install.sh --links-only`、ファイルの削除、アプリの再起動など）は、完了の報告に書く。
 
 ## 外に出す文面
