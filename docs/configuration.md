@@ -8,6 +8,7 @@
 - Fish function: `configs/fish/functions/local/*`
 - Claude Code: `configs/claude/settings.local.json`（仕事用のpluginなど。下の「Claude Codeのuser設定」を参照）
 - mise: `configs/mise/config.toml`（下の「miseの設定」を参照）
+- Gitのglobalのignore: `configs/git/ignore`（下の「Gitのglobalのignore」を参照）
 
 ## Claude Codeのuser設定
 
@@ -26,6 +27,16 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 - Git: ローカルの絶対パスや鍵のファイル名など、マシン固有のgit設定（`user.signingkey`、`gpg.ssh.allowedSignersFile`など）は、追跡しない`~/.gitconfig`に書く。`~/.config/git`はディレクトリごと`configs/git`へのsymlinkなので、`git config --file ~/.config/git/config`で書くとリポジトリに入る。`git config --global`は、`~/.gitconfig`があればそこへ書く。共有してよい設定だけを`configs/git/config`に置く。
 - 試している段階のツール（Orcaなど）: 追跡しているファイルに書かず、`configs/fish/conf.d/*.local.fish`などgitignore済みのlocal設定に置く。正式に採用すると決めてから、追跡するファイルへ移す。
 
+## Gitのglobalのignore
+
+`~/.config/git`はディレクトリごと`configs/git`へのsymlinkなので、gitがglobalのignoreとして読む`~/.config/git/ignore`は`configs/git/ignore`になる。このファイルには、ほかのツールが行を書き足す。Claude Codeは、作業用のフォルダ`.claude/.cc-writes/`がgitで無視されていないと、`git config --global core.excludesfile`が指すファイル（設定が無ければ`~/.config/git/ignore`）の末尾に`**/.claude/.cc-writes/`を書き足す。
+
+gitが読むglobalのignoreは1つだけなので、`configs/git/ignore`はgitignoreし、この機械だけのファイルにする。dotfilesで管理するruleは`configs/git/ignore.shared`に書く。`install.sh`（`--links-only`も）は、`ignore.shared`の中身を`configs/git/ignore`の先頭の区切り（`# >>> dotfiles`から`# <<< dotfiles`まで）に書き、区切りの外の行はそのまま残す。
+
+- ruleを足すときは`configs/git/ignore.shared`を編集し、`./install.sh --links-only`を実行する。
+- `configs/git/ignore`の区切りの中は、次の`install.sh`で書き直される。この機械だけのruleは区切りの外に書く。
+- `core.excludesFile`は設定しない。設定すると、Claude Codeはそのファイルへ書き足す。
+
 ## miseの設定
 
 `~/.config/mise`はディレクトリごと`configs/mise`へのsymlinkにしている。dotfilesで管理するmiseの設定は`configs/mise/config.local.toml`に書く。
@@ -37,7 +48,7 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 ## リンクと設定だけを反映する
 
-`./install.sh --links-only`は、symlinkの配置と`~/.claude/settings.json`の生成だけを行う。Homebrew・fish・フォント・アプリのインストール、`chsh`、`mise install`、`npm ci`、`defaults write`は実行しない。ネットワークに出ず、パスワードを求めず、`$HOME`の外を変えないので、エージェントにも実行させられる。`./install.sh --dry-run`は同じ判定をして、何も変えずに予定だけを出す。引数なしの`./install.sh`の動作は変わらない。
+`./install.sh --links-only`は、symlinkの配置と`~/.claude/settings.json`・`configs/git/ignore`の生成だけを行う。Homebrew・fish・フォント・アプリのインストール、`chsh`、`mise install`、`npm ci`、`defaults write`は実行しない。ネットワークに出ず、パスワードを求めず、`$HOME`の外を変えないので、エージェントにも実行させられる。`./install.sh --dry-run`は同じ判定をして、何も変えずに予定だけを出す。引数なしの`./install.sh`の動作は変わらない。
 
 - 何度実行しても同じ結果になる。リンク先がすでに正しいものは触らない。
 - 別の場所を指すsymlinkは張り替える。symlinkでない本物のファイルやディレクトリは置き換えず、`skip:`の行で知らせる。

@@ -110,7 +110,8 @@ Usage: ./install.sh [--links-only] [--dry-run]
 
   (no options)  Full setup: Homebrew, fish, login shell, symlinks, mise, apps,
                 macOS defaults.
-  --links-only  Only place the symlinks and generate ~/.claude/settings.json.
+  --links-only  Only place the symlinks and generate ~/.claude/settings.json
+                and configs/git/ignore.
                 Never installs anything, asks for a password, or replaces a
                 file that is not a symlink. Prints one line per change.
   --dry-run     Like --links-only, but changes nothing and prints the plan.
@@ -295,6 +296,60 @@ EOF
     if [ -L "$old_local" ] && [ "$(readlink "$old_local")" = "$local_file" ]; then
         rm -f "$old_local"
     fi
+}
+
+# Write the global gitignore configs/git/ignore (git reads it as
+# ~/.config/git/ignore through the configs/git symlink) from the tracked
+# configs/git/ignore.shared. Tools append their own rules to that file:
+# Claude Code adds `**/.claude/.cc-writes/` to the file that
+# `git config --global core.excludesfile` names, or ~/.config/git/ignore.
+# So the file itself is gitignored and machine-specific; the tracked rules go
+# into a marked block at its top, and lines outside the block are kept as is.
+GIT_IGNORE_BEGIN="# >>> dotfiles: configs/git/ignore.shared から install.sh が書く。ここから下の区切りまでは直さない"
+GIT_IGNORE_END="# <<< dotfiles"
+generate_git_ignore() {
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    shared="$script_dir/configs/git/ignore.shared"
+    dest="$script_dir/configs/git/ignore"
+
+    [ -f "$shared" ] || return 0
+    if [ -e "$dest" ] && [ ! -f "$dest" ]; then
+        record_skip "$dest is not a regular file; left it in place"
+        return 0
+    fi
+
+    tmp=$(mktemp "${TMPDIR:-/tmp}/git-ignore.XXXXXX") || return 1
+    {
+        printf '%s\n' "$GIT_IGNORE_BEGIN"
+        awk 1 "$shared"
+        printf '%s\n' "$GIT_IGNORE_END"
+        if [ -f "$dest" ]; then
+            awk -v begin="$GIT_IGNORE_BEGIN" -v end="$GIT_IGNORE_END" '
+                $0 == begin { inside = 1; next }
+                inside && $0 == end { inside = 0; next }
+                !inside
+            ' "$dest"
+        fi
+    } >"$tmp"
+
+    if [ -f "$dest" ] && cmp -s "$dest" "$tmp"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    chmod 644 "$tmp"
+    if [ "$LINKS_ONLY" -eq 1 ]; then
+        if [ -f "$dest" ]; then
+            record_change "update $dest from $shared"
+        else
+            record_change "write $dest from $shared"
+        fi
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        rm -f "$tmp"
+        return 0
+    fi
+    mv "$tmp" "$dest"
+    [ "$LINKS_ONLY" -eq 1 ] || echo "Generated $dest"
 }
 
 # Print what changes from settings file $1 to $2, one line per JSON path.
@@ -515,6 +570,7 @@ if [ "$LINKS_ONLY" -eq 1 ]; then
     create_symlinks
     create_claude_symlinks
     generate_claude_settings || record_skip "could not generate ~/.claude/settings.json (see the message above)"
+    generate_git_ignore || record_skip "could not generate configs/git/ignore"
     create_shared_agent_symlinks
     create_hammerspoon_symlinks
     print_link_summary
@@ -529,6 +585,7 @@ set_fish_as_default_shell
 create_symlinks
 create_claude_symlinks
 generate_claude_settings
+generate_git_ignore
 create_shared_agent_symlinks
 cleanup_codex_symlinks
 create_hammerspoon_symlinks

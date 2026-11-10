@@ -19,7 +19,7 @@ INSTALL_SH = Path(__file__).resolve().parents[1] / "install.sh"
 INSTALLERS = ["brew", "fish", "chsh", "sudo", "curl", "mise", "npm", "defaults"]
 
 
-class InstallLinksOnlyTest(unittest.TestCase):
+class InstallTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-links-only-"))
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -86,6 +86,8 @@ class InstallLinksOnlyTest(unittest.TestCase):
                 out[rel] = ("dir",)
         return out
 
+
+class InstallLinksOnlyTest(InstallTestCase):
     def test_links_everything_and_reports_each_change(self):
         r = self.run_install("--links-only")
         configs = self.repo / "configs"
@@ -218,6 +220,92 @@ class InstallLinksOnlyTest(unittest.TestCase):
         self.assertIn("Phase 2", r.stdout)
         self.assertIn("fish -c", self.installer_calls())
         self.assertEqual(self.link(".config/foo"), str(self.repo / "configs" / "foo"))
+
+
+class GitIgnoreTest(InstallTestCase):
+    """configs/git/ignore.shared から gitignore 済みの configs/git/ignore を書くテスト。"""
+
+    # Claude Code が ~/.config/git/ignore に書き足す形（空行と 1 行）
+    CLAUDE_APPEND = "\n**/.claude/.cc-writes/\n"
+
+    def make_repo(self, repo):
+        super().make_repo(repo)
+        (repo / "configs" / "git").mkdir()
+        self.shared = repo / "configs" / "git" / "ignore.shared"
+        self.shared.write_text("**/.claude/settings.local.json\n**/.claude/worktrees/\n")
+        self.dest = repo / "configs" / "git" / "ignore"
+
+    def block(self, body):
+        return (
+            "# >>> dotfiles: configs/git/ignore.shared から install.sh が書く。ここから下の区切りまでは直さない\n"
+            f"{body}# <<< dotfiles\n"
+        )
+
+    def check_ignore(self, path):
+        # git が ~/.config/git/ignore（configs/git への symlink の先）を読むかを、Claude Code と同じ方法で確かめる。
+        work = self.tmp / "work"
+        if not (work / ".git").exists():
+            subprocess.run(["git", "init", "-q", str(work)], check=True)
+        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"}
+        r = subprocess.run(["git", "-C", str(work), "check-ignore", "-q", "--", path], env=env, check=False)
+        return r.returncode == 0
+
+    def test_writes_the_shared_rules_into_a_block(self):
+        r = self.run_install("--links-only")
+        self.assertEqual(self.dest.read_text(), self.block(self.shared.read_text()))
+        self.assertIn(f"write {self.dest} from {self.shared}", r.stdout.splitlines())
+        self.assertEqual(self.link(".config/git"), str(self.repo / "configs" / "git"))
+        self.assertTrue(self.check_ignore(".claude/worktrees/x"))
+        self.assertFalse(self.check_ignore(".claude/.cc-writes/sample-file.txt"))
+
+    def test_keeps_lines_appended_by_other_tools(self):
+        self.run_install("--links-only")
+        with self.dest.open("a") as f:
+            f.write(self.CLAUDE_APPEND)
+        self.assertTrue(self.check_ignore(".claude/.cc-writes/sample-file.txt"))
+
+        # 変わっていなければ書き直さない
+        self.assertEqual(self.run_install("--links-only").stdout, "変更なし\n")
+
+        self.shared.write_text("**/.claude/worktrees/\n.DS_Store\n")
+        r = self.run_install("--dry-run")
+        self.assertIn(f"(dry-run) update {self.dest} from {self.shared}", r.stdout.splitlines())
+        self.assertNotIn(".DS_Store", self.dest.read_text())
+
+        r = self.run_install("--links-only")
+        self.assertIn(f"update {self.dest} from {self.shared}", r.stdout.splitlines())
+        self.assertEqual(self.dest.read_text(), self.block("**/.claude/worktrees/\n.DS_Store\n") + self.CLAUDE_APPEND)
+        self.assertTrue(self.check_ignore(".claude/.cc-writes/sample-file.txt"))
+        self.assertTrue(self.check_ignore(".DS_Store"))
+        self.assertFalse(self.check_ignore(".claude/settings.local.json"))
+        self.assertEqual(self.run_install("--links-only").stdout, "変更なし\n")
+
+    def test_keeps_an_old_file_without_a_block_below_the_block(self):
+        self.dest.write_text("**/.claude/worktrees/\n" + self.CLAUDE_APPEND)
+        self.run_install("--links-only")
+        self.assertEqual(
+            self.dest.read_text(), self.block(self.shared.read_text()) + "**/.claude/worktrees/\n" + self.CLAUDE_APPEND
+        )
+
+    def test_shared_file_without_a_trailing_newline(self):
+        self.shared.write_text("a\nb")
+        self.run_install("--links-only")
+        self.assertEqual(self.dest.read_text(), self.block("a\nb\n"))
+
+    def test_full_install_writes_the_file(self):
+        r = self.run_install()
+        self.assertIn(f"Generated {self.dest}", r.stdout)
+        self.assertEqual(self.dest.read_text(), self.block(self.shared.read_text()))
+
+
+class RepositoryLayoutTest(unittest.TestCase):
+    def test_global_gitignore_is_not_tracked(self):
+        root = INSTALL_SH.parent
+        self.assertTrue((root / "configs" / "git" / "ignore.shared").is_file())
+        r = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--no-index", "configs/git/ignore"], check=False
+        )
+        self.assertEqual(r.returncode, 0, "configs/git/ignore must be gitignored")
 
 
 if __name__ == "__main__":

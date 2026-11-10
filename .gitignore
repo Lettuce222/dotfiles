@@ -21,6 +21,11 @@ configs/claude/settings.local.json
 # dotfiles' own settings live in config.local.toml, which mise reads with higher priority
 configs/mise/config.toml
 
+# git - configs/git/ignore is the global gitignore that tools append to
+# (Claude Code adds **/.claude/.cc-writes/); install.sh writes the tracked
+# rules from configs/git/ignore.shared into a marked block at its top
+configs/git/ignore
+
 # Hammerspoon - personal layout configuration
 configs/hammerspoon/layouts.yml
 
