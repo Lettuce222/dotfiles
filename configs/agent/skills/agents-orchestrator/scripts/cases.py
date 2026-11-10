@@ -20,13 +20,18 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
     - [report.md](file:///Users/me/hub/threads/x/report.md)
 
 - 項目は `- ` で始まる行。2 文字以上の字下げで続く行は、前の項目の続き。
+- TODO の項目は、先頭に期日 `[11/11]`（`[11/11（水）]` も可）と優先の印 `!` を書ける
+  （例: `- [11/11] ! 資料を読む`）。年は書かず、今日にいちばん近い年とみなす。
+- 見出しの次の行に `略称: <短い名前>` を書くと、TODO の一覧でその名前を案件の印にする。
 - Waiting の項目は ` → ` のあとに、待ちが解けたらやることを書ける。待ちが解けると
   その部分が「TODO」に移る。
 - 資料以外の 3 つの節に項目が無くなった案件は done/ に移す（sweep）。
 
 Usage:
-  cases.py board [--once] [--width N] [--height N]
-      案件の一覧と、その上にスレッドの節（下の「スレッドの節」を参照）を描く。--once が無ければ、
+  cases.py board [--once] [--width N] [--height N] [--by-case]
+      スレッドの節（下の「スレッドの節」を参照）と、その下に全案件の TODO を急ぐ順に並べた一覧
+      （下の「TODO の一覧」を参照）と、案件の索引を描く。--by-case なら、TODO の一覧の代わりに
+      案件ごとに全部の節を描く（前の表示）。--once が無ければ、
       ファイルの変化と端末の大きさの変化とスレッドの変化（THREAD_POLL 秒ごと）を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
       このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
@@ -44,6 +49,16 @@ sweep の出力（1 行に 1 つ）:
   {"action": "stale", "case", "section", "item", "prs"}        Waiting 以外で、PR がすべて閉じた項目（消さない）
   {"action": "open", "case", "section", "item", "prs"}         Waiting で、まだ開いている PR がある項目
   prs は [{"url", "state", "reviewDecision", "isDraft", "reviews": [{"author", "state"}]}]（reviews は人ごとの最新のレビュー）
+
+TODO の一覧:
+  全案件の TODO を 1 つの一覧にし、上から番号を付ける。並びは、期日のあるもの（早い順。期日が同じなら
+  `!` が先）→ `!` のもの → ほか。同じ順位なら案件のファイル名の順、案件の中は書いた順。
+  期日は、過ぎたもの・今日・明日をその言葉と色で目立たせ、ほかは `11/18（水）` の形で出す。
+  各項目に案件の印（略称、無ければ見出しを縮めたもの）を添え、案件のファイルへのリンクにする。
+  一覧の下の「案件」の節に、全案件を 1 行ずつ（見出しと、Waiting・Later の件数）出す。見出しは
+  案件のファイルへのリンクで、クリックすると Waiting・Later・資料を含む全文が開く。
+  入りきらなければ、完了のスレッド、案件の索引（1 行にまとめる）、TODO の 2 行目から先（1 行で切る）、
+  の順に畳み、それでも入らなければ末尾を切る。
 
 スレッドの節:
   `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
@@ -81,6 +96,10 @@ REFS = "資料"
 TASK_SECTIONS = (MINE, WAITING, LATER)
 ARROW = " → "
 
+SHORT_RE = re.compile(r"^略称[:：]\s*(.*)$")
+SHORT_WIDTH = 12  # 略称が無いときに見出しを縮める幅
+DUE_RE = re.compile(r"\[(\d{1,2})/(\d{1,2})(?:（[^）\]]*）|\([^)\]]*\))?\](?!\()")
+BANG_RE = re.compile(r"!(?=\s|$)")
 PR_RE = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)")
 
 
@@ -138,6 +157,16 @@ class Case:
             if isinstance(b, str) and b.startswith("# "):
                 return b[2:].strip()
         return self.slug
+
+    @property
+    def short(self) -> str:
+        """TODO の一覧で添える短い名前。`略称:` の行が無ければ見出しを縮める。"""
+        for b in self.sections[0].body:
+            if isinstance(b, str) and SHORT_RE.match(b):
+                name = SHORT_RE.match(b).group(1).strip()
+                if name:
+                    return name
+        return shorten(self.title, SHORT_WIDTH)
 
     def section(self, name: str) -> Section | None:
         for s in self.sections:
@@ -232,6 +261,63 @@ def pr_urls(text: str) -> list[str]:
         if url not in seen:
             seen.append(url)
     return seen
+
+
+def guess_date(month: int, day: int, today: dt.date) -> dt.date | None:
+    """年の無い月日を、今日にいちばん近い年の日付にする。ありえない日付なら None。"""
+    best = None
+    for year in (today.year - 1, today.year, today.year + 1):
+        try:
+            d = dt.date(year, month, day)
+        except ValueError:
+            return None
+        if best is None or abs((d - today).days) < abs((best - today).days):
+            best = d
+    return best
+
+
+@dataclass
+class Todo:
+    case: Case
+    text: str  # 期日と印を外した本文
+    due: dt.date | None
+    bang: bool
+    index: int  # 案件の中での順
+
+
+def todo_marks(text: str, today: dt.date) -> tuple[dt.date | None, bool, str]:
+    """TODO の項目の先頭の期日 `[11/11]` と印 `!` を読む。(期日, 印, 残りの本文) を返す。"""
+    due, bang, rest = None, False, text
+    while True:
+        rest = rest.lstrip()
+        m = DUE_RE.match(rest)
+        if m and due is None:
+            d = guess_date(int(m.group(1)), int(m.group(2)), today)
+            if d is None:
+                break
+            due, rest = d, rest[m.end() :]
+            continue
+        m = BANG_RE.match(rest)
+        if m and not bang:
+            bang, rest = True, rest[m.end() :]
+            continue
+        break
+    return due, bang, rest
+
+
+def todos(cases: list[Case], today: dt.date) -> list[Todo]:
+    """全案件の TODO を急ぐ順に並べる。"""
+    out = []
+    for c in cases:
+        for i, it in enumerate(c.items(MINE)):
+            due, bang, text = todo_marks(it.text, today)
+            out.append(Todo(c, text, due, bang, i))
+
+    def key(t: Todo):
+        tier = 0 if t.due else 1 if t.bang else 2
+        return (tier, t.due or dt.date.max, not t.bang, t.case.slug, t.index)
+
+    return sorted(out, key=key)
 
 
 # ---------------------------------------------------------------- sweep
@@ -373,6 +459,8 @@ STYLE = {
     "dim": "\x1b[38;2;86;95;137m",
     "link": "\x1b[4;38;2;122;162;247m",
     "code": "\x1b[38;2;187;154;247m",
+    "urgent": "\x1b[1;38;2;247;118;142m",  # red
+    "case": "\x1b[38;2;125;207;255m",  # cyan
 }
 LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", REFS: "資料"}
 
@@ -670,19 +758,120 @@ def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
     return rows
 
 
-def render(d: Path, width: int, height: int, threads: list[Thread] | None = ()) -> list[str]:
-    """スレッドの節と案件の一覧を描く。見出しや区切り線は出さない。
-    出すスレッドが無ければスレッドの節を出さず、1 行目から案件にする。None は読めなかったとき。"""
+WEEKDAYS = "月火水木金土日"
+
+
+def current_date() -> dt.date:
+    return dt.date.today()
+
+INDEX_TITLE = "案件"
+
+
+def shorten(text: str, width: int) -> str:
+    """幅に収まらなければ、末尾を「…」にして縮める。"""
+    if text_width(text) <= width:
+        return text
+    out, col = "", 0
+    for ch in text:
+        if col + char_width(ch) > width - 1:
+            break
+        out += ch
+        col += char_width(ch)
+    return out.rstrip() + "…"
+
+
+def due_label(due: dt.date, today: dt.date) -> tuple[str, str]:
+    """期日の (出す文字列, 色)。過ぎたもの・今日・明日は言葉で出す。"""
+    days = (due - today).days
+    if days < 0:
+        return f"{due.month}/{due.day:02d} 過ぎ", STYLE["urgent"]
+    if days == 0:
+        return "今日", STYLE["urgent"]
+    if days == 1:
+        return "明日", STYLE[MINE]
+    return f"{due.month}/{due.day:02d}（{WEEKDAYS[due.weekday()]}）", STYLE["text"]
+
+
+def todo_rows(items: list[Todo], width: int, jira: str | None, today: dt.date, clipped: bool):
+    """TODO の一覧の行。clipped なら 1 項目を 1 行に切る。"""
+    rows = [[(LABEL[MINE], STYLE[MINE], None)]]
+    if not items:
+        rows.append([(" TODO はありません", STYLE["dim"], None)])
+        return rows
+    num_w = len(str(len(items)))
+    for n, t in enumerate(items, 1):
+        segs = [(f"{n:>{num_w}}. ", STYLE["dim"], None)]
+        if t.due:
+            label, style = due_label(t.due, today)
+            segs.append((label + " ", style, None))
+        if t.bang:
+            segs.append(("! ", STYLE["urgent"], None))
+        segs.append((f"[{t.case.short}]", STYLE["case"], t.case.path.as_uri()))
+        segs.append((" ", "", None))
+        segs.extend(inline(t.text, STYLE["text"], jira))
+        if clipped:
+            rows.append(clip(segs, width, 1))
+        else:
+            rows.extend(wrap(segs, width, 1, num_w + 3))
+    return rows
+
+
+def index_rows(cases: list[Case], d: Path, width: int, folded: bool):
+    """案件の索引。見出しは案件のファイルへのリンク。folded なら 1 行にまとめる。"""
+    if not cases:
+        return []
+    if folded:
+        return [[(f"{INDEX_TITLE} {len(cases)} 件", STYLE["title"], d.as_uri() if d.is_dir() else None)]]
+    rows = [[(INDEX_TITLE, STYLE["title"], None)]]
+    for c in sorted(cases, key=lambda c: c.slug):
+        counts = []
+        for name, mark in ((WAITING, "◇"), (LATER, "・")):
+            k = len(c.items(name))
+            if k:
+                counts.append((f" {mark}{k}", STYLE[name], None))
+        rows.append(clip([(c.title, STYLE["text"], c.path.as_uri()), *counts], width, 1))
+    return rows
+
+
+def render(
+    d: Path,
+    width: int,
+    height: int,
+    threads: list[Thread] | None = (),
+    by_case: bool = False,
+    today: dt.date | None = None,
+) -> list[str]:
+    """スレッドの節と、TODO の一覧と案件の索引（by_case なら案件ごとの一覧）を描く。区切り線は出さない。
+    出すスレッドが無ければスレッドの節を出さない。threads が None なのは読めなかったとき。"""
     width = max(width, 20)
     jira = jira_base()
-    cases = sorted(load_cases(d), key=sort_key)
+    today = today or current_date()
+    cases = load_cases(d)
     empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
-
-    # 入りきらなければ、完了のスレッド、資料、Later、Waiting の次の手、の順に畳む。
     active = None if threads is None else [t for t in threads if t.state != "done"]
-    for shown, c_level in [(threads, 0), *((active, level) for level in range(4))]:
+
+    if by_case:
+        cases.sort(key=sort_key)
+        # 入りきらなければ、完了のスレッド、資料、Later、Waiting の次の手、の順に畳む。
+        layouts = [(threads, 0), *((active, level) for level in range(4))]
+
+        def build(level):
+            return case_rows(cases, width, jira, level)
+
+    else:
+        items = todos(cases, today)
+        # 入りきらなければ、完了のスレッド、案件の索引、TODO の 2 行目から先、の順に畳む。
+        layouts = [(threads, 0), (active, 0), (active, 1), (active, 2)]
+
+        def build(level):
+            if not cases:
+                return []
+            body = todo_rows(items, width, jira, today, clipped=level >= 2)
+            return body + [[]] + index_rows(cases, d, width, folded=level >= 1)
+
+    for shown, level in layouts:
         head = thread_rows(shown, width, jira) + empty
-        body = case_rows(cases, width, jira, c_level)
+        body = build(level)
         if len(head) + len(body) <= height:
             break
     rows = head + body
@@ -719,14 +908,14 @@ def code_signature() -> tuple | None:
     return (st.st_mtime_ns, st.st_size)
 
 
-def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
+def board(d: Path, once: bool, width: int | None, height: int | None, by_case: bool = False) -> int:
     def size():
         ts = shutil.get_terminal_size((60, 30))
         return width or ts.columns, height or ts.lines
 
     if once:
         w, h = size()
-        sys.stdout.write("\n".join(render(d, w, h, fetch_threads())) + "\n")
+        sys.stdout.write("\n".join(render(d, w, h, fetch_threads(), by_case)) + "\n")
         return 0
 
     resized = [True]
@@ -748,12 +937,12 @@ def board(d: Path, once: bool, width: int | None, height: int | None) -> int:
             w, h = size()
             if polled is None or time.monotonic() - polled >= THREAD_POLL:
                 threads, polled = fetch_threads(), time.monotonic()
-            key = (signature(d), w, h, threads)
+            key = (signature(d), w, h, threads, current_date())  # 日付が変わると期日の出し方が変わる
             if key != last or resized[0]:
                 resized[0] = False
                 last = key
                 try:
-                    lines = render(d, w, h, threads)
+                    lines = render(d, w, h, threads, by_case)
                 except Exception as e:  # 描けなくてもペインは閉じない
                     lines = [f"cases: 描けませんでした: {e}"]
                 out.write(screen(lines))
@@ -776,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--once", action="store_true")
     b.add_argument("--width", type=int)
     b.add_argument("--height", type=int)
+    b.add_argument("--by-case", action="store_true")
     s = sub.add_parser("sweep")
     s.add_argument("--dry-run", action="store_true")
     r = sub.add_parser("resolve")
@@ -786,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
 
     d = cases_dir()
     if args.cmd == "board":
-        return board(d, args.once, args.width, args.height)
+        return board(d, args.once, args.width, args.height, args.by_case)
     if args.cmd == "sweep":
         try:
             actions = sweep(d, dry_run=args.dry_run)

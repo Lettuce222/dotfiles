@@ -169,37 +169,39 @@ class ResolveTest(Base):
         self.assertEqual(p.read_text(), "# t\n\n## TODO\n- 届いたら設定する\n\n## Waiting\n- ほか\n")
 
 
-class RenderTest(Base):
+class ByCaseRenderTest(Base):
+    """--by-case の表示（案件ごとに全部の節を描く）。"""
+
     def test_links_are_osc8(self):
         self.write()
-        out = "\n".join(cases.render(self.dir, 60, 100))
+        out = "\n".join(cases.render(self.dir, 60, 100, by_case=True))
         self.assertIn(f"\x1b]8;;{PR3}\x1b\\", out)
         self.assertIn("\x1b]8;;file:///tmp/report.md\x1b\\", out)
         self.assertIn((self.dir / "x.md").as_uri(), out)
 
     def test_ticket_link_uses_pane_json(self):
         self.write(text="# t\n\n## Later\n- ABC-12 を閉じる\n")
-        out = "\n".join(cases.render(self.dir, 60, 100))
+        out = "\n".join(cases.render(self.dir, 60, 100, by_case=True))
         self.assertNotIn("\x1b]8;;https://jira.example/browse/ABC-12", out)
         (Path(self.tmp.name) / "pane.json").write_text('{"jira": "https://jira.example/browse/"}')
-        out = "\n".join(cases.render(self.dir, 60, 100))
+        out = "\n".join(cases.render(self.dir, 60, 100, by_case=True))
         self.assertIn("\x1b]8;;https://jira.example/browse/ABC-12\x1b\\", out)
 
     def test_lines_fit_width(self):
         self.write()
-        for line in cases.render(self.dir, 24, 100):
+        for line in cases.render(self.dir, 24, 100, by_case=True):
             self.assertLessEqual(cases.text_width(plain(line)), 24, plain(line))
 
     def test_truncates_to_height(self):
         self.write()
-        lines = cases.render(self.dir, 60, 6)
+        lines = cases.render(self.dir, 60, 6, by_case=True)
         self.assertEqual(len(lines), 6)
         self.assertTrue(plain(lines[-1]).startswith("… ほか"))
 
     def test_folds_refs_and_later_before_truncating(self):
         self.write()
-        full = cases.render(self.dir, 80, 100)
-        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 2)))
+        full = cases.render(self.dir, 80, 100, by_case=True)
+        folded = plain("\n".join(cases.render(self.dir, 80, len(full) - 2, by_case=True)))
         self.assertNotIn("資料", folded)
         self.assertIn("・Later 1 件", folded)
         self.assertNotIn("… ほか", folded)
@@ -208,17 +210,17 @@ class RenderTest(Base):
         self.write("a", "# 待つだけ\n\n## Waiting\n- 待ち\n")
         self.write("b", "# 私の番\n\n## TODO\n- やる\n")
         os.utime(self.dir / "b.md", (0, 0))
-        text = plain("\n".join(cases.render(self.dir, 60, 100)))
+        text = plain("\n".join(cases.render(self.dir, 60, 100, by_case=True)))
         self.assertLess(text.index("私の番"), text.index("待つだけ"))
 
     def test_starts_with_first_case_without_header(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
-        lines = [plain(l) for l in cases.render(self.dir, 60, 100)]
+        lines = [plain(l) for l in cases.render(self.dir, 60, 100, by_case=True)]
         self.assertEqual(lines[0], "私の番")
         self.assertFalse(any("─" in l for l in lines))
 
     def test_empty(self):
-        text = plain("\n".join(cases.render(self.dir, 40, 10)))
+        text = plain("\n".join(cases.render(self.dir, 40, 10, by_case=True)))
         self.assertIn("案件はありません", text)
 
 
@@ -243,13 +245,13 @@ class HeadingStyleTest(Base):
 
     def test_headings_in_case_file_are_colored(self):
         self.write()
-        out = "\n".join(cases.render(self.dir, 80, 100))
+        out = "\n".join(cases.render(self.dir, 80, 100, by_case=True))
         for name, (label, style) in self.EXPECTED.items():
             self.assertIn(f"{style}{label}{cases.RESET}", out, name)
 
     def test_unknown_section_uses_other(self):
         self.write(text="# t\n\n## メモ\n- 何か\n")
-        out = "\n".join(cases.render(self.dir, 80, 100))
+        out = "\n".join(cases.render(self.dir, 80, 100, by_case=True))
         self.assertIn(f"{cases.STYLE['other']}メモ{cases.RESET}", out)
 
 
@@ -406,9 +408,9 @@ class ThreadsTest(Base):
         self.assertIn(f" {spin} impl-new", lines)
         self.assertIn(f" {spin} impl-old", lines)
         self.assertIn(" ✔ research-done", lines)
-        self.assertEqual(lines[lines.index("私の番") - 1], "")
+        self.assertEqual(lines[lines.index("▶ TODO") - 1], "")
         self.assertLess(lines.index(f" {spin} impl-old"), lines.index(" ✔ research-done"))
-        self.assertLess(lines.index(" ✔ research-done"), lines.index("私の番"))
+        self.assertLess(lines.index(" ✔ research-done"), lines.index("▶ TODO"))
 
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
@@ -442,25 +444,25 @@ class ThreadsTest(Base):
         self.assertIn(" ✔ old", tall)
         short = [plain(l) for l in cases.render(self.dir, 60, len(tall) - 1, threads)]
         self.assertNotIn(" ✔ old", short)
-        self.assertIn("   • やる", short)
+        self.assertIn(" 1. [私の番] やる", short)
 
     def test_no_section_without_threads(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, [])]
-        self.assertEqual(lines[0], "私の番")
+        self.assertEqual(lines[0], "▶ TODO")
 
     def test_no_section_when_no_thread_is_shown(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         done = [{"id": "x", "kind": "background", "name": "impl-x", "state": "stopped"}]
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse(done))]
-        self.assertEqual(lines[0], "私の番")
+        self.assertEqual(lines[0], "▶ TODO")
 
     def test_failure_keeps_cases(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, None)]
         self.assertIn("claude agents を読めませんでした", lines[0])
-        self.assertIn("私の番", lines)
-        self.assertIn("   • やる", lines)
+        self.assertIn(" 1. [私の番] やる", lines)
+        self.assertIn(" 私の番", lines)
 
     def test_long_lines_are_clipped_to_one_line(self):
         long = [cases.Thread("impl-" + "x" * 40, "working", "とても長い説明" * 10)]
@@ -471,6 +473,136 @@ class ThreadsTest(Base):
             self.assertLessEqual(cases.text_width(line), 30, line)
         self.assertTrue(lines[1].endswith("…"))
         self.assertTrue(lines[2].endswith("…"))
+
+
+def todo_lines(test, width=80, height=100, today=None, threads=()):
+    return [plain(l) for l in cases.render(test.dir, width, height, threads, today=today or TODAY)]
+
+
+TODAY = cases.dt.date(2026, 11, 10)  # 火曜
+
+
+class TodoMarksTest(unittest.TestCase):
+    def marks(self, text, today=TODAY):
+        return cases.todo_marks(text, today)
+
+    def test_due_and_bang(self):
+        d = cases.dt.date
+        self.assertEqual(self.marks("[11/11] ! 読む"), (d(2026, 11, 11), True, "読む"))
+        self.assertEqual(self.marks("! [11/11] 読む"), (d(2026, 11, 11), True, "読む"))
+        self.assertEqual(self.marks("[11/11（水）] 読む"), (d(2026, 11, 11), False, "読む"))
+        self.assertEqual(self.marks("[1/5] 読む"), (d(2027, 1, 5), False, "読む"))
+        self.assertEqual(self.marks("[10/30] 送る"), (d(2026, 10, 30), False, "送る"))
+
+    def test_text_without_marks_is_kept(self):
+        for text in (
+            "[#3](https://github.com/o/r/pull/3) を Ready にする",
+            "11/11（水）の定例の資料を読む",
+            "![図](x.png) を貼る",
+            "[2/30] ありえない日付",
+            "!重要",
+        ):
+            self.assertEqual(self.marks(text), (None, False, text), text)
+
+
+class TodoBoardTest(Base):
+    def test_lists_todos_of_all_cases_by_urgency(self):
+        self.write("a", "# 案件 A\n略称: A\n\n## TODO\n- ふつう A\n- ! 印 A\n- [11/18] 来週 A\n")
+        self.write("b", "# 案件 B\n略称: B\n\n## TODO\n- ふつう B\n- [11/09] 過ぎた B\n- ! [11/18] 印と来週 B\n- [11/10] 今日 B\n")
+        lines = todo_lines(self)
+        self.assertEqual(
+            lines[: lines.index("")],
+            [
+                "▶ TODO",
+                " 1. 11/09 過ぎ [B] 過ぎた B",
+                " 2. 今日 [B] 今日 B",
+                " 3. 11/18（水） ! [B] 印と来週 B",
+                " 4. 11/18（水） [A] 来週 A",
+                " 5. ! [A] 印 A",
+                " 6. [A] ふつう A",
+                " 7. [B] ふつう B",
+            ],
+        )
+
+    def test_tomorrow(self):
+        self.write("a", "# 案件 A\n略称: A\n\n## TODO\n- [11/11] 読む\n")
+        self.assertIn(" 1. 明日 [A] 読む", todo_lines(self))
+
+    def test_case_mark_links_to_case_file(self):
+        self.write("a", "# とても長い案件の名前なので縮める\n\n## TODO\n- やる\n")
+        out = "\n".join(cases.render(self.dir, 80, 100, today=TODAY))
+        self.assertIn(f"\x1b]8;;{(self.dir / 'a.md').as_uri()}\x1b\\", out)
+        line = [l for l in todo_lines(self) if l.startswith(" 1.")][0]
+        self.assertEqual(line, " 1. [とても長い…] やる")
+
+    def test_index_lists_every_case_with_counts(self):
+        self.write("a", SAMPLE)
+        self.write("b", "# 待つだけ\n\n## Waiting\n- 待ち\n")
+        lines = todo_lines(self)
+        at = lines.index("案件")
+        self.assertEqual(lines[at + 1 :], [" 架空の案件 ◇3 ・1", " 待つだけ ◇1"])
+        # Waiting・Later・資料は TODO の一覧には出さない（案件のファイルを開いて見る）
+        self.assertNotIn("◇ Waiting", "\n".join(lines))
+        self.assertNotIn("report.md", "\n".join(lines))
+
+    def test_no_todo(self):
+        self.write("b", "# 待つだけ\n\n## Waiting\n- 待ち\n")
+        self.assertEqual(todo_lines(self)[:2], ["▶ TODO", " TODO はありません"])
+
+    def test_empty(self):
+        self.assertEqual(todo_lines(self, 40, 10), ["案件はありません"])
+
+    def test_wraps_with_hanging_indent(self):
+        self.write("a", "# A\n略称: A\n\n## TODO\n- " + "とても長い説明" * 6 + "\n")
+        lines = todo_lines(self, width=30)
+        self.assertTrue(lines[2].startswith("    "), lines[2])
+        for line in lines:
+            self.assertLessEqual(cases.text_width(line), 30, line)
+
+    def test_folds_done_threads_then_index_then_wrapping(self):
+        self.write("a", "# A\n略称: A\n\n## TODO\n- " + "とても長い説明" * 6 + "\n- 短い\n")
+        self.write("b", "# B\n\n## Later\n- あとで\n")
+        threads = [cases.Thread("impl-a", "working", ""), cases.Thread("old", "done", "")]
+        full = todo_lines(self, 30, 100, threads=threads)
+        self.assertIn(" ✔ old", full)
+        self.assertIn("案件", full)
+
+        no_done = todo_lines(self, 30, len(full) - 1, threads=threads)
+        self.assertNotIn(" ✔ old", no_done)
+        self.assertIn("案件", no_done)
+
+        folded = todo_lines(self, 30, len(no_done) - 1, threads=threads)
+        self.assertIn("案件 2 件", folded)
+        self.assertTrue(any(l.startswith("    ") for l in folded))  # まだ折り返している
+
+        clipped = todo_lines(self, 30, len(folded) - 1, threads=threads)
+        self.assertTrue([l for l in clipped if l.startswith(" 1.")][0].endswith("…"))
+        self.assertIn(" 2. [A] 短い", clipped)
+        self.assertIn("案件 2 件", clipped)
+        self.assertNotIn("… ほか", "\n".join(clipped))
+
+        cut = todo_lines(self, 30, 4, threads=threads)
+        self.assertEqual(len(cut), 4)
+        self.assertTrue(cut[-1].startswith("… ほか"))
+
+    def test_by_case_option(self):
+        self.write("a", SAMPLE)
+        lines = [plain(l) for l in cases.render(self.dir, 80, 100, by_case=True)]
+        self.assertEqual(lines[0], "架空の案件")
+        self.assertIn(" ◇ Waiting", lines)
+
+    def test_redraws_when_date_changes(self):
+        self.write()
+        day = [TODAY]
+
+        def tick(n):
+            if n == 1:
+                day[0] = TODAY.replace(day=11)
+
+        with mock.patch.object(cases, "current_date", lambda: day[0]):
+            self.assertEqual(BoardReloadTest.run_board(self, 3, tick), 2)
+        with mock.patch.object(cases, "current_date", lambda: TODAY):
+            self.assertEqual(BoardReloadTest.run_board(self, 3), 1)
 
 
 if __name__ == "__main__":
