@@ -34,6 +34,19 @@ system_open() {
   fi
 }
 
+# コマンドの絶対パスを出す。見つからなければ偽。
+# このスクリプトは tmux の run-shell から、tmux サーバーが起動したときの PATH で動く。
+# mise activate は PATH にツールごとの install のフォルダを足す作りなので、tmux サーバーより
+# あとに mise で入れたツールはその PATH に無い。PATH に無ければ mise に聞く（グローバルの設定を
+# 読むよう $HOME で聞く）。popup も tmux サーバーの環境で動くので、見つけた絶対パスで起動する。
+find_tool() {
+  local mise
+  command -v "$1" 2>/dev/null && return 0
+  mise=$(command -v mise 2>/dev/null || echo "$HOME/.local/bin/mise")
+  [ -x "$mise" ] || return 1
+  "$mise" -C "$HOME" which "$1" 2>/dev/null
+}
+
 # file(1) が binary と判定したら真。file がなければテキスト扱い。
 is_binary() {
   command -v file >/dev/null 2>&1 || return 1
@@ -80,18 +93,18 @@ case $url in
       exit 0
     fi
 
+    leaf=
     case $path in
-      *.md | *.markdown) viewer=leaf ;;
-      *) viewer=nvim ;;
+      # leaf が入っていないマシンでは nvim で開く。
+      *.md | *.markdown) leaf=$(find_tool leaf) || leaf= ;;
     esac
-    # leaf が入っていないマシンでは nvim に戻す。
-    [ "$viewer" = leaf ] && ! command -v leaf >/dev/null 2>&1 && viewer=nvim
 
-    if [ "$viewer" = leaf ]; then
+    if [ -n "$leaf" ]; then
       # leaf は行を指定して開けないので #L は使わない。--watch で書き換えに追従する。
-      set -- leaf --watch -- "$path"
+      set -- "$leaf" --watch -- "$path"
     else
-      set -- nvim
+      nvim=$(find_tool nvim) || nvim=nvim
+      set -- "$nvim"
       [ -n "$line" ] && set -- "$@" "+$line"
       set -- "$@" -- "$path"
     fi
