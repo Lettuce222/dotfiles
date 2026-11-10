@@ -40,7 +40,7 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 ## tmuxのリンクのクリック
 
-tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/open-link.sh`が開く。`file://`のテキストのファイルはpopupのnvimで、フォルダはFinder（Linuxでは`xdg-open`）で、画像などテキストでないファイルとそれ以外のURLは既定のアプリで開く。フォルダをFinderで開くのは、画像をGitHubなどへドラッグして使うため。
+tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/open-link.sh`が開く。`file://`のMarkdown（`.md`）はpopupの[leaf](https://leaf.rivolink.mg/)で、ほかのテキストのファイルはpopupのnvimで、フォルダはFinder（Linuxでは`xdg-open`）で、画像などテキストでないファイルとそれ以外のURLは既定のアプリで開く。フォルダをFinderで開くのは、画像をGitHubなどへドラッグして使うため。leafはmise（`github:rivolink/leaf`）で入れる。入っていないマシンでは`.md`もnvimで開く。leafは行を指定して開けないので、`#L<行>`は無視する。
 
 テスト: `python3 -m unittest tests/test_open_link.py`
 

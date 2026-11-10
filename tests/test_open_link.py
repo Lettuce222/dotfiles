@@ -2,7 +2,7 @@
 
 実行: python3 -m unittest tests/test_open_link.py
 
-tmux・open・xdg-open・uname は PATH の先頭に置いた偽物に差し替え、呼ばれたら引数を記録する。
+tmux・open・xdg-open・uname（と leaf）は PATH の先頭に置いた偽物に差し替え、呼ばれたら引数を記録する。
 """
 
 import os
@@ -32,8 +32,8 @@ class OpenLinkTest(unittest.TestCase):
         path.write_text(f"#!/bin/sh\n{body}\n")
         path.chmod(0o755)
 
-    def run_open_link(self, url):
-        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}")
+    def run_open_link(self, url, path=None):
+        env = dict(os.environ, PATH=path or f"{self.bin}:{os.environ['PATH']}")
         subprocess.run(["bash", str(OPEN_LINK), "client0", url], env=env, check=True)
 
     def calls(self, wait=False):
@@ -57,15 +57,35 @@ class OpenLinkTest(unittest.TestCase):
         self.run_open_link(f"file://{folder}")
         self.assertEqual(self.calls(wait=True), [f"xdg-open {folder}"])
 
-    def test_text_file_opens_in_popup_nvim(self):
-        text = self.tmp / "note.md"
-        text.write_text("hello\n")
-        self.run_open_link(f"file://{text}#L3")
+    def popup_call(self):
         calls = self.calls()
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].startswith("tmux display-popup "), calls[0])
         self.assertIn(f"-d {self.tmp}", calls[0])
-        self.assertTrue(calls[0].endswith(f"nvim +3 -- {text}"), calls[0])
+        return calls[0]
+
+    def test_text_file_opens_in_popup_nvim(self):
+        text = self.tmp / "note.txt"
+        text.write_text("hello\n")
+        self.run_open_link(f"file://{text}#L3")
+        call = self.popup_call()
+        self.assertTrue(call.endswith(f"nvim +3 -- {text}"), call)
+
+    def test_markdown_opens_in_popup_leaf(self):
+        self.stub("leaf", "exit 0")
+        text = self.tmp / "my note.md"
+        text.write_text("# hello\n")
+        self.run_open_link("file://" + str(text).replace(" ", "%20") + "#L3")
+        call = self.popup_call()
+        self.assertTrue(call.endswith(f"leaf --watch -- {text}"), call)
+
+    def test_markdown_without_leaf_falls_back_to_nvim(self):
+        # PATH から leaf を外す。偽物の bin と、tmux などが要る標準のディレクトリだけにする。
+        text = self.tmp / "note.md"
+        text.write_text("# hello\n")
+        self.run_open_link(f"file://{text}#L3", path=f"{self.bin}:/usr/bin:/bin")
+        call = self.popup_call()
+        self.assertTrue(call.endswith(f"nvim +3 -- {text}"), call)
 
     def test_binary_file_opens_with_system_opener(self):
         image = self.tmp / "a.png"

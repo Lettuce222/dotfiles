@@ -10,6 +10,8 @@ ghq = "latest"
 lazygit = "latest"
 gh = "latest"
 marksman = "latest"
+# Markdown のターミナルビューア。tmux の file:// リンクで .md を開くのに使う。
+"github:rivolink/leaf" = "latest"
 go = "latest"
 delta = "latest"
 eza = "latest"

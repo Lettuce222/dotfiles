@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # tmux のマウスバインドから呼ばれ、ペイン内の OSC 8 ハイパーリンクを開く。
+#   file:// の Markdown（.md）        → tmux display-popup の中で leaf で開く（leaf が無ければ nvim）
 #   file:// のテキスト               → tmux display-popup の中で nvim で開く
 #   file:// のディレクトリ           → OS の既定の opener（macOS なら Finder）
 #   file:// のテキストでないファイル  → OS の既定の opener（画像ならプレビューなど）
@@ -79,9 +80,21 @@ case $url in
       exit 0
     fi
 
-    set -- nvim
-    [ -n "$line" ] && set -- "$@" "+$line"
-    set -- "$@" -- "$path"
+    case $path in
+      *.md | *.markdown) viewer=leaf ;;
+      *) viewer=nvim ;;
+    esac
+    # leaf が入っていないマシンでは nvim に戻す。
+    [ "$viewer" = leaf ] && ! command -v leaf >/dev/null 2>&1 && viewer=nvim
+
+    if [ "$viewer" = leaf ]; then
+      # leaf は行を指定して開けないので #L は使わない。--watch で書き換えに追従する。
+      set -- leaf --watch -- "$path"
+    else
+      set -- nvim
+      [ -n "$line" ] && set -- "$@" "+$line"
+      set -- "$@" -- "$path"
+    fi
     tmux display-popup -c "$client" -E -w 90% -h 90% -d "$dir" \
       -T " $(basename -- "$path") " "$@"
     ;;
