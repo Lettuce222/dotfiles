@@ -202,8 +202,9 @@ create_claude_symlinks() {
     for file in "$claude_config_dir"/*; do
         if [ -f "$file" ]; then
             filename=$(basename "$file")
+            # Backups (*.bak, *.bak.<timestamp>) stay in the checkout.
             case "$filename" in
-                settings.json|settings.local.json) continue ;;
+                settings.json|settings.local.json|*.bak|*.bak.*) continue ;;
             esac
             place_link "$file" "$HOME/.claude/$filename"
             # Make shell scripts executable

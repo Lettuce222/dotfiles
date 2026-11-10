@@ -187,6 +187,14 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertIn(f"skip: {dest} was changed outside install.sh", r.stdout)
         self.assertIn("    - enabledPlugins", r.stdout)
 
+    def test_does_not_link_backups(self):
+        claude = self.repo / "configs" / "claude"
+        (claude / "settings.local.json.bak.20261110142011").write_text("{}")
+        (claude / "statusline.sh.bak").write_text("")
+        self.run_install("--links-only")
+        self.assertEqual(sorted(p.name for p in (self.home / ".claude").glob("*.bak*")), [])
+        self.assertTrue((self.home / ".claude" / "statusline.sh").is_symlink())
+
     def test_replaces_old_settings_symlink(self):
         (self.home / ".claude").mkdir()
         (self.home / ".claude" / "settings.json").symlink_to(self.repo / "configs" / "claude" / "settings.json")
@@ -306,6 +314,28 @@ class RepositoryLayoutTest(unittest.TestCase):
             ["git", "-C", str(root), "check-ignore", "-q", "--no-index", "configs/git/ignore"], check=False
         )
         self.assertEqual(r.returncode, 0, "configs/git/ignore must be gitignored")
+
+    def test_backups_next_to_config_files_are_not_tracked(self):
+        root = INSTALL_SH.parent
+        r = subprocess.run(
+            [
+                "git", "-C", str(root), "check-ignore", "-q", "--no-index",
+                "configs/claude/settings.local.json.bak.20261110142011",
+            ],
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, "*.bak.<timestamp> must be gitignored")
+
+    def test_hook_scripts_are_executable_in_git(self):
+        # install.sh chmod +x every hook; a 100644 hook leaves a mode change in the checkout.
+        root = INSTALL_SH.parent
+        r = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-s", "--", "configs/agent/hooks"],
+            capture_output=True, text=True, check=True,
+        )
+        modes = {line.split("\t")[1]: line.split()[0] for line in r.stdout.splitlines()}
+        self.assertTrue(modes)
+        self.assertEqual({path: mode for path, mode in modes.items() if mode != "100755"}, {})
 
 
 if __name__ == "__main__":

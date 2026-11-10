@@ -38,5 +38,7 @@ configs/textlint/node_modules/
 # Python bytecode (tests under configs/)
 __pycache__/
 
-# Backup files
+# Backup files (*.bak.<timestamp>: backups that tools write next to the file
+# they rewrite, e.g. configs/claude/settings.local.json.bak.20261110142011)
 *.bak
+*.bak.*
