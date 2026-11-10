@@ -38,7 +38,7 @@ Usage:
       worker の節（下の「worker の節」を参照）と、その下に全案件の TODO を急ぐ順に並べた一覧
       （下の「TODO の一覧」を参照）と、案件の索引を描く。--by-case なら、TODO の一覧の代わりに
       案件ごとに全部の節を描く（前の表示）。--once が無ければ、
-      ファイルの変化と端末の大きさの変化と worker の変化（THREAD_POLL 秒ごと）を見て描き直し続ける。
+      ファイルの変化と端末の大きさの変化と worker の変化（WORKER_POLL 秒ごと）を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
       このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
@@ -513,14 +513,14 @@ LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", SCHEDULE: 
 
 # worker の状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
 # 答えを待って止まっている（確認ダイアログ・窓口の番）は TODO と、動いているは Waiting と、完了は Later の緑とそろえる。
-THREAD_STATE = {
+WORKER_STATE = {
     "blocked": ("⏸", STYLE[MINE]),
     "dialog": ("⏸", STYLE[MINE]),
     "working": ("⟳", STYLE[WAITING]),
     "done": ("✔", STYLE[LATER]),
 }
-THREAD_ORDER = ("dialog", "blocked", "working", "done")  # これ以外（stopped、failed など）は出さない
-THREADS_TITLE = "worker"
+WORKER_ORDER = ("dialog", "blocked", "working", "done")  # これ以外（stopped、failed など）は出さない
+WORKERS_TITLE = "worker"
 
 INLINE_RE = re.compile(
     r"\[(?P<lt>[^\]]+)\]\((?P<lu>[^)\s]+)\)"  # [text](url)
@@ -670,14 +670,14 @@ def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
 
 # ---------------------------------------------------------------- worker
 
-THREAD_POLL = 5  # 秒。claude agents は 0.2 秒ほどで返るが、毎秒は呼ばない
-HIDDEN_THREADS = ("chore-hub-watch",)
+WORKER_POLL = 5  # 秒。claude agents は 0.2 秒ほどで返るが、毎秒は呼ばない
+HIDDEN_WORKERS = ("chore-hub-watch",)
 
 
 @dataclass(frozen=True)
-class Thread:
+class Worker:
     name: str
-    state: str  # THREAD_STATE のキー
+    state: str  # WORKER_STATE のキー
     summary: str
     cwd: str | None = None
     started: int = 0
@@ -702,7 +702,7 @@ def one_line(text) -> str:
     return " ".join(text.split()) if isinstance(text, str) else ""
 
 
-def thread_summary(state: str, job: dict) -> str:
+def worker_summary(state: str, job: dict) -> str:
     if state == "done":  # 完了は名前だけを出す
         return ""
     for key in ("needs", "detail") if state == "blocked" else ("detail",):
@@ -715,10 +715,10 @@ def thread_summary(state: str, job: dict) -> str:
     return intent
 
 
-def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
-    """`claude agents --json --all` の出力から、出す worker（THREAD_ORDER の状態のもの）を並べる。"""
-    hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_THREADS}
-    threads = []
+def parse_workers(agents, job_state_fn=job_state) -> list[Worker]:
+    """`claude agents --json --all` の出力から、出す worker（WORKER_ORDER の状態のもの）を並べる。"""
+    hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_WORKERS}
+    workers = []
     for a in agents if isinstance(agents, list) else []:
         if not isinstance(a, dict) or a.get("kind") != "background":
             continue
@@ -727,22 +727,22 @@ def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
             continue
         state = a.get("state") or a.get("status") or "?"
         job = job_state_fn(a.get("id"))
-        summary = thread_summary(state, job)
+        summary = worker_summary(state, job)
         if a.get("waitingFor"):
             state = "dialog"
             summary = f"{a['waitingFor']}: {summary}" if summary else a["waitingFor"]
-        if state not in THREAD_ORDER:
+        if state not in WORKER_ORDER:
             continue
         started = a.get("startedAt")
-        threads.append(
-            Thread(name, state, summary, a.get("cwd"), started if isinstance(started, int) else 0)
+        workers.append(
+            Worker(name, state, summary, a.get("cwd"), started if isinstance(started, int) else 0)
         )
-    rank = {s: i for i, s in enumerate(THREAD_ORDER)}
-    threads.sort(key=lambda t: (rank.get(t.state, len(rank)), -t.started))
-    return threads
+    rank = {s: i for i, s in enumerate(WORKER_ORDER)}
+    workers.sort(key=lambda t: (rank.get(t.state, len(rank)), -t.started))
+    return workers
 
 
-def fetch_threads() -> list[Thread] | None:
+def fetch_workers() -> list[Worker] | None:
     """いまの worker。claude agents が呼べなければ None。"""
     claude = shutil.which("claude")
     if not claude:
@@ -753,7 +753,7 @@ def fetch_threads() -> list[Thread] | None:
         )
         if proc.returncode != 0:
             return None
-        return parse_threads(json.loads(proc.stdout))
+        return parse_workers(json.loads(proc.stdout))
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
@@ -779,15 +779,15 @@ def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
     return line
 
 
-def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
+def worker_rows(workers: list[Worker] | None, width: int, jira: str | None):
     """worker の節の行。"""
-    if threads is None:
-        return [[(f"{THREADS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
-    if not threads:
+    if workers is None:
+        return [[(f"{WORKERS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
+    if not workers:
         return []
-    rows = [[(THREADS_TITLE, STYLE["title"], None)]]
-    for t in threads:
-        mark, style = THREAD_STATE[t.state]
+    rows = [[(WORKERS_TITLE, STYLE["title"], None)]]
+    for t in workers:
+        mark, style = WORKER_STATE[t.state]
         url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
         rows.append(
             clip(
@@ -905,23 +905,23 @@ def render(
     d: Path,
     width: int,
     height: int,
-    threads: list[Thread] | None = (),
+    workers: list[Worker] | None = (),
     by_case: bool = False,
     today: dt.date | None = None,
 ) -> list[str]:
     """worker の節と、TODO の一覧と案件の索引（by_case なら案件ごとの一覧）を描く。区切り線は出さない。
-    出す worker が無ければ worker の節を出さない。threads が None なのは読めなかったとき。"""
+    出す worker が無ければ worker の節を出さない。workers が None なのは読めなかったとき。"""
     width = max(width, 20)
     jira = jira_base()
     today = today or current_date()
     cases = load_cases(d)
     empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
-    active = None if threads is None else [t for t in threads if t.state != "done"]
+    active = None if workers is None else [t for t in workers if t.state != "done"]
 
     if by_case:
         cases.sort(key=sort_key)
         # 入りきらなければ、完了の worker、資料、Later、Waiting の次の手、の順に畳む。
-        layouts = [(threads, 0), *((active, level) for level in range(4))]
+        layouts = [(workers, 0), *((active, level) for level in range(4))]
 
         def build(level):
             return case_rows(cases, width, jira, level)
@@ -930,7 +930,7 @@ def render(
         items = todos(cases, today)
         sched = events(cases, today)
         # 入りきらなければ、完了の worker、予定、案件の索引、TODO の 2 行目から先、の順に畳む。
-        layouts = [(threads, 0), (active, 0), (active, 1), (active, 2), (active, 3)]
+        layouts = [(workers, 0), (active, 0), (active, 1), (active, 2), (active, 3)]
 
         def build(level):
             if not cases:
@@ -942,7 +942,7 @@ def render(
             return body + [[]] + index_rows(cases, d, width, folded=level >= 2)
 
     for shown, level in layouts:
-        head = thread_rows(shown, width, jira) + empty
+        head = worker_rows(shown, width, jira) + empty
         body = build(level)
         if len(head) + len(body) <= height:
             break
@@ -987,7 +987,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
 
     if once:
         w, h = size()
-        sys.stdout.write("\n".join(render(d, w, h, fetch_threads(), by_case)) + "\n")
+        sys.stdout.write("\n".join(render(d, w, h, fetch_workers(), by_case)) + "\n")
         return 0
 
     resized = [True]
@@ -996,7 +996,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
     out.write("\x1b[?25l")  # カーソルを隠す
     last = None
     code = seen = code_signature()
-    threads, polled = None, None
+    workers, polled = None, None
     try:
         while True:
             now_code = code_signature()
@@ -1007,14 +1007,14 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
                 os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
             seen = now_code
             w, h = size()
-            if polled is None or time.monotonic() - polled >= THREAD_POLL:
-                threads, polled = fetch_threads(), time.monotonic()
-            key = (signature(d), w, h, threads, current_date())  # 日付が変わると期日の出し方が変わる
+            if polled is None or time.monotonic() - polled >= WORKER_POLL:
+                workers, polled = fetch_workers(), time.monotonic()
+            key = (signature(d), w, h, workers, current_date())  # 日付が変わると期日の出し方が変わる
             if key != last or resized[0]:
                 resized[0] = False
                 last = key
                 try:
-                    lines = render(d, w, h, threads, by_case)
+                    lines = render(d, w, h, workers, by_case)
                 except Exception as e:  # 描けなくてもペインは閉じない
                     lines = [f"cases: 描けませんでした: {e}"]
                 out.write(screen(lines))

@@ -103,7 +103,7 @@ def body_files(command):
 # --- records ---------------------------------------------------------------
 
 
-def new_record(kind, ttl, note, thread=None, **fields):
+def new_record(kind, ttl, note, worker=None, **fields):
     now = time.time()
     return {
         "id": time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + "-" + uuid.uuid4().hex[:8],
@@ -111,22 +111,22 @@ def new_record(kind, ttl, note, thread=None, **fields):
         "created_at": now,
         "expires_at": now + ttl,
         "note": note or "",
-        "worker": thread or None,
+        "worker": worker or None,
         **fields,
     }
 
 
-def bash_record(command, ttl=DEFAULT_TTL, note="", thread=None):
+def bash_record(command, ttl=DEFAULT_TTL, note="", worker=None):
     files = {}
     for f in body_files(command):
         digest = sha_file(f)
         if digest is None:
             raise ValueError(f"本文のファイルが読めません: {f}")
         files[f] = digest
-    return new_record("bash", ttl, note, thread, command=command.strip(), files=files)
+    return new_record("bash", ttl, note, worker, command=command.strip(), files=files)
 
 
-def mcp_record(tool, params, body_file=None, body_key=None, ttl=DEFAULT_TTL, note="", thread=None):
+def mcp_record(tool, params, body_file=None, body_key=None, ttl=DEFAULT_TTL, note="", worker=None):
     if not isinstance(params, dict):
         raise ValueError("--params は JSON の object にする")
     if any(PROSE_KEY.match(k) for k in params):
@@ -135,7 +135,7 @@ def mcp_record(tool, params, body_file=None, body_key=None, ttl=DEFAULT_TTL, not
         if body_key is not None:
             raise ValueError("--body-key には --body-file も付ける")
         # A call without prose (a reaction, a status change).
-        return new_record("mcp", ttl, note, thread, tool=tool, params=params, body_key=None, body_sha256=None)
+        return new_record("mcp", ttl, note, worker, tool=tool, params=params, body_key=None, body_sha256=None)
     p = Path(body_file).expanduser()
     if not p.is_file():
         raise ValueError(f"本文のファイルが読めません: {body_file}")
@@ -145,7 +145,7 @@ def mcp_record(tool, params, body_file=None, body_key=None, ttl=DEFAULT_TTL, not
         "mcp",
         ttl,
         note,
-        thread,
+        worker,
         tool=tool,
         params=params,
         body_key=body_key,
@@ -272,7 +272,7 @@ def is_orchestrator(entry):
     return bool(entry) and entry.get("name") == orchestrator_name()
 
 
-def is_thread(entry):
+def is_worker(entry):
     """A background session other than the orchestrator: a worker it started."""
     return (
         bool(entry)
@@ -283,9 +283,9 @@ def is_thread(entry):
 
 def allowed_for(rec, entry):
     """Whether the session described by entry may use the record."""
-    thread = rec.get("worker") or rec.get("thread")  # "thread": records written before the rename
-    if thread:
-        return is_thread(entry) and entry.get("name") == thread
+    worker = rec.get("worker") or rec.get("thread")  # "thread": records written before the rename
+    if worker:
+        return is_worker(entry) and entry.get("name") == worker
     return is_orchestrator(entry)
 
 
@@ -326,8 +326,8 @@ def writer_is_orchestrator():
     return is_orchestrator(session_entry(os.environ.get("CLAUDE_CODE_SESSION_ID")))
 
 
-def known_thread(name):
-    return any(is_thread(a) and a.get("name") == name for a in agents(include_stopped=True))
+def known_worker(name):
+    return any(is_worker(a) and a.get("name") == name for a in agents(include_stopped=True))
 
 
 # --- CLI -------------------------------------------------------------------
@@ -346,7 +346,7 @@ def main(argv=None):
         p.add_argument(
             "--worker",
             "--thread",  # 名前を変える前の書き方。動いている窓口が古い決まりで書いても通す
-            dest="thread",
+            dest="worker",
             default=None,
             help="この記録を使える worker の名前（付けなければ窓口だけ）",
         )
@@ -369,18 +369,18 @@ def main(argv=None):
     if not writer_is_orchestrator():
         print("approvals.py: 承認の記録を書けるのは窓口（orchestrator）のセッションだけです", file=sys.stderr)
         return 3
-    if args.thread and not known_thread(args.thread):
+    if args.worker and not known_worker(args.worker):
         print(
-            f"approvals.py: worker が見つかりません: {args.thread}（claude agents --json --all の name を書く）",
+            f"approvals.py: worker が見つかりません: {args.worker}（claude agents --json --all の name を書く）",
             file=sys.stderr,
         )
         return 2
     try:
         if args.kind == "bash":
-            rec = bash_record(args.command, args.ttl, args.note, args.thread)
+            rec = bash_record(args.command, args.ttl, args.note, args.worker)
         else:
             rec = mcp_record(
-                args.tool, json.loads(args.params), args.body_file, args.body_key, args.ttl, args.note, args.thread
+                args.tool, json.loads(args.params), args.body_file, args.body_key, args.ttl, args.note, args.worker
             )
     except ValueError as e:
         print(f"approvals.py: {e}", file=sys.stderr)

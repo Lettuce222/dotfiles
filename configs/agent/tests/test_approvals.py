@@ -22,10 +22,10 @@ GATE = HOOKS / "approval-gate.py"
 APPROVALS = HOOKS / "approvals.py"
 
 ORCH = "sess-orchestrator"
-THREAD = "sess-thread"
-OTHER_THREAD = "sess-other-thread"
+WORKER = "sess-worker"
+OTHER_WORKER = "sess-other-worker"
 INTERACTIVE = "sess-interactive"
-THREAD_NAME = "impl-x-y"
+WORKER_NAME = "impl-x-y"
 SLACK = "mcp__slack__send_message"
 
 
@@ -41,8 +41,8 @@ class ApprovalTest(unittest.TestCase):
             json.dumps(
                 [
                     {"sessionId": ORCH, "name": "orchestrator", "kind": "background", "status": "busy"},
-                    {"sessionId": THREAD, "name": THREAD_NAME, "kind": "background", "status": "busy"},
-                    {"sessionId": OTHER_THREAD, "name": "impl-x-z", "kind": "background", "status": "busy"},
+                    {"sessionId": WORKER, "name": WORKER_NAME, "kind": "background", "status": "busy"},
+                    {"sessionId": OTHER_WORKER, "name": "impl-x-z", "kind": "background", "status": "busy"},
                     {"sessionId": INTERACTIVE, "name": "dotfiles-1a", "kind": "interactive", "status": "busy"},
                 ]
             )
@@ -91,7 +91,7 @@ class ApprovalTest(unittest.TestCase):
     def hook(self, tool_input, tool_name="Bash", session=ORCH):
         return self.run_hook(GUARD, [], tool_input, tool_name, session)
 
-    def gate(self, mode, tool_input, tool_name="Bash", session=THREAD):
+    def gate(self, mode, tool_input, tool_name="Bash", session=WORKER):
         return self.run_hook(GATE, [mode], tool_input, tool_name, session)
 
     def decision(self, r):
@@ -144,9 +144,9 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(self.decision(r), "ask")
         self.assertIn("変わりました", r.stdout)
 
-    def test_thread_session_cannot_use_the_record(self):
+    def test_worker_session_cannot_use_the_record(self):
         self.approve("bash", "--command", "gh pr ready 12")
-        r = self.hook({"command": "gh pr ready 12"}, session=THREAD)
+        r = self.hook({"command": "gh pr ready 12"}, session=WORKER)
         self.assertEqual(self.decision(r), "ask")
         self.assertIn("窓口", r.stdout)
         self.assertEqual(len(self.records()), 1)
@@ -220,7 +220,7 @@ class ApprovalTest(unittest.TestCase):
     # --- 記録を書けるのは窓口だけ ---
 
     def test_only_the_orchestrator_can_write_records(self):
-        for writer in (THREAD, INTERACTIVE, "sess-unknown"):
+        for writer in (WORKER, INTERACTIVE, "sess-unknown"):
             r = self.add("bash", "--command", "gh pr ready 12", writer=writer)
             self.assertEqual(r.returncode, 3, writer)
             self.assertIn("窓口", r.stderr)
@@ -234,7 +234,7 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(r.returncode, 3)
         self.assertEqual(self.records(), [])
 
-    def test_thread_name_must_exist(self):
+    def test_worker_name_must_exist(self):
         r = self.add("bash", "--command", "git push --force", "--worker", "impl-nope")
         self.assertEqual(r.returncode, 2)
         r = self.add("bash", "--command", "git push --force", "--worker", "orchestrator")
@@ -248,22 +248,22 @@ class ApprovalTest(unittest.TestCase):
             f"cp x.json {self.dir}/x.json",
         ]
         for cmd in cmds:
-            for session in (THREAD, INTERACTIVE):
+            for session in (WORKER, INTERACTIVE):
                 self.assertEqual(self.decision(self.gate("pre", {"command": cmd}, session=session)), "deny", cmd)
         write = {"file_path": str(self.dir / "x.json"), "content": "{}"}
-        self.assertEqual(self.decision(self.gate("pre", write, tool_name="Write", session=THREAD)), "deny")
+        self.assertEqual(self.decision(self.gate("pre", write, tool_name="Write", session=WORKER)), "deny")
         # 窓口では止めない。worker が記録を list するのも止めない
         r = self.gate("pre", {"command": cmds[0]}, session=ORCH)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
-        r = self.gate("pre", {"command": "python3 ~/.claude/hooks/approvals.py list"}, session=THREAD)
+        r = self.gate("pre", {"command": "python3 ~/.claude/hooks/approvals.py list"}, session=WORKER)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         other = {"file_path": str(Path(self.tmp.name) / "notes.md"), "content": "x"}
-        r = self.gate("pre", other, tool_name="Write", session=THREAD)
+        r = self.gate("pre", other, tool_name="Write", session=WORKER)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
     # --- worker の確認ダイアログ（PermissionRequest） ---
 
-    def test_thread_dialog_is_denied_with_guidance(self):
+    def test_worker_dialog_is_denied_with_guidance(self):
         r = self.gate("permission", {"command": "git push --force origin HEAD"})
         self.assertEqual(self.permission(r), "deny")
         message = json.loads(r.stdout)["hookSpecificOutput"]["decision"]["message"]
@@ -277,78 +277,78 @@ class ApprovalTest(unittest.TestCase):
             r = self.gate("permission", {"command": "git push --force origin HEAD"}, session=session)
             self.assertIsNone(self.permission(r), session)
 
-    def test_thread_record_allows_that_thread_once(self):
+    def test_worker_record_allows_that_worker_once(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", WORKER_NAME)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "allow")
         self.assertEqual(self.records(), [])
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
 
-    def test_thread_record_allows_in_pre_tool_use(self):
+    def test_worker_record_allows_in_pre_tool_use(self):
         cmd = "rm -rf build"
-        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", WORKER_NAME)
         self.assertEqual(self.decision(self.gate("pre", {"command": cmd})), "allow")
         self.assertEqual(self.records(), [])
         r = self.gate("pre", {"command": cmd})
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
-    def test_thread_record_is_not_for_other_sessions_or_commands(self):
+    def test_worker_record_is_not_for_other_sessions_or_commands(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
-        self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_THREAD)), "deny")
+        self.approve("bash", "--command", cmd, "--worker", WORKER_NAME)
+        self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_WORKER)), "deny")
         self.assertIsNone(self.permission(self.gate("permission", {"command": cmd}, session=ORCH)))
         self.assertIsNone(self.permission(self.gate("permission", {"command": cmd}, session=INTERACTIVE)))
-        r = self.gate("pre", {"command": cmd}, session=OTHER_THREAD)
+        r = self.gate("pre", {"command": cmd}, session=OTHER_WORKER)
         self.assertEqual(r.stdout, "")
         other = self.gate("permission", {"command": "git push --force origin main"})
         self.assertEqual(self.permission(other), "deny")
         self.assertEqual(len(self.records()), 1)
 
-    def test_orchestrator_record_is_not_for_threads(self):
+    def test_orchestrator_record_is_not_for_workers(self):
         cmd = "git push --force origin HEAD"
         self.approve("bash", "--command", cmd)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
         self.assertEqual(len(self.records()), 1)
 
-    def test_expired_thread_record_is_denied(self):
+    def test_expired_worker_record_is_denied(self):
         cmd = "git push --force origin HEAD"
-        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME, "--ttl", "1")
+        self.approve("bash", "--command", cmd, "--worker", WORKER_NAME, "--ttl", "1")
         time.sleep(1.2)
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
         self.assertEqual(self.records(), [])
 
-    def test_thread_gh_write_with_record_is_allowed_by_the_guard(self):
+    def test_worker_gh_write_with_record_is_allowed_by_the_guard(self):
         cmd = f"gh pr comment 12 --body-file {self.draft}"
-        self.approve("bash", "--command", cmd, "--worker", THREAD_NAME)
+        self.approve("bash", "--command", cmd, "--worker", WORKER_NAME)
         # gh の書き込みは external-post-guard.py が記録を使う。gate の pre は触らない
         r = self.gate("pre", {"command": cmd})
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         self.assertEqual(len(self.records()), 1)
-        self.assertEqual(self.decision(self.hook({"command": cmd}, session=THREAD)), "allow")
+        self.assertEqual(self.decision(self.hook({"command": cmd}, session=WORKER)), "allow")
         self.assertEqual(self.records(), [])
 
-    def test_thread_gh_write_without_record_asks_then_is_denied(self):
+    def test_worker_gh_write_without_record_asks_then_is_denied(self):
         cmd = f"gh pr comment 12 --body-file {self.draft}"
-        self.assertEqual(self.decision(self.hook({"command": cmd}, session=THREAD)), "ask")
+        self.assertEqual(self.decision(self.hook({"command": cmd}, session=WORKER)), "ask")
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "deny")
 
     def test_old_thread_option_and_record_still_work(self):
         # 名前を変える前の --thread と、"thread" の key で書かれた記録も通す
         cmd = "git push --force origin HEAD"
-        path = self.approve("bash", "--command", cmd, "--thread", THREAD_NAME)
+        path = self.approve("bash", "--command", cmd, "--thread", WORKER_NAME)
         rec = json.loads(path.read_text())
-        self.assertEqual(rec["worker"], THREAD_NAME)
+        self.assertEqual(rec["worker"], WORKER_NAME)
         self.assertNotIn("thread", rec)
         rec["thread"] = rec.pop("worker")
         path.write_text(json.dumps(rec))
-        self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_THREAD)), "deny")
+        self.assertEqual(self.permission(self.gate("permission", {"command": cmd}, session=OTHER_WORKER)), "deny")
         self.assertEqual(self.permission(self.gate("permission", {"command": cmd})), "allow")
         self.assertEqual(self.records(), [])
 
-    def test_thread_mcp_record_without_body(self):
+    def test_worker_mcp_record_without_body(self):
         tool = "mcp__slack__add_reaction"
         params = {"channel_id": "C1", "timestamp": "1.2", "name": "eyes"}
-        self.approve("mcp", "--tool", tool, "--params", json.dumps(params), "--worker", THREAD_NAME)
+        self.approve("mcp", "--tool", tool, "--params", json.dumps(params), "--worker", WORKER_NAME)
         self.assertEqual(self.permission(self.gate("permission", {**params, "name": "+1"}, tool_name=tool)), "deny")
         self.assertEqual(self.permission(self.gate("permission", params, tool_name=tool)), "allow")
         self.assertEqual(self.records(), [])

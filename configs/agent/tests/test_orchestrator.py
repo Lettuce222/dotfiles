@@ -17,28 +17,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "configs" / "agent" / "skills"
-THREAD = SKILLS / "agents-worker" / "SKILL.md"
-OLD_THREAD = SKILLS / "agents-thread" / "SKILL.md"
+WORKER = SKILLS / "agents-worker" / "SKILL.md"
+OLD_WORKER = SKILLS / "agents-thread" / "SKILL.md"
 ORCH = SKILLS / "agents-orchestrator" / "SKILL.md"
 FISH_FN = ROOT / "configs" / "fish" / "functions" / "orchestrator.fish"
 
 
 class SkillRulesTest(unittest.TestCase):
-    def test_thread_does_not_use_ask_user_question(self):
-        for line in THREAD.read_text(encoding="utf-8").splitlines():
+    def test_worker_does_not_use_ask_user_question(self):
+        for line in WORKER.read_text(encoding="utf-8").splitlines():
             if "AskUserQuestion" in line:
                 self.assertIn("使わない", line, line)
 
     def test_old_skill_name_defers_to_agents_worker(self):
         # 名前を変える前に起動した worker の /agents-thread を、agents-worker に回す
-        text = OLD_THREAD.read_text(encoding="utf-8")
+        text = OLD_WORKER.read_text(encoding="utf-8")
         self.assertIn("name: agents-thread", text)
         self.assertIn("disable-model-invocation: true", text)
         self.assertIn("Skill ツールで `agents-worker` を読み込み", text)
         self.assertNotIn("/agents-thread", ORCH.read_text(encoding="utf-8"))
 
-    def test_thread_reports_decisions_to_orchestrator(self):
-        text = THREAD.read_text(encoding="utf-8")
+    def test_worker_reports_decisions_to_orchestrator(self):
+        text = WORKER.read_text(encoding="utf-8")
         self.assertIn("要判断", text)
         self.assertIn("窓口で問いに答える", text)
         self.assertNotIn("一覧で", text)
@@ -52,8 +52,8 @@ class SkillRulesTest(unittest.TestCase):
         self.assertNotIn("右下", text)
         self.assertNotIn("右上", text)
 
-    def test_thread_checks_drafts_before_reporting(self):
-        text = THREAD.read_text(encoding="utf-8")
+    def test_worker_checks_drafts_before_reporting(self):
+        text = WORKER.read_text(encoding="utf-8")
         self.assertIn("external-post-guard.py --check <下書き>", text)
         self.assertIn("このチェックの手順は、報告に書かない", text)
 
@@ -65,15 +65,15 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("形式の直しのことは書かず", section)
 
 
-    def test_thread_asks_orchestrator_to_approve_runs(self):
-        text = THREAD.read_text(encoding="utf-8")
+    def test_worker_asks_orchestrator_to_approve_runs(self):
+        text = WORKER.read_text(encoding="utf-8")
         section = text.split("## 実行の承認を求める", 1)[1].split("\n## ", 1)[0]
         self.assertIn("要判断", section)
         self.assertIn("1 文字も変えずに実行し直す", section)
         self.assertIn("コマンドの全文", section)
         self.assertNotIn("窓口が `claude agents --json` で気づいて", text)
 
-    def test_orchestrator_approves_thread_runs_without_attach(self):
+    def test_orchestrator_approves_worker_runs_without_attach(self):
         text = ORCH.read_text(encoding="utf-8")
         section = text.split("### worker の実行を承認する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
         self.assertIn("AskUserQuestion", section)

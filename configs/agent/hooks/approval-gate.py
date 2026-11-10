@@ -95,7 +95,7 @@ def shown(tool_name, tool_input):
     return f"{tool_name}: {text}"
 
 
-def thread_guidance(tool_name, tool_input, why):
+def worker_guidance(tool_name, tool_input, why):
     lines = [
         "worker では確認ダイアログに答える人がいないので、この操作を止めました。",
         f"止めた操作: {shown(tool_name, tool_input)}",
@@ -119,10 +119,10 @@ def on_permission(data):
     if record:
         emit("PermissionRequest", {"decision": {"behavior": "allow"}})
         return 0
-    if approvals.is_thread(approvals.session_entry(data.get("session_id"))):
+    if approvals.is_worker(approvals.session_entry(data.get("session_id"))):
         emit(
             "PermissionRequest",
-            {"decision": {"behavior": "deny", "message": thread_guidance(tool_name, tool_input, why)}},
+            {"decision": {"behavior": "deny", "message": worker_guidance(tool_name, tool_input, why)}},
         )
     return 0
 

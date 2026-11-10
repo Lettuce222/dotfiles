@@ -2,7 +2,7 @@
 
 実行: python3 -m unittest configs/agent/tests/test_cases.py
 
-gh は呼ばない（sweep には PR の状態を返す関数を渡す）。claude agents も呼ばない（fetch_threads を差し替える）。
+gh は呼ばない（sweep には PR の状態を返す関数を渡す）。claude agents も呼ばない（fetch_workers を差し替える）。
 """
 
 import importlib.util
@@ -20,7 +20,7 @@ spec = importlib.util.spec_from_file_location("cases", SCRIPT)
 cases = importlib.util.module_from_spec(spec)
 sys.modules["cases"] = cases  # dataclass が自分のモジュールを引くため
 spec.loader.exec_module(cases)
-REAL_FETCH_THREADS = cases.fetch_threads
+REAL_FETCH_WORKERS = cases.fetch_workers
 
 PR1 = "https://github.com/o/r/pull/1"
 PR2 = "https://github.com/o/r/pull/2"
@@ -63,8 +63,8 @@ class Base(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"AGENT_ORCHESTRATOR_HOME": self.tmp.name})
         env.start()
         self.addCleanup(env.stop)
-        fetch = mock.patch.object(cases, "fetch_threads", return_value=[])
-        self.fetch_threads = fetch.start()
+        fetch = mock.patch.object(cases, "fetch_workers", return_value=[])
+        self.fetch_workers = fetch.start()
         self.addCleanup(fetch.stop)
 
     def tearDown(self):
@@ -359,16 +359,16 @@ class BoardReloadTest(Base):
 
         self.assertEqual(self.run_board(3, touch), 2)
 
-    def test_redraws_when_threads_change(self):
+    def test_redraws_when_workers_change(self):
         self.write()
-        self.fetch_threads.side_effect = [
-            [cases.Thread("impl-a", "working", "直している")],
-            [cases.Thread("impl-a", "blocked", "決めてほしい")],
-            [cases.Thread("impl-a", "blocked", "決めてほしい")],
+        self.fetch_workers.side_effect = [
+            [cases.Worker("impl-a", "working", "直している")],
+            [cases.Worker("impl-a", "blocked", "決めてほしい")],
+            [cases.Worker("impl-a", "blocked", "決めてほしい")],
         ]
-        with mock.patch.object(cases, "THREAD_POLL", 0):
+        with mock.patch.object(cases, "WORKER_POLL", 0):
             self.assertEqual(self.run_board(3), 2)
-        self.assertEqual(self.fetch_threads.call_count, 3)
+        self.assertEqual(self.fetch_workers.call_count, 3)
 
 
 AGENTS = [
@@ -398,19 +398,19 @@ JOBS = {
 }
 
 
-class ThreadsTest(Base):
+class WorkersTest(Base):
     def parse(self, agents=AGENTS):
-        return cases.parse_threads(agents, lambda i: JOBS.get(i, {}))
+        return cases.parse_workers(agents, lambda i: JOBS.get(i, {}))
 
     def test_hides_orchestrator_watch_and_interactive(self):
         names = [t.name for t in self.parse()]
         self.assertEqual(names, ["impl-dialog", "impl-blocked", "impl-new", "impl-old", "research-done"])
 
-    def test_done_thread_has_no_summary(self):
+    def test_done_worker_has_no_summary(self):
         by = {t.name: t for t in self.parse()}
         self.assertEqual((by["research-done"].state, by["research-done"].summary), ("done", ""))
 
-    def test_hides_threads_of_other_states(self):
+    def test_hides_workers_of_other_states(self):
         other = [{"id": "x", "kind": "background", "name": "impl-x", "state": "failed"}]
         self.assertEqual(self.parse(other), [])
 
@@ -427,9 +427,9 @@ class ThreadsTest(Base):
         self.assertEqual(by["impl-dialog"].state, "dialog")
         self.assertEqual(by["impl-dialog"].summary, "permission prompt: gh api を呼ぶ")
 
-    def test_bad_input_gives_no_threads(self):
-        self.assertEqual(cases.parse_threads({"not": "a list"}), [])
-        self.assertEqual(cases.parse_threads([1, None, "x"]), [])
+    def test_bad_input_gives_no_workers(self):
+        self.assertEqual(cases.parse_workers({"not": "a list"}), [])
+        self.assertEqual(cases.parse_workers([1, None, "x"]), [])
 
     def test_job_state_reads_state_json(self):
         job = Path(self.tmp.name) / "claude" / "jobs" / "abc"
@@ -442,7 +442,7 @@ class ThreadsTest(Base):
             self.assertEqual(cases.job_state(None), {})
 
     def test_fetch_failures_return_none(self):
-        real = REAL_FETCH_THREADS  # Base が差し替える前の本物
+        real = REAL_FETCH_WORKERS  # Base が差し替える前の本物
         ok = mock.Mock(returncode=0, stdout="[]")
         with mock.patch.object(cases.shutil, "which", return_value="/bin/claude"):
             with mock.patch.object(cases.subprocess, "run", return_value=ok):
@@ -462,7 +462,7 @@ class ThreadsTest(Base):
         self.assertEqual(lines[0], "worker")
         self.assertEqual(lines[1], " ⏸ impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
-        spin = cases.THREAD_STATE["working"][0]
+        spin = cases.WORKER_STATE["working"][0]
         self.assertIn(f" {spin} impl-new", lines)
         self.assertIn(f" {spin} impl-old", lines)
         self.assertIn(" ✔ research-done", lines)
@@ -473,43 +473,43 @@ class ThreadsTest(Base):
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
         self.assertIn(f"{cases.STYLE[cases.MINE]}⏸ {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.THREAD_STATE["working"][0]} {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.WORKER_STATE["working"][0]} {cases.RESET}", out)
         self.assertIn(f"{cases.STYLE[cases.LATER]}✔ {cases.RESET}", out)
         for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
             self.assertNotIn(word, out)
         self.assertIn("\x1b]8;;file:///tmp/r2\x1b\\", out)
 
     def test_stopped_working_and_done_look_different(self):
-        looks = {cases.THREAD_STATE[s] for s in ("blocked", "working", "done")}
+        looks = {cases.WORKER_STATE[s] for s in ("blocked", "working", "done")}
         self.assertEqual(len(looks), 3)
-        self.assertEqual(cases.THREAD_STATE["dialog"], cases.THREAD_STATE["blocked"])
+        self.assertEqual(cases.WORKER_STATE["dialog"], cases.WORKER_STATE["blocked"])
 
     def test_marks_are_one_column_wide(self):
-        for mark in (m for m, _ in cases.THREAD_STATE.values()):
+        for mark in (m for m, _ in cases.WORKER_STATE.values()):
             self.assertEqual(cases.char_width(mark), 1, mark)
 
     def test_working_mark_is_a_fixed_icon(self):
-        t = [cases.Thread("impl-a", "working", "")]
+        t = [cases.Worker("impl-a", "working", "")]
         self.assertEqual(plain(cases.render(self.dir, 60, 100, t)[1]), " ⟳ impl-a")
 
     def test_screen_overwrites_without_clearing_first(self):
         self.assertEqual(cases.screen(["a", "b"]), "\x1b[Ha\x1b[K\r\nb\x1b[K\x1b[J")
 
-    def test_done_threads_fold_first(self):
+    def test_done_workers_fold_first(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
-        threads = [cases.Thread("impl-a", "working", ""), cases.Thread("old", "done", "")]
-        tall = [plain(l) for l in cases.render(self.dir, 60, 100, threads)]
+        workers = [cases.Worker("impl-a", "working", ""), cases.Worker("old", "done", "")]
+        tall = [plain(l) for l in cases.render(self.dir, 60, 100, workers)]
         self.assertIn(" ✔ old", tall)
-        short = [plain(l) for l in cases.render(self.dir, 60, len(tall) - 1, threads)]
+        short = [plain(l) for l in cases.render(self.dir, 60, len(tall) - 1, workers)]
         self.assertNotIn(" ✔ old", short)
         self.assertIn(" 1. [私の番] やる", short)
 
-    def test_no_section_without_threads(self):
+    def test_no_section_without_workers(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, [])]
         self.assertEqual(lines[0], "▶ TODO")
 
-    def test_no_section_when_no_thread_is_shown(self):
+    def test_no_section_when_no_worker_is_shown(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         done = [{"id": "x", "kind": "background", "name": "impl-x", "state": "stopped"}]
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse(done))]
@@ -523,7 +523,7 @@ class ThreadsTest(Base):
         self.assertIn(" 私の番", lines)
 
     def test_long_lines_are_clipped_to_one_line(self):
-        long = [cases.Thread("impl-" + "x" * 40, "working", "とても長い説明" * 10)]
+        long = [cases.Worker("impl-" + "x" * 40, "working", "とても長い説明" * 10)]
         lines = [plain(l) for l in cases.render(self.dir, 30, 100, long)]
         # 節の名前、名前、説明、空行、案件はありません
         self.assertEqual(len(lines), 5)
@@ -533,8 +533,8 @@ class ThreadsTest(Base):
         self.assertTrue(lines[2].endswith("…"))
 
 
-def todo_lines(test, width=80, height=100, today=None, threads=()):
-    return [plain(l) for l in cases.render(test.dir, width, height, threads, today=today or TODAY)]
+def todo_lines(test, width=80, height=100, today=None, workers=()):
+    return [plain(l) for l in cases.render(test.dir, width, height, workers, today=today or TODAY)]
 
 
 TODAY = cases.dt.date(2026, 11, 10)  # 火曜
@@ -617,29 +617,29 @@ class TodoBoardTest(Base):
         for line in lines:
             self.assertLessEqual(cases.text_width(line), 30, line)
 
-    def test_folds_done_threads_then_index_then_wrapping(self):
+    def test_folds_done_workers_then_index_then_wrapping(self):
         self.write("a", "# A\n略称: A\n\n## TODO\n- " + "とても長い説明" * 6 + "\n- 短い\n")
         self.write("b", "# B\n\n## Later\n- あとで\n")
-        threads = [cases.Thread("impl-a", "working", ""), cases.Thread("old", "done", "")]
-        full = todo_lines(self, 30, 100, threads=threads)
+        workers = [cases.Worker("impl-a", "working", ""), cases.Worker("old", "done", "")]
+        full = todo_lines(self, 30, 100, workers=workers)
         self.assertIn(" ✔ old", full)
         self.assertIn("案件", full)
 
-        no_done = todo_lines(self, 30, len(full) - 1, threads=threads)
+        no_done = todo_lines(self, 30, len(full) - 1, workers=workers)
         self.assertNotIn(" ✔ old", no_done)
         self.assertIn("案件", no_done)
 
-        folded = todo_lines(self, 30, len(no_done) - 1, threads=threads)
+        folded = todo_lines(self, 30, len(no_done) - 1, workers=workers)
         self.assertIn("案件 2 件", folded)
         self.assertTrue(any(l.startswith("    ") for l in folded))  # まだ折り返している
 
-        clipped = todo_lines(self, 30, len(folded) - 1, threads=threads)
+        clipped = todo_lines(self, 30, len(folded) - 1, workers=workers)
         self.assertTrue([l for l in clipped if l.startswith(" 1.")][0].endswith("…"))
         self.assertIn(" 2. [A] 短い", clipped)
         self.assertIn("案件 2 件", clipped)
         self.assertNotIn("… ほか", "\n".join(clipped))
 
-        cut = todo_lines(self, 30, 4, threads=threads)
+        cut = todo_lines(self, 30, 4, workers=workers)
         self.assertEqual(len(cut), 4)
         self.assertTrue(cut[-1].startswith("… ほか"))
 
