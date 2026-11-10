@@ -17,6 +17,10 @@ configs/fish/fish_variables
 # Claude - local settings (machine-specific)
 configs/claude/settings.local.json
 
+# mise - config.toml is written by the work Mac's Jamf policy (pmsec);
+# dotfiles' own settings live in config.local.toml, which mise reads with higher priority
+configs/mise/config.toml
+
 # Hammerspoon - personal layout configuration
 configs/hammerspoon/layouts.yml
 

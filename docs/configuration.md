@@ -7,6 +7,7 @@
 - Fish: `configs/fish/**/*.local.fish`（補完はファイル名がコマンド名と一致する必要があるため、`conf.d/*.local.fish`内で読み込む）
 - Fish function: `configs/fish/functions/local/*`
 - Claude Code: `configs/claude/settings.local.json`（仕事用のpluginなど。下の「Claude Codeのuser設定」を参照）
+- mise: `configs/mise/config.toml`（下の「miseの設定」を参照）
 
 ## Claude Codeのuser設定
 
@@ -24,6 +25,15 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 - Git: ローカルの絶対パスや鍵のファイル名など、マシン固有のgit設定（`user.signingkey`、`gpg.ssh.allowedSignersFile`など）は、追跡しない`~/.gitconfig`に書く。`~/.config/git`はディレクトリごと`configs/git`へのsymlinkなので、`git config --file ~/.config/git/config`で書くとリポジトリに入る。`git config --global`は、`~/.gitconfig`があればそこへ書く。共有してよい設定だけを`configs/git/config`に置く。
 - 試している段階のツール（Orcaなど）: 追跡しているファイルに書かず、`configs/fish/conf.d/*.local.fish`などgitignore済みのlocal設定に置く。正式に採用すると決めてから、追跡するファイルへ移す。
+
+## miseの設定
+
+`~/.config/mise`はディレクトリごと`configs/mise`へのsymlinkにしている。dotfilesで管理するmiseの設定は`configs/mise/config.local.toml`に書く。
+
+仕事用のMacでは、JamfのポリシーpmsecがmiseのGlobal設定`~/.config/mise/config.toml`に、出どころの検証（`github.slsa`、`aqua.cosign`など）の設定を20分ほどごとに書き込む。そこで`configs/mise/config.toml`はgitignoreし、この機械だけのファイルとしてJamfに任せる。miseは`config.local.toml`を`config.toml`より優先して読み、`[settings]`はkeyごとにまとめる。このため、Jamfの検証の設定はそのまま残り、同じkey（`minimum_release_age`など）はdotfilesの値が勝つ。Jamfが動かないUbuntuには`config.toml`が無く、`config.local.toml`だけを読む。
+
+- 設定を変えるときは`configs/mise/config.local.toml`を直接編集する。`mise use -g`は`config.toml`へ書くので、そのツールはdotfilesに入らない。
+- `config.toml`を手で書き換えない。次のpmsecの実行で書き戻される。
 
 ## リンクと設定だけを反映する
 
