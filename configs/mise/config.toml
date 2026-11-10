@@ -17,7 +17,9 @@ delta = "latest"
 eza = "latest"
 zoxide = "latest"
 node = "latest"
-python = "latest"
+# PyYAML などのライブラリは、どの版の python からも import できるよう、入れたときに pip で入れる。
+# pypi: の backend は CLI を別の venv に入れるので、ライブラリには合わない。
+python = { version = "latest", postinstall = '"$MISE_TOOL_INSTALL_PATH/bin/python3" -m pip install --quiet -r "$HOME/.config/mise/default-python-packages"' }
 
 # Linter/Formatter
 stylua = "latest"
@@ -32,4 +34,3 @@ yq = "latest"
 paranoid = true
 minimum_release_age = "7d"
 idiomatic_version_file_enable_tools = ["ruby", "node"]
-python.default_packages_file = "~/.config/mise/default-python-packages"
