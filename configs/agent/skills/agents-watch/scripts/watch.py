@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""見張りのスレッド（agents-watch）が新しい出来事を見つけるための、読むだけのスクリプト。
+"""見張りの worker（agents-watch）が新しい出来事を見つけるための、読むだけのスクリプト。
 
 GitHub へは `gh api graphql` で問い合わせるだけで、何も書き込まない。Python の標準ライブラリと gh だけで動かす。
 

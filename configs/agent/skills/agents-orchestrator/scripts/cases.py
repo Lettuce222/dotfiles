@@ -35,10 +35,10 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
 
 Usage:
   cases.py board [--once] [--width N] [--height N] [--by-case]
-      スレッドの節（下の「スレッドの節」を参照）と、その下に全案件の TODO を急ぐ順に並べた一覧
+      worker の節（下の「worker の節」を参照）と、その下に全案件の TODO を急ぐ順に並べた一覧
       （下の「TODO の一覧」を参照）と、案件の索引を描く。--by-case なら、TODO の一覧の代わりに
       案件ごとに全部の節を描く（前の表示）。--once が無ければ、
-      ファイルの変化と端末の大きさの変化とスレッドの変化（THREAD_POLL 秒ごと）を見て描き直し続ける。
+      ファイルの変化と端末の大きさの変化と worker の変化（THREAD_POLL 秒ごと）を見て描き直し続ける。
       リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
       このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
@@ -65,14 +65,14 @@ TODO の一覧:
   一覧の下の「案件」の節に、全案件を 1 行ずつ（見出しと、Waiting・Later・予定の件数）出す。見出しは
   案件のファイルへのリンクで、クリックすると Waiting・Later・資料を含む全文が開く。
   一覧の下の「予定」の節に、全案件の予定を日付の順に 1 行ずつ、薄い色で出す（番号は付けない）。
-  入りきらなければ、完了のスレッド、予定（1 行にまとめる）、案件の索引（1 行にまとめる）、
+  入りきらなければ、完了の worker、予定（1 行にまとめる）、案件の索引（1 行にまとめる）、
   TODO の 2 行目から先（1 行で切る）、の順に畳み、それでも入らなければ末尾を切る。
 
-スレッドの節:
-  `claude agents --json --all` の background のスレッドを、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
-  出すのは、確認ダイアログ・窓口の番・動いている・完了のスレッドだけ。stopped・failed などは出さず、出すものが無ければ節ごと出さない。
+worker の節:
+  `claude agents --json --all` の background の worker を、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
+  出すのは、確認ダイアログ・窓口の番・動いている・完了の worker だけ。stopped・failed などは出さず、出すものが無ければ節ごと出さない。
   状態は名前の左の印と色だけで表し、状態の名前は出さない。
-  完了のスレッドは名前だけを出し、ペインに入りきらなければ最初に畳む。
+  完了の worker は名前だけを出し、ペインに入りきらなければ最初に畳む。
   窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
   作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
   needs（止まったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
@@ -511,7 +511,7 @@ STYLE = {
 }
 LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", SCHEDULE: "◷ 予定", REFS: "資料"}
 
-# スレッドの状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
+# worker の状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
 # 答えを待って止まっている（確認ダイアログ・窓口の番）は TODO と、動いているは Waiting と、完了は Later の緑とそろえる。
 THREAD_STATE = {
     "blocked": ("⏸", STYLE[MINE]),
@@ -520,7 +520,7 @@ THREAD_STATE = {
     "done": ("✔", STYLE[LATER]),
 }
 THREAD_ORDER = ("dialog", "blocked", "working", "done")  # これ以外（stopped、failed など）は出さない
-THREADS_TITLE = "スレッド"
+THREADS_TITLE = "worker"
 
 INLINE_RE = re.compile(
     r"\[(?P<lt>[^\]]+)\]\((?P<lu>[^)\s]+)\)"  # [text](url)
@@ -668,7 +668,7 @@ def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
     return rows
 
 
-# ---------------------------------------------------------------- スレッド
+# ---------------------------------------------------------------- worker
 
 THREAD_POLL = 5  # 秒。claude agents は 0.2 秒ほどで返るが、毎秒は呼ばない
 HIDDEN_THREADS = ("chore-hub-watch",)
@@ -716,7 +716,7 @@ def thread_summary(state: str, job: dict) -> str:
 
 
 def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
-    """`claude agents --json --all` の出力から、出すスレッド（THREAD_ORDER の状態のもの）を並べる。"""
+    """`claude agents --json --all` の出力から、出す worker（THREAD_ORDER の状態のもの）を並べる。"""
     hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_THREADS}
     threads = []
     for a in agents if isinstance(agents, list) else []:
@@ -743,7 +743,7 @@ def parse_threads(agents, job_state_fn=job_state) -> list[Thread]:
 
 
 def fetch_threads() -> list[Thread] | None:
-    """いまのスレッド。claude agents が呼べなければ None。"""
+    """いまの worker。claude agents が呼べなければ None。"""
     claude = shutil.which("claude")
     if not claude:
         return None
@@ -780,7 +780,7 @@ def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
 
 
 def thread_rows(threads: list[Thread] | None, width: int, jira: str | None):
-    """スレッドの節の行。"""
+    """worker の節の行。"""
     if threads is None:
         return [[(f"{THREADS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
     if not threads:
@@ -909,8 +909,8 @@ def render(
     by_case: bool = False,
     today: dt.date | None = None,
 ) -> list[str]:
-    """スレッドの節と、TODO の一覧と案件の索引（by_case なら案件ごとの一覧）を描く。区切り線は出さない。
-    出すスレッドが無ければスレッドの節を出さない。threads が None なのは読めなかったとき。"""
+    """worker の節と、TODO の一覧と案件の索引（by_case なら案件ごとの一覧）を描く。区切り線は出さない。
+    出す worker が無ければ worker の節を出さない。threads が None なのは読めなかったとき。"""
     width = max(width, 20)
     jira = jira_base()
     today = today or current_date()
@@ -920,7 +920,7 @@ def render(
 
     if by_case:
         cases.sort(key=sort_key)
-        # 入りきらなければ、完了のスレッド、資料、Later、Waiting の次の手、の順に畳む。
+        # 入りきらなければ、完了の worker、資料、Later、Waiting の次の手、の順に畳む。
         layouts = [(threads, 0), *((active, level) for level in range(4))]
 
         def build(level):
@@ -929,7 +929,7 @@ def render(
     else:
         items = todos(cases, today)
         sched = events(cases, today)
-        # 入りきらなければ、完了のスレッド、予定、案件の索引、TODO の 2 行目から先、の順に畳む。
+        # 入りきらなければ、完了の worker、予定、案件の索引、TODO の 2 行目から先、の順に畳む。
         layouts = [(threads, 0), (active, 0), (active, 1), (active, 2), (active, 3)]
 
         def build(level):

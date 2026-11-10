@@ -1,7 +1,7 @@
 function orchestrator --description '窓口（claude -n orchestrator）と案件の一覧の window を開く'
     # 小さな窓口の構成。左に窓口の Claude Code、右に案件の一覧（ケースボード）を置く。
-    # スレッドとのやりとりは窓口に集約するので、claude agents のペインは置かない。
-    # 窓口の決まりはスキル agents-orchestrator に、スレッドの決まりは agents-thread に書く。
+    # worker とのやりとりは窓口に集約するので、claude agents のペインは置かない。
+    # 窓口の決まりはスキル agents-orchestrator に、worker の決まりは agents-thread に書く。
     set -l session orchestrator
     set -l name orchestrator
     set -l dir (test -n "$AGENT_ORCHESTRATOR_HOME"; and echo $AGENT_ORCHESTRATOR_HOME; or echo $HOME/hub)
@@ -15,7 +15,7 @@ function orchestrator --description '窓口（claude -n orchestrator）と案件
     test -f $env_file; and set prefix source (string escape -- $env_file)\;
 
     if not tmux has-session -t "=$session" 2>/dev/null
-        # スレッドとセッション間でメッセージを送り合うので、permission mode を auto で揃える
+        # worker とセッション間でメッセージを送り合うので、permission mode を auto で揃える
         set -l left fish -c (string join ' ' -- $prefix \
             claude -n $name --permission-mode auto (string escape -- /agents-orchestrator))
 

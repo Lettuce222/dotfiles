@@ -1,8 +1,8 @@
-"""orchestrator の構成と、窓口・スレッドのスキルの決まりのテスト。
+"""orchestrator の構成と、窓口・worker のスキルの決まりのテスト。
 
 実行: python3 -m unittest configs/agent/tests/test_orchestrator.py
 
-- スレッドは AskUserQuestion を使わず、やりとりを窓口に集約する。
+- worker は AskUserQuestion を使わず、やりとりを窓口に集約する。
 - orchestrator コマンドは claude agents のペインを開かず、窓口とケースボードの 2 枚にする。
   レイアウトは専用の tmux ソケット（-L）で確かめる。fish か tmux が無ければ飛ばす。
 """
@@ -36,8 +36,8 @@ class SkillRulesTest(unittest.TestCase):
 
     def test_orchestrator_relays_decisions(self):
         text = ORCH.read_text(encoding="utf-8")
-        self.assertIn("### スレッドの要判断を聞く", text)
-        self.assertIn("### スレッドがブロックしたとき", text)
+        self.assertIn("### worker の要判断を聞く", text)
+        self.assertIn("### worker がブロックしたとき", text)
         self.assertNotIn("代わりに答えない", text)
         self.assertNotIn("を開いて答える", text)
         self.assertNotIn("右下", text)
@@ -66,12 +66,12 @@ class SkillRulesTest(unittest.TestCase):
 
     def test_orchestrator_approves_thread_runs_without_attach(self):
         text = ORCH.read_text(encoding="utf-8")
-        section = text.split("### スレッドの実行を承認する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
+        section = text.split("### worker の実行を承認する", 1)[1].split("\n### ", 1)[0].split("\n## ", 1)[0]
         self.assertIn("AskUserQuestion", section)
-        self.assertIn("--thread <スレッド名>", section)
+        self.assertIn("--thread <worker 名>", section)
         self.assertIn("preview", section)
         self.assertNotIn("claude attach", text)
-        self.assertNotIn("そのスレッドを選んでダイアログに答えて", text)
+        self.assertNotIn("その worker を選んでダイアログに答えて", text)
 
     def test_orchestrator_shows_body_when_asking_approval(self):
         text = ORCH.read_text(encoding="utf-8")

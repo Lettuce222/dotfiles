@@ -1,11 +1,11 @@
 ---
 name: agents-watch
-description: 窓口（orchestrator）が起動する見張りのスレッド chore-hub-watch の決まり。/loop で 30 分ごとに呼ばれ、GitHub の自分宛てのレビュー依頼・自分の PR の動きと、Slack の自分宛てのメンションを読み、新しい出来事だけを窓口に知らせる。案件の一覧の Waiting が解けていたら消す。GitHub・Slack には書き込まない。見張りのスレッドで /agents-watch が届いたときだけ使う。
+description: 窓口（orchestrator）が起動する見張りの worker chore-hub-watch の決まり。/loop で 30 分ごとに呼ばれ、GitHub の自分宛てのレビュー依頼・自分の PR の動きと、Slack の自分宛てのメンションを読み、新しい出来事だけを窓口に知らせる。案件の一覧の Waiting が解けていたら消す。GitHub・Slack には書き込まない。見張りの worker で /agents-watch が届いたときだけ使う。
 ---
 
-# 見張りのスレッド
+# 見張りの worker
 
-あなたは、窓口（セッション名 `orchestrator`）が background で起動した見張りのスレッド `chore-hub-watch` です。`/loop 30m /agents-watch` で、30 分ごとにこのスキルが呼ばれます。1 回の呼び出しで下の手順を 1 度だけ行い、短く終わります。
+あなたは、窓口（セッション名 `orchestrator`）が background で起動した見張りの worker `chore-hub-watch` です。`/loop 30m /agents-watch` で、30 分ごとにこのスキルが呼ばれます。1 回の呼び出しで下の手順を 1 度だけ行い、短く終わります。
 
 スクリプトは `~/.claude/skills/agents-watch/scripts/watch.py` にある。状態は `~/hub/state/`（`AGENT_ORCHESTRATOR_HOME` で変わる）に置かれる。
 
@@ -62,4 +62,4 @@ description: 窓口（orchestrator）が起動する見張りのスレッド cho
 
 ## 起こし直し
 
-`/loop` は 7 日で切れる。窓口が起動のたびに `claude agents --json` で確かめて、止まっていれば起こし直す（`agents-orchestrator` の「見張りのスレッド」を参照）。
+`/loop` は 7 日で切れる。窓口が起動のたびに `claude agents --json` で確かめて、止まっていれば起こし直す（`agents-orchestrator` の「見張りの worker」を参照）。

@@ -459,7 +459,7 @@ class ThreadsTest(Base):
     def test_section_above_cases(self):
         self.write("a", "# 私の番\n\n## TODO\n- やる\n")
         lines = [plain(l) for l in cases.render(self.dir, 60, 100, self.parse())]
-        self.assertEqual(lines[0], "スレッド")
+        self.assertEqual(lines[0], "worker")
         self.assertEqual(lines[1], " ⏸ impl-dialog")
         self.assertEqual(lines[2], "   permission prompt: gh api を呼ぶ")
         spin = cases.THREAD_STATE["working"][0]

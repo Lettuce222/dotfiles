@@ -252,7 +252,7 @@ class ApprovalTest(unittest.TestCase):
                 self.assertEqual(self.decision(self.gate("pre", {"command": cmd}, session=session)), "deny", cmd)
         write = {"file_path": str(self.dir / "x.json"), "content": "{}"}
         self.assertEqual(self.decision(self.gate("pre", write, tool_name="Write", session=THREAD)), "deny")
-        # 窓口では止めない。スレッドが記録を list するのも止めない
+        # 窓口では止めない。worker が記録を list するのも止めない
         r = self.gate("pre", {"command": cmds[0]}, session=ORCH)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         r = self.gate("pre", {"command": "python3 ~/.claude/hooks/approvals.py list"}, session=THREAD)
@@ -261,7 +261,7 @@ class ApprovalTest(unittest.TestCase):
         r = self.gate("pre", other, tool_name="Write", session=THREAD)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
-    # --- スレッドの確認ダイアログ（PermissionRequest） ---
+    # --- worker の確認ダイアログ（PermissionRequest） ---
 
     def test_thread_dialog_is_denied_with_guidance(self):
         r = self.gate("permission", {"command": "git push --force origin HEAD"})
