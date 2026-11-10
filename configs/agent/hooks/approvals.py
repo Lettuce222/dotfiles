@@ -21,15 +21,15 @@ $AGENT_ORCHESTRATOR_HOME/state/approvals). A record is honored only when:
     session_id is looked up in `claude agents --json`:
       a record without --thread is for the orchestrator (the entry named
         "orchestrator", AGENT_ORCHESTRATOR_NAME);
-      a record with --thread <name> is for that background thread only, so
-        a thread can run an operation the user approved in the orchestrator
+      a record with --thread <name> is for that background worker only, so
+        a worker can run an operation the user approved in the orchestrator
         without a dialog nobody would answer.
 
 A matching record is deleted before the call runs, so it works once.
 
 Only the orchestrator writes records: `add` refuses unless the calling
 session (CLAUDE_CODE_SESSION_ID) is the orchestrator, and approval-gate.py
-denies tool calls from other sessions that would write records. Threads run as
+denies tool calls from other sessions that would write records. Workers run as
 the same user, so these checks catch mistakes; they are not a sandbox.
 
 CLI (run by the orchestrator):
@@ -273,7 +273,7 @@ def is_orchestrator(entry):
 
 
 def is_thread(entry):
-    """A background session other than the orchestrator: a thread it started."""
+    """A background session other than the orchestrator: a worker it started."""
     return (
         bool(entry)
         and entry.get("kind") == "background"
@@ -307,7 +307,7 @@ def take(tool_name, tool_input, session_id, directory=None, now=None):
     entry = session_entry(session_id)
     mine = [(p, r) for p, r in candidates if allowed_for(r, entry)]
     if not mine:
-        return None, "承認の記録は、窓口か記録に書いたスレッドのセッションでだけ使えます"
+        return None, "承認の記録は、窓口か記録に書いた worker のセッションでだけ使えます"
     for path, rec in mine:
         try:
             path.unlink()
@@ -343,7 +343,7 @@ def main(argv=None):
         p = kinds.add_parser(name)
         p.add_argument("--ttl", type=int, default=DEFAULT_TTL, help="有効な秒数（既定 1800）")
         p.add_argument("--note", default="", help="何を承認したか（ダイアログの代わりに記録に残す）")
-        p.add_argument("--thread", default=None, help="この記録を使えるスレッドの名前（付けなければ窓口だけ）")
+        p.add_argument("--thread", default=None, help="この記録を使える worker の名前（付けなければ窓口だけ）")
         if name == "bash":
             p.add_argument("--command", required=True, help="実行するコマンドそのもの")
         else:
@@ -365,7 +365,7 @@ def main(argv=None):
         return 3
     if args.thread and not known_thread(args.thread):
         print(
-            f"approvals.py: スレッドが見つかりません: {args.thread}（claude agents --json --all の name を書く）",
+            f"approvals.py: worker が見つかりません: {args.thread}（claude agents --json --all の name を書く）",
             file=sys.stderr,
         )
         return 2

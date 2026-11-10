@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Claude Code hook: route permission prompts of threads to the orchestrator.
+"""Claude Code hook: route permission prompts of workers to the orchestrator.
 
-Threads are background sessions (`claude --bg`) that the orchestrator started.
-Nobody watches their screen, so a permission dialog in a thread used to stall
+Workers are background sessions (`claude --bg`) that the orchestrator started.
+Nobody watches their screen, so a permission dialog in a worker used to stall
 it until the user attached to it. This hook makes such calls come back to the
-thread as a denial that tells it to ask the orchestrator, and lets the call
+worker as a denial that tells it to ask the orchestrator, and lets the call
 through once the user approved it there (approvals.py).
 
   approval-gate.py permission   (PermissionRequest: a dialog is about to show)
     - a one-shot record for this session matches the call -> allow, consume it
-    - the session is a thread -> deny, and tell the thread to report the call
+    - the session is a worker -> deny, and tell the worker to report the call
       as 「要判断」 to the orchestrator and rerun it unchanged once approved
     - otherwise (the orchestrator, sessions outside the orchestrator) -> no
       decision, the dialog shows as before
@@ -97,7 +97,7 @@ def shown(tool_name, tool_input):
 
 def thread_guidance(tool_name, tool_input, why):
     lines = [
-        "スレッドでは確認ダイアログに答える人がいないので、この操作を止めました。",
+        "worker では確認ダイアログに答える人がいないので、この操作を止めました。",
         f"止めた操作: {shown(tool_name, tool_input)}",
         "別の手で回り込まずに、「要判断」として窓口（orchestrator）に SendMessage で報告し、止まってください。"
         "報告には、実行しようとしたコマンドの全文（MCP ならツール名と引数）、目的、送る本文があればその下書きのファイルのリンクを書きます。",
