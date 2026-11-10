@@ -28,6 +28,8 @@ cd "$(ghq root)/github.com/Lettuce222/dotfiles" && ./install.sh
 
 ## 含まれる設定
 
+フォルダごとの役割とファイルの一覧は [`docs/overview.md`](docs/overview.md) を参照。
+
 - fish: シェル
 - git: バージョン管理
 - gh: GitHub CLI

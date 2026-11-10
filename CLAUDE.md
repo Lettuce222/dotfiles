@@ -6,6 +6,7 @@ macOS（仕事）と Ubuntu（プライベート）両方で使う個人用 dotf
 
 **必ず `configs/` 配下のソースを編集する。`~/.config/` 以下は symlink なので、そこを編集しても git で追跡されない。**
 
+- 全体像とファイルごとの役割は [`docs/overview.md`](docs/overview.md) にまとめる。ファイルやフォルダを足す・消す・役割を変えたら、そのページも直し、`python3 -m unittest tests/test_overview.py`を通す。
 - AI agent資産は個別にsymlinkされる。配線と管理境界は [`docs/agent-assets.md`](docs/agent-assets.md) を参照。
 - アプリ追加・per-machine設定・install規約は [`docs/configuration.md`](docs/configuration.md) を参照。
 
