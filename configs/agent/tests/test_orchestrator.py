@@ -65,19 +65,21 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("形式の直しのことは書かず", section)
 
 
-    def test_worker_commits_with_a_lone_git_commit(self):
-        # sandbox の除外は 1 本の git commit にしか当たらず、そのときだけ署名できる
+    def test_worker_keeps_commits_signed(self):
+        # 署名は外さない。止まったら報告する
         text = WORKER.read_text(encoding="utf-8")
         section = text.split("## コミット", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("別々の Bash", section)
-        self.assertIn("`git -C <dir> commit` は使わない", section)
-        self.assertIn("-F <ファイル>", section)
         self.assertIn("-c commit.gpgsign=false", section)
         self.assertIn("「ブロック」で報告", section)
-        self.assertIn("`git rebase`", section)
         self.assertIn("%G?", section)
         push = text.split("## push", 1)[1].split("\n## ", 1)[0]
-        self.assertNotIn("rebase し、`git push origin HEAD:main`", push)
+        self.assertIn("`origin/main` に rebase し", push)
+        self.assertIn("git merge-base --is-ancestor origin/main HEAD", push)
+
+    def test_agent_skills_do_not_assume_a_bash_sandbox(self):
+        # Bash の sandbox は入れていない。sandbox を前提にした手順を書かない
+        for path in (ORCH, WORKER):
+            self.assertNotIn("sandbox", path.read_text(encoding="utf-8"), path)
 
     def test_worker_asks_orchestrator_to_approve_runs(self):
         text = WORKER.read_text(encoding="utf-8")
@@ -111,8 +113,6 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("ユーザーに聞かず、提案もせずに", section)
         self.assertIn("方針が変わって", section)
         self.assertIn("案件に移す", section)
-        # パイプや && でつなぐと sandbox の中で動き、~/.claude/jobs に書けない
-        self.assertIn("1 本のコマンドで実行する", section)
         self.assertIn("`git worktree remove --force` は使わない", section)
         self.assertNotIn("AskUserQuestion", section)
         proposal = text.split("## 次の行動を提案する", 1)[1].split("\n## ", 1)[0]

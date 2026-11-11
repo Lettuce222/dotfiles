@@ -235,15 +235,11 @@ GitHub と Slack の新しい出来事は、見張りの worker `chore-hub-watch
 
 起動したときと、状況の一覧を出すときに、`claude agents --json --all` で `chore-hub-watch` を探す。動いていなければ（見つからない、`stopped`・`failed`・`done`）、起こし直す。
 
-次の 3 つを、`&&` でつながず 1 本ずつ別の Bash で実行する（sandbox の除外は 1 本のコマンドにしか当たらない）。
-
 ```sh
-mkdir -p ~/hub/workers/chore-hub-watch
-cd ~/hub/workers/chore-hub-watch
-claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
+mkdir -p ~/hub/workers/chore-hub-watch && cd ~/hub/workers/chore-hub-watch && claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 ```
 
-- 前の `chore-hub-watch` が残っていれば、`claude rm <id>` で消してから起動する（名前がぶつかるため）。`claude rm` は 1 本のコマンドで実行する（下の「片付け」）。
+- 前の `chore-hub-watch` が残っていれば、`claude rm <id>` で消してから起動する（名前がぶつかるため）。
 - `notify_when_idle` は送らない。見張りは 30 分ごとに止まるので、知らせが毎回来てしまう。
 - 起こし直したことはユーザーに伝えない。見張りが「ブロック」を知らせてきたときだけ伝える。
 
@@ -330,7 +326,7 @@ cd <作業場所> && claude --bg -n "<worker 名>" --permission-mode auto [--wor
 - 承認の要る実行で止められた worker は、「ブロック」ではなく「要判断」で承認を求めてくる（上の「worker の実行を承認する」）。
 - worker は、承認のあとに実行し直しても止められたときや、共有の環境で接続エラーが出たときに、「ブロック」を報告して止まる。窓口は、どの worker が何をしようとして止まったかと、ユーザーがすること（報告の「あなたの番」）を 1〜2 行で伝える。
 - worker では確認ダイアログは出ない（hook が代わりに断る）。それでも `claude agents --json` の `waitingFor` が確認ダイアログを指していたら、hook が動いていない（`~/.claude` への反映が済んでいない、など）。どの worker が何の確認で止まっているかを伝え、hook を調べる worker を起動するか聞く。
-- コミットの署名で止まったときと、rebase が要るとき（worker の sandbox の中では署名し直せない）は、worker が手元で実行する手順を「ブロック」で報告してくる。窓口は、その手順をそのままユーザーに示して手元での実行を頼み、済んだら worker に `--resume` で続きを頼む。`commit.gpgsign=false` などで署名を外す案は出さない。
+- コミットの署名で止まったときは、worker が実行したコマンドとエラーを「ブロック」で報告してくる。窓口は、それをそのままユーザーに示して手元での実行や ssh-agent の確認を頼み、済んだら worker に `--resume` で続きを頼む。`commit.gpgsign=false` などで署名を外す案は出さない。
 - 窓口は、止まった操作を代わりに実行しない。ブロックを避ける手も考えない。ユーザーが手元で実行するか、許可を足すか、別の手を worker に頼むかを決める。
 
 ## 外に出す文面を送る
@@ -382,7 +378,7 @@ worker は 1 つのゴールで終わらせ、ゴールをまたいで持ち越�
   - 方針が変わって、その worker の作業が要らなくなった
 - 「要判断」「ブロック」で答えや手元の作業を待っている worker は、まだ消さない。答えを返して「完了」になってから消す。
 - 消す前に、worker に残った宿題・待ち・資料のリンクを案件に移す（上の「案件の一覧」の「書くとき」を参照）。案件に移せば、worker を消しても宿題は残る。
-- `claude rm <id>` は、それだけの 1 本のコマンドで実行する。パイプや `&&`・`;` でほかのコマンドとつなぐと sandbox の中で動き、`~/.claude/jobs` に書けずに失敗する。`id` は先に別の Bash の `claude agents --json --all` で調べておく。
+- `claude rm <id>` の `id` は、先に `claude agents --json --all` で調べておく。
 - `claude rm` で消すと、`--worktree` で作った worktree も安全なら一緒に消える。push したブランチはリモートに残るので、PR の続きは新しい worker がそのブランチから始める。消した worker は `--resume` できない。
 - 次のときは消さずに（消せずに残ったら、そのまま残して）、何が残っているかをユーザーに伝える。片付けは急がないので、案件の「Later」に足す。
   - worktree に未コミットの変更や、push していないコミットが残っている
