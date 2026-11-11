@@ -104,6 +104,32 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("承認の記録で確認ダイアログを省くときも", section)
 
 
+    def test_orchestrator_cleans_up_finished_workers_without_asking(self):
+        # 窓口のほかは short session。用が済んだ worker は聞かずに消し、続きは資料から始める
+        text = ORCH.read_text(encoding="utf-8")
+        section = text.split("## 片付け", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("ユーザーに聞かず、提案もせずに", section)
+        self.assertIn("方針が変わって", section)
+        self.assertIn("案件に移す", section)
+        # パイプや && でつなぐと sandbox の中で動き、~/.claude/jobs に書けない
+        self.assertIn("1 本のコマンドで実行する", section)
+        self.assertIn("`git worktree remove --force` は使わない", section)
+        self.assertNotIn("AskUserQuestion", section)
+        proposal = text.split("## 次の行動を提案する", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("送信、片付け）", proposal)
+        resume = text.split("## 続きを頼む", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("新しい worker を起こして案件の資料から始める", resume)
+        self.assertIn("`--resume` は、短い続きに限る", resume)
+        self.assertNotIn("新しく起動せずに `--resume`", text)
+
+    def test_worker_leaves_report_for_the_next_worker(self):
+        text = WORKER.read_text(encoding="utf-8")
+        section = text.split("## 報告と成果物を残す", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("~/hub/workers/<worker 名>/report.md", section)
+        self.assertIn("続けるときの最初の一手", section)
+        self.assertIn("worktree の中だけに置かない", section)
+
+
 HARNESS = r"""
 set -l sock $argv[1]
 set -l fn $argv[2]

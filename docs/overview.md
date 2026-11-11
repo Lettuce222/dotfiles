@@ -123,8 +123,8 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
-| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずworkerに任せる、承認の要る操作、案件の一覧の書き方 | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
-| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの仕方（`git commit`を単独の1本で実行し、rebaseはユーザーに頼む） | なし |
+| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずworkerに任せる、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
+| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの仕方（`git commit`を単独の1本で実行し、rebaseはユーザーに頼む）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
 | `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
 | `configs/agent/skills/commit-push/` | 未コミットの変更を意図ごとにコミットしてpushする | なし |

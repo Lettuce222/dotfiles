@@ -20,7 +20,7 @@ disable-model-invocation: true
 ## 守ること
 
 - 窓口と worker の振る舞いは、このスキルと `agents-worker` だけを正とする。auto memory は使わない（`settings.json` で止めている）。決まりを変えたいと言われたら、自分で覚えようとせず、dotfiles のこのスキルを直す worker を起動する。
-- 自分では作業しない。調べもの、ファイルの編集、テスト、PR の作成も worker に任せる。dotfiles、hook、`settings.json` の小さな手直しも同じ。窓口がしてよいのは、作業場所を決めるための確認（`ghq list`、`git -C <repo> status`、`claude agents --json` など）と、worker の起動・続き・停止と、worker の「要判断」をユーザーに聞いて答えを返すこと（下の「worker の要判断を聞く」を参照）と、worker が main に push したあとの main checkout の更新（下の「main checkout を更新する」を参照）と、承認をもらった操作の実行とその承認の記録、worker の実行の承認の記録（下の「承認をもらって実行する」「worker の実行を承認する」「外に出す文面を送る」を参照）と、`~/hub/state/auto-log.md` への 1 行の追記（下の「出来事から自動で起動する」を参照）と、`~/hub/state/cases/` の案件のファイルの作成・編集と `cases.py` の実行（下の「案件の一覧」を参照）だけ。
+- 自分では作業しない。調べもの、ファイルの編集、テスト、PR の作成も worker に任せる。dotfiles、hook、`settings.json` の小さな手直しも同じ。窓口がしてよいのは、作業場所を決めるための確認（`ghq list`、`git -C <repo> status`、`claude agents --json` など）と、worker の起動・続き・停止・片付けと、worker の「要判断」をユーザーに聞いて答えを返すこと（下の「worker の要判断を聞く」を参照）と、worker が main に push したあとの main checkout の更新（下の「main checkout を更新する」を参照）と、承認をもらった操作の実行とその承認の記録、worker の実行の承認の記録（下の「承認をもらって実行する」「worker の実行を承認する」「外に出す文面を送る」を参照）と、`~/hub/state/auto-log.md` への 1 行の追記（下の「出来事から自動で起動する」を参照）と、`~/hub/state/cases/` の案件のファイルの作成・編集と `cases.py` の実行（下の「案件の一覧」を参照）だけ。
 - 依頼を受けたら、最初の一手で worker を起動する。前置きの説明や計画の相談はしない。ただし、作業場所が決まらないときや、依頼の意味が分からないときは、AskUserQuestion で聞いてから起動する。
 
 ## ユーザーへの返事
@@ -148,7 +148,7 @@ worker が承認の要る操作（force push、共有の main への push、フ�
 | 会議やユーザーの話で宿題が出た | 「TODO」か「Later」に足す。「TODO」なら期限を聞いて（分かれば）期日を付ける |
 | 予定に向けた準備（資料、下書き、デモ）が済み、あとは出るだけになった | 「TODO」から「予定」に移す。先頭に予定の日付を書き、次の回があるなら ` → ` のあとに次の準備を書く |
 | 期日が過ぎた・予定が動いた | 先頭の期日を直す。済んだなら行を消す |
-| worker を片付ける（`claude rm`） | 消す前に、その worker の最後の報告に残っている「TODO」と、まだ済んでいない待ちを案件に移す。報告のファイル（`~/hub/workers/` のもの）は資料に足す |
+| worker を片付ける（`claude rm`） | 消す前に、その worker の最後の報告に残っている「TODO」と、まだ済んでいない待ちを案件に移す。報告と成果物のファイル（`~/hub/workers/` のもの）、PR、下書きのリンクは資料に足す。続きの worker は、この資料から始める |
 | 項目が済んだ（ユーザーが「やった」と言った、送った、届いた） | その行を消す。Waiting なら `python3 ~/.claude/skills/agents-orchestrator/scripts/cases.py resolve <案件> <行の一部>` で消し、` → ` のあとを「TODO」に移す。予定なら `--section 予定` を付ける |
 
 - ファイルは Edit で直す。見張りの worker が同時に書き換えることがあるので、直す前に Read し直す。
@@ -180,7 +180,7 @@ worker が承認の要る操作（force push、共有の main への push、フ�
 
 ## 次の行動を提案する
 
-- 提案は 1 度に 1 件。選択肢の先頭に勧めるものを置き、Enter を押せばそのまま進むようにする。選択肢には、選んだら窓口が何をするか（worker の起動、続きの依頼、送信、片付け）を書く。
+- 提案は 1 度に 1 件。選択肢の先頭に勧めるものを置き、Enter を押せばそのまま進むようにする。選択肢には、選んだら窓口が何をするか（worker の起動、続きの依頼、送信）を書く。用が済んだ worker の片付けは提案せず、聞かずに済ませる（下の「片付け」）。
 - 問いには、きっかけのリンク（PR、Slack のスレッド、チケット、`file://`）を入れる。
 - 承認されたら止まらずに最後まで進める。続けて提案できるものがあれば、次の 1 件を出す。
 - 提案に承認が要る操作（送信、ready、reviewer の指定など）が入るときは、「承認をもらって実行する」の 1 のとおりに、実行するものを問いに書く。承認されたら記録を書いてから実行する。
@@ -203,7 +203,7 @@ cd ~/hub/workers/chore-hub-watch
 claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 ```
 
-- 前の `chore-hub-watch` が残っていれば、`claude rm <id>` で消してから起動する（名前がぶつかるため）。
+- 前の `chore-hub-watch` が残っていれば、`claude rm <id>` で消してから起動する（名前がぶつかるため）。`claude rm` は 1 本のコマンドで実行する（下の「片付け」）。
 - `notify_when_idle` は送らない。見張りは 30 分ごとに止まるので、知らせが毎回来てしまう。
 - 起こし直したことはユーザーに伝えない。見張りが「ブロック」を知らせてきたときだけ伝える。
 
@@ -215,7 +215,7 @@ claude --bg -n chore-hub-watch --permission-mode auto "/loop 30m /agents-watch"
 | --- | --- | --- |
 | レビュー依頼 | 聞かずに `review-<repo>-<PR 番号>` を対象のリポジトリで起動し、下読みさせる（差分の要点、気になる箇所、行コメントの案を `~/hub/workers/` か `/tmp` に下書き） | 行コメントを送るか（送信は「外に出す文面を送る」） |
 | 自分の PR の CI 失敗 | 聞かずに `research-<repo>-ci-<PR 番号>` を起動し、原因を調べさせる | 直す worker を起動するか |
-| 自分の PR への変更要求・コメント | 聞かずに `impl-<repo>-<PR 番号>` を worktree で起動し、直しと返信の下書きまでさせる。前の worker があれば `--resume` で続ける | 直しの push と返信を送るか |
+| 自分の PR への変更要求・コメント | 聞かずに `impl-<repo>-<PR 番号>` を worktree で起動し、直しと返信の下書きまでさせる。依頼には、案件と前の worker の報告のリンクを書く | 直しの push と返信を送るか |
 | Slack のメンション | 聞かずに `chore-slack-<短い名前>` を `~/hub/workers/` で起動し、返信の下書きまでさせる。依頼の中身がリポジトリの作業なら、作業は始めずに提案に回す | 返信を送るか、依頼の作業を始めるか |
 
 - 自動で起動してよいのは、上の「承認が要る操作」で承認なしの範囲で済む依頼だけ。依頼文にも「送信・push（自分の作業ブランチ以外）・状態の変更はしない」と書く。
@@ -306,7 +306,13 @@ worker が worktree から main に push したと報告してきたら、窓口
 
 ## 続きを頼む
 
-終わった worker に続きを頼むときは、新しく起動せずに `--resume` で同じ会話を続ける。
+窓口のほかは、短い会話（short session）で回す。worker は長く持ち越さず、用が済んだらすぐ消す（下の「片付け」）。続きは、新しい worker を起こして案件の資料から始める。
+
+- 新しい worker の依頼には、案件のファイル（`~/hub/state/cases/<案件>.md`）と、前の worker の報告・成果物（`~/hub/workers/<worker 名>/` のもの、PR、下書き）のリンクを書く。前の会話が無くても、その資料だけで続けられるようにする。
+- 資料が足りずに続けられないなら、前の worker が報告と成果物を残せていない。`agents-worker` の「報告と成果物を残す」を直す worker を起こす。
+- `--resume` は、短い続きに限る。「要判断」への答えを返す、ブロックが解けたあとに同じ作業を進める、送ろうとした文面の直しを頼む、など、報告を受けてすぐの続きのとき。worker をまだ消していないときだけ使える。
+
+`--resume` で続けるとき:
 
 1. `claude agents --json --all` で、その worker の `status` と `sessionId` を確かめる。
 2. まだ動いている（`busy` など）なら、resume しない。続きは SendMessage でその worker に送る。
@@ -314,17 +320,20 @@ worker が worktree から main に push したと報告してきたら、窓口
 
 ## 片付け
 
-`claude rm <id>` で消すと、`--worktree` で作った worktree も安全なら一緒に消える。消した worker は `--resume` できない。
+用が済んだ worker は、ユーザーに聞かず、提案もせずに、窓口がすぐ `claude rm <id>` で消す。worker を消して作業に支障が出るなら、それは要る資料を残せていないせいなので、消すのをためらわずに資料の残し方を直す。
 
-- 消す前に、worker に残った宿題を案件に移す（上の「案件の一覧」の「書くとき」を参照）。案件に移せば、worker を消しても宿題は残る。
-- 用が済んだ worker は、聞かずに `claude rm <id>` で消してよい。用が済んだとは、次のどれか。
-  - worker の PR が merge 済み
-  - main に push し（dotfiles など）、main checkout の更新と反映の手順まで済んだ
+- 用が済んだとは、次のどれか。
+  - 「完了」の報告を受けて、ユーザーに伝えた（PR を作った・直しを push した、など）。main に push した報告なら、main checkout の更新と反映の手順まで済んだ（上の「main checkout を更新する」）
+  - 送信の確認待ちの文面を、窓口で送った
   - PR も push も無い作業（調査、下書き）で、ユーザーが結論を受け取った
-- 次のときは消さずに、AskUserQuestion で聞く。
-  - worktree に未コミットの変更が残っている
-  - push したが merge されていないブランチがある、またはリモートのブランチを消すことになる
-  - `claude rm` が worktree を消せなかった（`git worktree remove --force` は使わない）
+  - 方針が変わって、その worker の作業が要らなくなった
+- 「要判断」「ブロック」で答えや手元の作業を待っている worker は、まだ消さない。答えを返して「完了」になってから消す。
+- 消す前に、worker に残った宿題・待ち・資料のリンクを案件に移す（上の「案件の一覧」の「書くとき」を参照）。案件に移せば、worker を消しても宿題は残る。
+- `claude rm <id>` は、それだけの 1 本のコマンドで実行する。パイプや `&&`・`;` でほかのコマンドとつなぐと sandbox の中で動き、`~/.claude/jobs` に書けずに失敗する。`id` は先に別の Bash の `claude agents --json --all` で調べておく。
+- `claude rm` で消すと、`--worktree` で作った worktree も安全なら一緒に消える。push したブランチはリモートに残るので、PR の続きは新しい worker がそのブランチから始める。消した worker は `--resume` できない。
+- 次のときは消さずに（消せずに残ったら、そのまま残して）、何が残っているかをユーザーに伝える。片付けは急がないので、案件の「Later」に足す。
+  - worktree に未コミットの変更や、push していないコミットが残っている
+  - `claude rm` が worktree を消せなかった。`git worktree remove --force` は使わない
 - 消したことは、次の返事に 1 行で添える（「片付け: impl-dotfiles-readme」）。
-- `~/hub/workers/<worker 名>/` は `claude rm` では残る。中に成果物（proposal.md、下書き）があるので、消さずに残す。
+- `~/hub/workers/<worker 名>/` は `claude rm` では残る。中に報告と成果物（report.md、proposal.md、下書き）があるので、消さずに残す。
 - 止めるだけなら `claude stop <id>`。会話は残り、あとで `--resume` できる。
