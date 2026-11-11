@@ -105,7 +105,7 @@ class SkillRulesTest(unittest.TestCase):
 
 
     def test_orchestrator_cleans_up_finished_workers_without_asking(self):
-        # 窓口のほかは short session。用が済んだ worker は聞かずに消し、続きは資料から始める
+        # worker は 1 つのゴールで終わる。用が済んだ worker は聞かずに消し、続きは資料から始める
         text = ORCH.read_text(encoding="utf-8")
         section = text.split("## 片付け", 1)[1].split("\n## ", 1)[0]
         self.assertIn("ユーザーに聞かず、提案もせずに", section)
@@ -128,6 +128,41 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("~/hub/workers/<worker 名>/report.md", section)
         self.assertIn("続けるときの最初の一手", section)
         self.assertIn("worktree の中だけに置かない", section)
+
+    def test_worker_runs_a_whole_goal_and_decides_reversible_choices(self):
+        # worker はゴールを通しで進め、取り消せる判断は推奨で決めて「決めたこと」にまとめる
+        text = WORKER.read_text(encoding="utf-8")
+        self.assertIn("## ゴールまで通しで進める", text)
+        section = text.split("## 迷ったら推奨で進む", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("「要判断」で止まるのは、次の 3 つのときだけ", section)
+        self.assertIn("外に出す操作", section)
+        self.assertIn("取り消せない操作", section)
+        self.assertIn("依頼の前提が崩れたとき", section)
+        self.assertIn("先に済ませる", section)
+        report = text.split("## 報告と成果物を残す", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("決めたこと", report)
+        self.assertNotIn("short session", text)
+
+    def test_orchestrator_hands_goals_and_batches_reports(self):
+        text = ORCH.read_text(encoding="utf-8")
+        launch = text.split("## worker を起動する", 1)[1].split("\n## ", 1)[0]
+        for key in ("ゴール:", "完了の条件:", "やってよい範囲:"):
+            self.assertIn(key, launch)
+        self.assertIn("小さな worker を細かく起こさない", launch)
+        batch = text.split("## 報告をまとめて渡す", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("### すぐに伝えるもの", batch)
+        self.assertIn("期日がその日", batch)
+        self.assertIn("「どうなった？」", batch)
+        self.assertIn("未報告", batch)
+        self.assertNotIn("short session", text)
+        self.assertNotIn("報告を受けて状況が変わったとき", text)
+
+    def test_watch_marks_urgency(self):
+        text = (SKILLS / "agents-watch" / "SKILL.md").read_text(encoding="utf-8")
+        section = text.split("## 急ぎかどうか", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("期日がその日のものだけ", section)
+        self.assertIn("自分宛てのメンションでも", section)
+        self.assertIn("- 急ぎでない: ", text)
 
 
 HARNESS = r"""

@@ -123,10 +123,10 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
-| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずworkerに任せる、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
-| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの仕方（`git commit`を単独の1本で実行し、rebaseはユーザーに頼む）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
+| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
+| `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。ゴールを通しで進め、取り消せる判断は推奨で決めて「決めたこと」にまとめること、報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの仕方（`git commit`を単独の1本で実行し、rebaseはユーザーに頼む）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
-| `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
+| `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを、急ぎかどうかを付けて窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
 | `configs/agent/skills/commit-push/` | 未コミットの変更を意図ごとにコミットしてpushする | なし |
 | `configs/agent/skills/gh-fix-ci/` | GitHub ActionsのPR checkの失敗を調べて直す | なし |
 | `configs/agent/skills/grill-me/` | 計画や設計を質問で掘り下げる | なし |
@@ -364,6 +364,7 @@ git tag -f reviewed origin/main
 - 2026年10月29日〜11月4日: tmuxのwindowでworkerを動かす窓口（hub）を作り、外に出る文面のhook（`external-post-guard.py`）、`install.sh --links-only`、`report-writing`を足した。Codexの管理はやめた。
 - 2026年11月4日〜11月6日: hubを消し、`claude --bg`と`claude agents`だけで組む`orchestrator`に置き換えた。案件の一覧（`cases.py`）、見張りのworker（`agents-watch`）、承認の記録（`approvals.py`、`approval-gate.py`）を足した。
 - 2026年11月9日〜11月10日: 案件の一覧にworkerの状態とTODOの急ぐ順を出し、tmuxのリンクで`.md`をleafで開くようにした。miseの設定を`config.local.toml`へ、gitのglobalのignoreを`ignore.shared`からの生成へ移した。SlackやPRのスレッドと紛らわしいので、backgroundのエージェントの呼び方を「スレッド」から「worker」に改め、skillを`agents-worker`（`agents-thread`は互換の別名）、`approvals.py`の`--thread`を`--worker`、作業場所を`~/hub/workers/`にした。
+- 2026年11月11日: workerにゴール単位で任せて数時間続けさせるようにした。workerは取り消せる判断を推奨で決めて「決めたこと」にまとめ、窓口は急ぎでない知らせを案件にためて「どうなった？」で案件ごとに渡す。見張りは知らせに急ぎかどうかを付ける。
 
 ## このページを保つ
 
