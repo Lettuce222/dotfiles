@@ -112,6 +112,22 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 
 実行ビットに頼らないよう、`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_tmux_socket_guard.py`で実行する。
 
+### AskUserQuestionのpreview
+
+Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを、全部出せるときだけ出す。
+
+- 2000文字（UTF-16の単位。絵文字は2）を超えるpreviewや、結合文字・ゼロ幅の文字が9個以上続くpreviewは、丸ごと伏せられ、「preview cannot be shown in full — compare the option labels and descriptions instead」と出る
+- 出せるpreviewも、幅は「端末の列 − 38」で折り返され、「端末の行 − 26」行を超えた分は「N lines hidden」で切られる。Markdownの表は枠の行が増え、幅が足りないと崩れる
+- 問いの文は2000文字で切られる
+
+`ask-preview-guard.py`はClaude Codeの`PreToolUse`（`AskUserQuestion`）で、全部出ないpreviewと切られる問いの文をexit 2で止め、本文は直前の返事に全文載せてpreviewには要点とリンクを置くよう返す。端末の大きさは、セッションのtmuxのペイン（`$TMUX_PANE`）、制御端末、既定の100x40の順に取る。見える行は2行の余裕を引いて数える。
+
+- 下書きは`ask-preview-guard.py --check <file>...`で同じ基準に当てられる。ファイルごとに1行出し、全部出ないものがあればexit 1、無ければ0、ファイルが無いときは2で終わる
+- 窓口の使い方は`agents-orchestrator`の「承認をもらって実行する」の1
+- Claude Codeの上げ方で上限が変わりうる。previewが伏せられたのにhookが通したときは、本体の`preview cannot be shown in full`の周りの判定を見直す
+
+`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_ask_preview_guard.py`で実行する。
+
 ## 小さな窓口（orchestrator）
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
@@ -127,7 +143,7 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 ペインの構成と、workerがAskUserQuestionを使わないことは`python3 -m unittest configs/agent/tests/test_orchestrator.py`で確かめる。レイアウトは専用のtmuxソケット（`-L`）で組んで見るので、いつものtmuxサーバーには触らない。
 
 - 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
-- 承認と外に出す文面: workerは下書きや準備までで止まり、窓口が送る。窓口はAskUserQuestionで、送る本文を問いかpreviewに載せて承認をもらい、承認の記録（`approvals.py`）を書いてから実行するので、確認ダイアログは出ない。記録と一致しない操作には、今までどおり`external-post-guard.py`がダイアログを出す。workerは記録を書かない
+- 承認と外に出す文面: workerは下書きや準備までで止まり、窓口が送る。窓口はAskUserQuestionで、送る本文をpreviewか、previewに全部出ないときは直前の返事に全文載せて承認をもらい（下の「AskUserQuestionのpreview」を参照）、承認の記録（`approvals.py`）を書いてから実行するので、確認ダイアログは出ない。記録と一致しない操作には、今までどおり`external-post-guard.py`がダイアログを出す。workerは記録を書かない
 - 文面の形式の直し: workerは「送信の確認待ち」を報告する前に、下書きをtextlintと`external-post-guard.py --check`に通して直しておく。窓口で送るときに文面のチェックに止められたら、窓口はユーザーに聞かずにworkerへ直しを頼み、直ったものを送る。ユーザーには送った結果だけを伝え、形式の直しのことは伝えない
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにworkerを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
 - workerの要判断: 窓口がAskUserQuestionでユーザーに聞き、答えをSendMessageでworkerに返す（止まっていれば`--resume`）。窓口は自分で選ばない

@@ -110,6 +110,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/ask-preview-guard.py",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PermissionRequest": [

@@ -104,6 +104,18 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("preview", section)
         self.assertIn("本文そのもの", section)
         self.assertIn("承認の記録で確認ダイアログを省くときも", section)
+        # preview は 2000 文字を超えると丸ごと伏せられる。全部出ない本文は直前の返事に全文を載せる
+        self.assertIn("ask-preview-guard.py --check", section)
+        self.assertIn("直前の返事に、本文の全文", section)
+        self.assertNotIn("長い本文も切らずに載せる", text)
+
+    def test_other_approvals_follow_the_same_body_rule(self):
+        text = ORCH.read_text(encoding="utf-8")
+        worker_run = text.split("### worker の実行を承認する", 1)[1].split("\n## ", 1)[0]
+        outbound = text.split("## 外に出す文面を送る", 1)[1].split("\n## ", 1)[0]
+        for section in (worker_run, outbound):
+            self.assertIn("「承認をもらって実行する」の 1", section)
+            self.assertIn("直前の返事に全文", section)
 
 
     def test_orchestrator_cleans_up_finished_workers_without_asking(self):

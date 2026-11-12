@@ -148,6 +148,7 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 | `configs/agent/hooks/approvals.py` | 窓口がユーザーの承認の直後に呼ぶ | 承認した操作を1回だけ通す記録を`~/hub/state/approvals/`に書く（30分で切れる）。workerに向けた記録は`--worker <worker名>`で書く（古い`--thread`も受け付ける） |
 | `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。承認の記録と一致すれば通す |
 | `configs/agent/hooks/tmux-socket-guard.py` | Bashの実行前 | いつも使っているtmuxサーバーを止めるコマンドを止める |
+| `configs/agent/hooks/ask-preview-guard.py` | AskUserQuestionの前 | 全部は表示されないpreview（2000文字超え、端末に収まらない行数）を止め、本文を直前の返事に全文載せさせる。`--check <file>`で下書きを確かめる |
 
 #### テスト（`configs/agent/tests/`）
 
@@ -158,6 +159,7 @@ Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大き�
 | `configs/agent/tests/test_approvals.py` | `approvals.py`と`approval-gate.py` |
 | `configs/agent/tests/test_external_post_guard.py` | `external-post-guard.py` |
 | `configs/agent/tests/test_tmux_socket_guard.py` | `tmux-socket-guard.py` |
+| `configs/agent/tests/test_ask_preview_guard.py` | `ask-preview-guard.py` |
 | `configs/agent/tests/test_cases.py` | `cases.py` |
 | `configs/agent/tests/test_agents_watch.py` | `watch.py` |
 | `configs/agent/tests/test_md_to_gdocs.py` | `md_to_gdocs.py` |
