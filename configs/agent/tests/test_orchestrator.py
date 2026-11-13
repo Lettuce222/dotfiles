@@ -104,10 +104,20 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("preview", section)
         self.assertIn("本文そのもの", section)
         self.assertIn("承認の記録で確認ダイアログを省くときも", section)
-        # preview は 2000 文字を超えると丸ごと伏せられる。全部出ない本文は直前の返事に全文を載せる
+        # preview は 2000 文字を超えると丸ごと伏せられる。全部出ない本文はページに分けて preview に載せる
         self.assertIn("ask-preview-guard.py --check", section)
-        self.assertIn("直前の返事に、本文の全文", section)
+        self.assertIn("ask-preview-guard.py --pages", section)
+        self.assertIn("<下書き>.diff", section)
         self.assertNotIn("長い本文も切らずに載せる", text)
+
+    def test_orchestrator_does_not_point_back_to_earlier_replies(self):
+        # 上のチャットは動き続けていて遡りにくい。本文を前の返事に載せて参照させる決まりに戻さない
+        text = ORCH.read_text(encoding="utf-8")
+        for old in ("直前の返事に、本文の全文", "直前の返事に全文", "本文は上の返事に全文」を置く", "長くても全文を載せる"):
+            self.assertNotIn(old, text)
+        replies = text.split("## ユーザーへの返事", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("ダイアログだけで答えられる", replies)
+        self.assertIn("参照させない", replies)
 
     def test_other_approvals_follow_the_same_body_rule(self):
         text = ORCH.read_text(encoding="utf-8")
@@ -115,7 +125,13 @@ class SkillRulesTest(unittest.TestCase):
         outbound = text.split("## 外に出す文面を送る", 1)[1].split("\n## ", 1)[0]
         for section in (worker_run, outbound):
             self.assertIn("「承認をもらって実行する」の 1", section)
-            self.assertIn("直前の返事に全文", section)
+            self.assertIn("--pages", section)
+
+    def test_worker_leaves_a_diff_when_fixing_a_draft(self):
+        text = WORKER.read_text(encoding="utf-8")
+        section = text.split("## 外に出す文面", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("<下書き>.before", section)
+        self.assertIn("<下書き>.diff", section)
 
 
     def test_orchestrator_cleans_up_finished_workers_without_asking(self):
