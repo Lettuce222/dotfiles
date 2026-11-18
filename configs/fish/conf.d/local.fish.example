@@ -1,25 +1,24 @@
 # Environment-specific configuration example
 #
-# Copy this file to *.local.fish (e.g., work.local.fish, home.local.fish)
+# Copy this file to *.local.fish (e.g., machine.local.fish)
 # These files are automatically loaded and excluded from git.
 #
 # Example usage:
-#   cp local.fish.example work.local.fish
-#   # Edit work.local.fish with your environment-specific settings
+#   cp local.fish.example machine.local.fish
+#   # Edit machine.local.fish with your environment-specific settings
 
-# Example: Work-specific abbreviations
-# abbr deploy-prod 'bundle exec cap production deploy'
-# abbr ssh-work 'ssh user@work-server.example.com'
+# Example: Machine-specific abbreviations
+# abbr ssh-example 'ssh user@host.example.com'
 
 # Example: Environment-specific paths
-# set -gx CUSTOM_PATH /opt/company-tools/bin
+# set -gx CUSTOM_PATH /opt/local-tools/bin
 # fish_add_path $CUSTOM_PATH
 
 # Example: API keys or tokens (use with caution)
-# set -gx WORK_API_KEY "your-api-key-here"
+# set -gx EXAMPLE_API_KEY "your-api-key-here"
 
 # Example: Custom functions
-# function work_setup
-#     cd ~/work/project
-#     tmuxinator start work
+# function project_setup
+#     cd ~/projects/example
+#     tmuxinator start example
 # end

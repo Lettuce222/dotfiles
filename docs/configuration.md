@@ -6,9 +6,32 @@
 
 - Fish: `configs/fish/**/*.local.fish`（補完はファイル名がコマンド名と一致する必要があるため、`conf.d/*.local.fish`内で読み込む）
 - Fish function: `configs/fish/functions/local/*`
-- Claude Code: `configs/claude/settings.local.json`（仕事用のpluginなど。下の「Claude Codeのuser設定」を参照）
+- `orchestrator` で独自の `gh` ラッパーを優先する場合は、実行ファイルを含むディレクトリを `AGENT_GH_WRAPPER_DIR` で指定する。
+- Claude Code: `configs/claude/settings.local.json`（下の「Claude Codeのuser設定」を参照）
 - mise: `configs/mise/config.toml`（下の「miseの設定」を参照）
 - Gitのglobalのignore: `configs/git/ignore`（下の「Gitのglobalのignore」を参照）
+
+## メインの coding agent CLI
+
+原本は Git 管理外の `configs/agent/cli.local`。インストーラーが `~/.config/dotfiles-agent-cli`
+から原本へのシンボリックリンクを張る。初回は macOS なら `claude`、Ubuntu なら `codex` で
+原本を作る。旧パスに通常の設定ファイルがあれば、原本に移す。両方にファイルがあれば
+原本を使い、旧ファイルは `~/.config/dotfiles-agent-cli.bak.*/choice` に退避する。
+
+選択を固定するには、原本に `claude` または `codex` を1行で書く。環境変数
+`DOTFILES_AGENT` はその実行時だけ優先する（例: `env DOTFILES_AGENT=codex ./install.sh --links-only`）。
+すでに CLI が入っていれば `./install.sh --links-only` で反映できる。
+CLI の導入も必要なら `./install.sh` を実行する。
+
+fish では `agent --which` で確認し、`agent` で起動する。CLI 固有の引数は
+`agent` にそのまま渡せる。`cw <ghqのリポジトリ名>` は見つけたディレクトリを
+`--add-dir` で追加する。Codex の `--add-dir` は追加の書き込み範囲も指定する。
+`orchestrator` は選択中の CLI と案件ボードを tmux で開く。
+
+Claude を選ぶと Claude の設定とスキルを反映する。Codex を選ぶと
+`${CODEX_HOME:-~/.codex}/AGENTS.md` と `~/.agents/skills/` に共通資産を配置する。
+同名の手持ちの Codex 指示・スキルがあれば、配置先をスキップして表示する。
+切り替え後も、以前の CLI の設定・セッションは利用できる。
 
 ## Claude Codeのuser設定
 
@@ -17,7 +40,7 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 そこで`install.sh`は、追跡している`configs/claude/settings.json`とgitignore済みの`configs/claude/settings.local.json`を合成し、`~/.claude/settings.json`を通常のファイルとして書き出す。合成ではobjectをkeyごとにまとめ、配列は重複を除いて連結し、それ以外の値はlocalを優先する。
 
 - 設定を変えたら、`configs/claude/`のどちらかを編集し、`./install.sh`を再実行する。
-- 共通の設定は`settings.json`に、マシン固有の設定（仕事用のplugin、marketplace、hookなど）は`settings.local.json`に書く。
+- 共通の設定は`settings.json`に、マシン固有の設定（plugin、marketplace、hookなど）は`settings.local.json`に書く。
 - `install.sh`は前回書き出した内容を`~/.claude/settings.json.generated`に残す。`claude plugin enable`などで`~/.claude/settings.json`が変わっていたら、上書きする前に`settings.json.bak.<日時>`へ退避して警告する。必要な変更は`settings.local.json`へ移す。
 
 新しいlocal設定パターンを追加するときは`.gitignore`も更新する。
@@ -41,21 +64,21 @@ gitが読むglobalのignoreは1つだけなので、`configs/git/ignore`はgitig
 
 `~/.config/mise`はディレクトリごと`configs/mise`へのsymlinkにしている。dotfilesで管理するmiseの設定は`configs/mise/config.local.toml`に書く。
 
-仕事用のMacでは、JamfのポリシーpmsecがmiseのGlobal設定`~/.config/mise/config.toml`に、出どころの検証（`github.slsa`、`aqua.cosign`など）の設定を20分ほどごとに書き込む。そこで`configs/mise/config.toml`はgitignoreし、この機械だけのファイルとしてJamfに任せる。miseは`config.local.toml`を`config.toml`より優先して読み、`[settings]`はkeyごとにまとめる。このため、Jamfの検証の設定はそのまま残り、同じkey（`minimum_release_age`など）はdotfilesの値が勝つ。Jamfが動かないUbuntuには`config.toml`が無く、`config.local.toml`だけを読む。
+`configs/mise/config.toml` は Git 管理外で、マシン固有の設定に使う。mise は
+`[settings]` をキーごとに読み込み、両方にあるキーは `config.local.toml` を優先する。
 
 - 設定を変えるときは`configs/mise/config.local.toml`を直接編集する。`mise use -g`は`config.toml`へ書くので、そのツールはdotfilesに入らない。
-- `config.toml`を手で書き換えない。次のpmsecの実行で書き戻される。
 
 ## リンクと設定だけを反映する
 
-`./install.sh --links-only`は、symlinkの配置と`~/.claude/settings.json`・`configs/git/ignore`の生成だけを行う。Homebrew・fish・フォント・アプリのインストール、`chsh`、`mise install`、`npm ci`、`defaults write`は実行しない。ネットワークに出ず、パスワードを求めず、`$HOME`の外を変えないので、エージェントにも実行させられる。`./install.sh --dry-run`は同じ判定をして、何も変えずに予定だけを出す。引数なしの`./install.sh`の動作は変わらない。
+`./install.sh --links-only`は、symlinkの配置と`configs/git/ignore`の生成を行う。Claudeを選んだときは`~/.claude/settings.json`も生成する。ネットワークアクセスやパスワードを必要としない。`./install.sh --dry-run`は同じ判定をして、予定だけを出す。
 
 - 何度実行しても同じ結果になる。リンク先がすでに正しいものは触らない。
-- 別の場所を指すsymlinkは張り替える。symlinkでない本物のファイルやディレクトリは置き換えず、`skip:`の行で知らせる。
+- 通常は別の場所を指すsymlinkを張り替え、symlinkでない既存のファイルやディレクトリは`skip:`で知らせる。旧CLI選択ファイルは上記の手順で移行する。
 - `~/.claude/settings.json`は、合成の結果と違い、かつ前回の生成（`settings.json.generated`）から変わっていないときだけ書き換え、変わるJSONのpathを`+`（追加）、`-`（削除）、`~`（値の変更）で1行ずつ出す。`claude plugin enable`などで変わっていたら上書きせず、`skip:`の行と差分を出す。退避して作り直すには引数なしの`./install.sh`を使う。
 - 最後に、変えたこと（`link`、`relink`、`mkdir`、`chmod +x`、`write`、`rewrite`など）を1行ずつ出す。何も変わらなければ`変更なし`と出す。
 - worktreeからの実行は、引数なしのときと同じく断る。
-- `cleanup_codex_symlinks`は実行しない。
+- Claudeの`~/.claude/hooks`が壊れたsymlinkなら、`hooks.bak.*/link`に退避してhooksを配置し直す。
 
 テスト: `python3 -m unittest tests/test_install_links_only.py`
 

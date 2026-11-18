@@ -314,6 +314,15 @@ class HeadingStyleTest(Base):
 
 
 class BoardReloadTest(Base):
+    def test_board_without_workers_does_not_query_claude(self):
+        self.write()
+        with (
+            mock.patch.object(cases, "fetch_workers", side_effect=AssertionError),
+            mock.patch.object(cases.sys, "stdout") as out,
+        ):
+            self.assertEqual(cases.board(self.dir, True, 80, 30, show_workers=False), 0)
+        self.assertIn("架空の案件", plain(out.write.call_args.args[0]))
+
     def test_restarts_when_script_changes(self):
         sigs = iter([("old",), ("new",), ("new",)])
         execv = mock.Mock(side_effect=SystemExit)

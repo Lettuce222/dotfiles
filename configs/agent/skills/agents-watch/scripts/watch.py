@@ -13,8 +13,8 @@ GitHub へは `gh api graphql` で問い合わせるだけで、何も書き込�
   work_days は ISO の曜日（月 = 1）、work_start・work_end は時（work_end の時は含まない）。
 
 Usage:
-  watch.py hours            心拍を記録し、勤務時間なら終了コード 0、外なら 1
-  watch.py stale            勤務時間内で心拍が 1 時間より古い（か無い）ときだけ 1 行出す。終了コードは常に 0
+  watch.py hours            心拍を記録し、監視時間帯なら終了コード 0、外なら 1
+  watch.py stale            監視時間帯で心拍が 1 時間より古い（か無い）ときだけ 1 行出す。終了コードは常に 0
   watch.py prs [--dry-run]
       GitHub の新しい出来事を JSON Lines で標準出力に出し、seen.txt と events.jsonl に記録する。
       初回（seen.txt が無いとき）は今あるものをすべて記録し、コメント以外だけを出す。
@@ -138,7 +138,7 @@ def in_work_hours(now: dt.datetime, cfg: dict) -> bool:
 
 
 def is_stale(last: dt.datetime | None, now: dt.datetime, cfg: dict) -> bool:
-    """勤務時間内で、心拍が無いか STALE_AFTER より古いか。心拍は勤務時間外にも書かれる。"""
+    """監視時間帯で、心拍が無いか STALE_AFTER より古いか。心拍は時間帯の外でも書かれる。"""
     return in_work_hours(now, cfg) and (last is None or now - last > STALE_AFTER)
 
 

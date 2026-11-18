@@ -1,17 +1,22 @@
 # AI agent assets
 
-AI agentはClaude Codeだけを管理する。指示、skill、hookは`configs/agent/`を単一ソースにする。
-
-Codexの設定は管理しない。`install.sh`は、以前`~/.codex/`へ置いたdotfiles向けsymlinkを削除し、空の`hooks/`、`prompts/`、`rules/`も削除する。`~/.codex/config.toml`や`~/.codex/hooks.json`からdotfilesのhookを呼んでいるマシンでは、その配線を手で外す。
+Claude Code と Codex の共通の指示とスキルは `configs/agent/` に置く。
+`install.sh` はマシンで選んだ CLI に合わせて配置する。選択方法は [設定ガイド](configuration.md#メインの-coding-agent-cli) を参照。
 
 ## 配置
 
-- `configs/agent/AGENTS.md`
-  - `~/.claude/CLAUDE.md`
-- `configs/agent/skills/<name>/`
-  - `~/.claude/skills/<name>`
-- `configs/agent/hooks/*.sh`
-  - `~/.claude/hooks/`
+| 資産 | Claude Code | Codex |
+| --- | --- | --- |
+| 共通の指示 | `~/.claude/CLAUDE.md` | `${CODEX_HOME:-~/.codex}/AGENTS.md` |
+| スキル | `~/.claude/skills/<name>` | `~/.agents/skills/<name>` |
+| Claude の hooks | `~/.claude/hooks/` | Claude 専用 |
+
+共通ツールは `~/.config/dotfiles-agent` 経由でどちらからも使える。
+Codex のスキル配置からは、Claude のバックグラウンド worker と hooks を使う
+`agents-orchestrator`、`agents-worker`、`agents-thread`、`agents-watch` を除く。
+Codex の `orchestrator` は別の tmux セッション `orchestrator-codex` に、
+`codex-orchestrator.md` を渡した Codex と案件ボードを開く。ボードの worker 欄や
+定期見張り、承認用 hooks は下記の Claude 構成の機能。Codex では内蔵のサブエージェントと権限設定を使う。
 
 `settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`install.sh`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
 
@@ -28,15 +33,15 @@ Claude Codeのauto memoryは`settings.json`の`autoMemoryEnabled: false`で止�
 - `pr-review-comment`: ほかの人のPRに、1つのpending reviewで行コメントを付ける
 - `report-writing`: 上長や関係者に向けた進捗報告・定例の報告資料・報告用の議事録の節を、空雨傘（現状・見立て・ネクストアクション）で書く。付属の`scripts/md_to_gdocs.py`は、Markdownの箇条書きの`- `を`* `に直し（入れ子も、コードブロックと表は変えない）、Google Docsの「Markdownから貼り付け」用にpbcopyでクリップボードに入れる。pbcopyが無ければ標準出力に出す。fishからは`md-gdocs <ファイル>`で呼べる
 
-skillに付けるscriptはskillのディレクトリの中に置き、`~/.claude/skills/<name>/`経由で呼ぶ。テストは`configs/agent/tests/`に置く（`python3 -m unittest configs/agent/tests/test_md_to_gdocs.py`）。
+skillに付けるscriptはskillのディレクトリの中に置く。共通のscriptは`~/.config/dotfiles-agent/skills/<name>/`経由で呼ぶ。テストは`configs/agent/tests/`に置く（`python3 -m unittest configs/agent/tests/test_md_to_gdocs.py`）。
 
 ## なぜ個別symlinkか
 
-`~/.claude/skills/`には、別の方法で導入したskillが同居する。ディレクトリ全体をsymlinkせず、dotfiles管理対象だけを個別にlinkする。
+`~/.claude/skills/`と`~/.agents/skills/`には、別の方法で導入したskillが同居する。dotfiles管理対象は個別にlinkする。
 
 `~/.claude/`のhistory、sessions、cacheなどの動的ファイルは管理しない。
 
-## Hookの配線
+## Claude Code の hook の配線
 
 hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claude/settings.json`）は分ける。
 
@@ -60,7 +65,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 - `"ask"`の理由の文には、送り先（ghのコマンド。`--body`で直接渡した本文は`<本文>`に置き換える。MCPはツール名と本文以外の引数）と送る本文（`--body-file`・`-F key=@file`のファイルは中身を読む）を載せ、ダイアログで何が送られるかを見られるようにする。本文は先頭1500文字で切り、切ったことと全体の文字数を書く
 - 読むだけの`gh api`（GETで本文を持たない呼び出し）は対象にしない
 - コマンドは`&&`・`;`・`|`・改行で分け、`bash -c`・`eval`・`$(…)`の中も見る。`env`や`X=y`を前に付けても同じに扱う。引数の文字列の中に書いたghの文字（`approvals.py add --command 'gh …'`など）は実行ではないので対象にしない
-- `gh`はパスで呼んでも（`~/.local/share/gh-ghtkn/bin/gh`）同じに扱う。`settings.json`の`if`は`Bash(*gh *)`にして、パスで呼んだときも発火させる
+- `gh` は絶対パスで呼んでも同じに扱う。`settings.json` の `if` は `Bash(*gh *)` にして、パスで呼んだときも発火させる
 - 送る前の下書きは`external-post-guard.py --check <file>...`で同じ決まりに当てられる。指摘をファイルごとに標準出力へ出し、指摘があればexit 1、無ければ0、ファイルが無いときは2で終わる。決まりは送り先で変わらない（MarkdownのリンクもSlackのリンクも通す）ので、送り先は渡さない
 - ghの書き込みを`settings.json`の`permissions.ask`には書かない。PreToolUse hookの`allow`ではaskのルールを飛ばせず、承認の記録があってもダイアログが出てしまうため。確認はこのhookの`ask`で出す
 
@@ -136,17 +141,17 @@ Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを�
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
 
-- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。案件の一覧の上には、workerの節（いまどのworkerが何をしているか）も出す。窓口はauto modeで起動する。workerとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に`configs/fish/agent-env.fish`（`~/.config/fish/agent-env.fish`）をsourceし、非対話のfishでは動かないconf.dのmiseとdirenv（allow済みの`.envrc`だけ）の環境と、ghtknの`gh`ラッパー（`~/.local/share/gh-ghtkn/bin`があれば）を取り込む
+- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。案件の一覧の上には、workerの節（いまどのworkerが何をしているか）も出す。窓口はauto modeで起動する。workerとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に `configs/fish/agent-env.fish` を読み、mise と direnv（allow 済みの `.envrc`）の環境を取り込む。必要なら `AGENT_GH_WRAPPER_DIR` で独自の `gh` を指定できる。
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でworkerを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <worker名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/workers/<worker名>/`で起動する。依頼は「ゴール」「完了の条件」「やってよい範囲」で書き、1つのゴールは1人のworkerに調査から検証まで通しで任せる。起動したら`notify_when_idle`のSendMessageを送り、終わったworkerの続きは`--resume`で頼む。急ぎでないworkerの完了や見張りの知らせは案件のファイルに`未報告`で入れるだけにし、「どうなった？」と聞かれたときに案件ごとにまとめて渡す。すぐに伝えるのは、期日がその日のもの、ユーザーの判断が無いとworkerが止まったままのもの、外に出す操作の承認待ちだけ
 - `agents-worker`（skill）: workerの決まり。窓口が依頼の先頭に`/agents-worker`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、workerはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。承認が要る実行をhookやauto modeに止められたときも、コマンドの全文と目的を付けた「要判断」を送り、承認が届いたら同じコマンドを実行し直す。それ以外で進めなくなったときは「ブロック」を送って止まる。取り消せる判断は推奨を選んで続け、`report.md`と完了の報告の「決めたこと」にまとめる。「要判断」で止まるのは、外に出す操作、取り消せない操作、依頼の前提が崩れたときだけ
 - `agents-thread`（skill）: `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために残し、読み込んだら`agents-worker`を読み込ませる。動いているworkerが片付いたら消す
-- `agents-watch`（skill）: 見張りのworker`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。勤務時間（平日9〜19時）だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを、1行ごとに「急ぎ」（期日がその日のもの）か「急ぎでない」を付けて窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けたWaitingは`cases.py sweep`で消す
+- `agents-watch`（skill）: 見張りのworker`chore-hub-watch`の決まり。窓口が起動時に`claude --bg -n chore-hub-watch "/loop 30m /agents-watch"`で起こす。監視時間帯だけ、GitHubの名指しのレビュー依頼と自分のPRの動き（CI失敗、変更要求、ほかの人のコメント）、Slackのpublic・privateチャンネルの自分宛てのメンションを読み、新しい出来事だけを、1行ごとに「急ぎ」（期日がその日のもの）か「急ぎでない」を付けて窓口に送る。GitHubとSlackには書き込まない。案件の一覧の解けたWaitingは`cases.py sweep`で消す
 
 窓口の振る舞いは`agents-orchestrator`の表にまとめている。
 
 ペインの構成と、workerがAskUserQuestionを使わないことは`python3 -m unittest configs/agent/tests/test_orchestrator.py`で確かめる。レイアウトは専用のtmuxソケット（`-L`）で組んで見るので、いつものtmuxサーバーには触らない。
 
-- 承認が要る操作: 仕事仲間に見えるもの、社外に出るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
+- 承認が要る操作: 他の人に見えるもの、外部に送るもの、共有のもの、戻せないものは承認が要る。読むだけ、ローカルで閉じる作業、自分の作業ブランチへのpushは承認なし
 - 承認と外に出す文面: workerは下書きや準備までで止まり、窓口が送る。窓口はAskUserQuestionで、送る本文をpreviewに、previewに全部出ないときはページに分けて複数のpreviewに載せて承認をもらい（下の「AskUserQuestionのpreview」を参照）、承認の記録（`approvals.py`）を書いてから実行するので、確認ダイアログは出ない。記録と一致しない操作には、今までどおり`external-post-guard.py`がダイアログを出す。workerは記録を書かない
 - 文面の形式の直し: workerは「送信の確認待ち」を報告する前に、下書きをtextlintと`external-post-guard.py --check`に通して直しておく。窓口で送るときに文面のチェックに止められたら、窓口はユーザーに聞かずにworkerへ直しを頼み、直ったものを送る。ユーザーには送った結果だけを伝え、形式の直しのことは伝えない
 - 出来事から自動で起動する: 見張りの知らせのうち、承認なしの範囲で済むもの（レビューの下読み、CIの失敗の調査、返信の下書き）は、窓口が聞かずにworkerを起動する。同時に3つまで。起動したことは`~/hub/state/auto-log.md`に1行ずつ残す
@@ -183,7 +188,7 @@ Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを�
 - `seen.txt`: 知らせ済みの出来事のkey。初回は今あるものを記録し、コメント以外だけを出す
 - `events.jsonl`: 知らせた出来事を1行に1つ追記する（`source`、`kind`、`key`、`url`、`title`、`at`）。あとでGTDの受信箱などから読めるよう、形を変えずに追記だけする
 - `watch.json`: 設定（無くてよい）。`ignore_authors`（コメントを知らせないbotなど）、`work_days`、`work_start`、`work_end`
-- Slackはスクリプトから読めないので、見張りのworkerがbrucke-slackで検索し、`watch.py seen slack`で新しいものだけに絞る
+- Slack は見張りの worker が利用できる検索ツールで読み、`watch.py seen slack` で新しいものだけに絞る。
 
 テストは`python3 -m unittest configs/agent/tests/test_agents_watch.py`で実行する。
 

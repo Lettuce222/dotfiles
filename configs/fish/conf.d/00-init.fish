@@ -1,3 +1,5 @@
+fish_add_path --path "$HOME/.local/bin"
+
 if status is-interactive
   ~/.local/bin/mise activate fish | source
   direnv hook fish | source

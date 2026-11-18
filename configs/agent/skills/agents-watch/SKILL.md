@@ -19,15 +19,15 @@ description: 窓口（orchestrator）が起動する見張りの worker chore-hu
 
 ## 1 回の手順
 
-1. `python3 ~/.claude/skills/agents-watch/scripts/watch.py hours` を実行する。終了コードが 0 でなければ（勤務時間の外）、何もせずに終わる。
+1. `python3 ~/.claude/skills/agents-watch/scripts/watch.py hours` を実行する。終了コードが 0 でなければ（監視時間帯の外）、何もせずに終わる。
 2. GitHub: `python3 ~/.claude/skills/agents-watch/scripts/watch.py prs` を実行する。新しい出来事が JSON Lines で出る。出たものは、もう記録済み。
    - `review_request`: 自分が名指しで頼まれたレビュー（チーム・CODEOWNERS 経由は除く）。head が変わるとまた出る
    - `ci_failed`: 自分の PR の CI の失敗（head ごとに 1 回）
    - `changes_requested`: 自分の PR への変更要求
    - `comment`: 自分の PR への、ほかの人の新しいコメント（PR ごとにまとめる。`note` は書いた人）
-3. Slack: brucke-slack の `slack_search_public_and_private` で、自分宛てのメンションを読む。
-   - 自分の user ID は、ツールの説明（`Current logged in user's user_id is …`）か、`slack_read_user_profile`（引数なし）で分かる。
-   - `keywords: ["<@自分の ID>"]`、`channel_types: "public_channel,private_channel"`（DM は読まない）、`filters: "after:<7 日前の日付 YYYY-MM-DD>"`（`after:` はその日を含まない。勤務時間外や週末、見張りが止まっていたあいだのメンションも拾えるよう広めに読み、知らせ済みは `seen` で除く）、`sort: "timestamp"`、`include_context: false`、`natural_language_query: ""`。
+3. Slack: 利用できる読み取りツールで、自分宛てのメンションを読む。ツールが無ければこの手順を省く。
+   - 検索の形式は使うツールの説明に従い、認証中のユーザーへのメンションに絞る。
+   - 直近 7 日間の公開・非公開チャンネルを対象にし、DM は読まない。知らせ済みの項目は `seen` で除く。
    - 自分が書いたメッセージは除く。
    - 1 件ごとに `{"key": "slack:<channel ID>/<ts>", "url": "<permalink>", "title": "<#チャンネル名> <書いた人>: <要点を 1 行>", "kind": "mention"}` を作り、まとめて `watch.py seen slack` の標準入力に渡す。出てきたものだけが新しい出来事で、もう記録済み。
 4. 案件の一覧: `python3 ~/.claude/skills/agents-orchestrator/scripts/cases.py sweep` を実行する（案件の形と決まりは `agents-orchestrator` の「案件の一覧」）。Waiting のうち、` → ` の前の PR がすべて merge・close 済みのものは、スクリプトがもう消し、` → ` のあとを「TODO」に移している。出力の 1 行ごとに次のように扱う。

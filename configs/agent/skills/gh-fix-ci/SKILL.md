@@ -1,6 +1,6 @@
 ---
 name: gh-fix-ci
-description: GitHub Actions で走る PR check が失敗したとき、gh CLI でチェック一覧とログを取得し、失敗要因を要約して修正計画を提示、承認後に実装するスキル。業務で扱う GitHub 上のリポジトリで「CI が赤い」「PR check が落ちた」「この失敗を直して」「GitHub Actions の原因を調べて」と言われたら必ず使う。PR URL・PR 番号・チェック名などが出てきた場合も発動。ただし Buildkite や CircleCI など外部 CI は対象外で、details URL の報告のみに留める。
+description: GitHub Actions で走る PR check が失敗したとき、gh CLI でチェック一覧とログを取得し、失敗要因を要約して修正計画を提示、承認後に実装するスキル。GitHub 上のリポジトリで「CI が赤い」「PR check が落ちた」「この失敗を直して」「GitHub Actions の原因を調べて」と言われたら必ず使う。PR URL・PR 番号・チェック名などが出てきた場合も発動。ただし Buildkite や CircleCI など外部 CI は対象外で、details URL の報告のみに留める。
 ---
 
 # gh-fix-ci

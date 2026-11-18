@@ -1,6 +1,6 @@
 ## Shell Environment
 
-- The user's interactive shell is fish, but the Bash tool runs zsh. Write POSIX syntax for commands you run yourself.
+- The user's interactive shell is fish. Use POSIX shell syntax for tool commands when the tool's shell is Bash or zsh.
 - Use fish syntax only when showing commands for the user to run.
 
 ## Engineering Judgement

@@ -200,7 +200,7 @@ def gh_body(argv):
 
 
 def is_gh(arg):
-    """True for `gh` itself or a path to it (~/.local/share/gh-ghtkn/bin/gh)."""
+    """True for `gh` itself or a path to a binary named `gh`."""
     return os.path.basename(arg) == "gh"
 
 

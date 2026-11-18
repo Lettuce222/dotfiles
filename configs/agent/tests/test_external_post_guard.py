@@ -151,7 +151,7 @@ class GuardTest(unittest.TestCase):
         self.assertAsk(self.bash("gh api repos/o/r/issues -f title=x -f body=ok"))
 
     def test_gh_called_by_path_is_checked_the_same(self):
-        gh = "~/.local/share/gh-ghtkn/bin/gh"
+        gh = "~/.local/custom-tools/bin/gh"
         self.assertPass(self.bash(f"{gh} api repos/o/r/pulls/1"))
         self.assertAsk(self.bash(f"{gh} pr comment 12 --body ok"))
 

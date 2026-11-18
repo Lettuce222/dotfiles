@@ -17,8 +17,10 @@ configs/fish/fish_variables
 # Claude - local settings (machine-specific)
 configs/claude/settings.local.json
 
-# mise - config.toml is written by the work Mac's Jamf policy (pmsec);
-# dotfiles' own settings live in config.local.toml, which mise reads with higher priority
+# Coding agent CLI selection (machine-specific)
+configs/agent/cli.local
+
+# mise - machine-local config is separate from the tracked config.local.toml
 configs/mise/config.toml
 
 # git - configs/git/ignore is the global gitignore that tools append to

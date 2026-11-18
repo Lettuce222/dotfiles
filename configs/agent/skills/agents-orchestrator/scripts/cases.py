@@ -980,14 +980,14 @@ def code_signature() -> tuple | None:
     return (st.st_mtime_ns, st.st_size)
 
 
-def board(d: Path, once: bool, width: int | None, height: int | None, by_case: bool = False) -> int:
+def board(d: Path, once: bool, width: int | None, height: int | None, by_case: bool = False, *, show_workers: bool = True) -> int:
     def size():
         ts = shutil.get_terminal_size((60, 30))
         return width or ts.columns, height or ts.lines
 
     if once:
         w, h = size()
-        sys.stdout.write("\n".join(render(d, w, h, fetch_workers(), by_case)) + "\n")
+        sys.stdout.write("\n".join(render(d, w, h, fetch_workers() if show_workers else [], by_case)) + "\n")
         return 0
 
     resized = [True]
@@ -996,7 +996,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
     out.write("\x1b[?25l")  # カーソルを隠す
     last = None
     code = seen = code_signature()
-    workers, polled = None, None
+    workers, polled = [], None
     try:
         while True:
             now_code = code_signature()
@@ -1007,7 +1007,7 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
                 os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
             seen = now_code
             w, h = size()
-            if polled is None or time.monotonic() - polled >= WORKER_POLL:
+            if show_workers and (polled is None or time.monotonic() - polled >= WORKER_POLL):
                 workers, polled = fetch_workers(), time.monotonic()
             key = (signature(d), w, h, workers, current_date())  # 日付が変わると期日の出し方が変わる
             if key != last or resized[0]:
@@ -1038,6 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--width", type=int)
     b.add_argument("--height", type=int)
     b.add_argument("--by-case", action="store_true")
+    b.add_argument("--no-workers", action="store_true", help="Claude の worker 一覧を省く")
     s = sub.add_parser("sweep")
     s.add_argument("--dry-run", action="store_true")
     r = sub.add_parser("resolve")
@@ -1048,7 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
 
     d = cases_dir()
     if args.cmd == "board":
-        return board(d, args.once, args.width, args.height, args.by_case)
+        return board(d, args.once, args.width, args.height, args.by_case, show_workers=not args.no_workers)
     if args.cmd == "sweep":
         try:
             actions = sweep(d, dry_run=args.dry_run)

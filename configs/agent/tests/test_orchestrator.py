@@ -23,6 +23,36 @@ ORCH = SKILLS / "agents-orchestrator" / "SKILL.md"
 FISH_FN = ROOT / "configs" / "fish" / "functions" / "orchestrator.fish"
 
 
+@unittest.skipUnless(shutil.which("fish"), "fish が要る")
+class LauncherTest(unittest.TestCase):
+    def test_cw_dispatches_to_selected_cli_with_extra_directories(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            config = root / ".config"
+            config.mkdir()
+            assets = config / "dotfiles-agent"
+            assets.mkdir()
+            shutil.copy(ROOT / "configs/agent/select-cli.sh", assets)
+            choice = assets / "cli.local"
+            choice.write_text("codex\n")
+            (config / "dotfiles-agent-cli").symlink_to(choice)
+            for name in ("claude", "codex", "ghq"):
+                command = root / name
+                output = 'printf "%s\\n" "$0" "$@"' if name != "ghq" else 'echo "/repos/with spaces"'
+                command.write_text(f"#!/bin/sh\n{output}\n")
+                command.chmod(0o755)
+            env = {**os.environ, "HOME": home, "PATH": f"{home}{os.pathsep}{os.environ['PATH']}"}
+            env.pop("DOTFILES_AGENT", None)
+            script = "source $argv[1]/agent.fish; source $argv[1]/cw.fish; cw spaces"
+            command = ["fish", "--no-config", "-c", script, str(FISH_FN.parent)]
+            for provider, override in (("codex", {}), ("claude", {"DOTFILES_AGENT": "claude"})):
+                with self.subTest(provider=provider):
+                    out = subprocess.run(
+                        command, env={**env, **override}, capture_output=True, text=True, check=True
+                    ).stdout.splitlines()
+                    self.assertEqual(out, [str(root / provider), "--add-dir", "/repos/with spaces"])
+
+
 class SkillRulesTest(unittest.TestCase):
     def test_worker_does_not_use_ask_user_question(self):
         for line in WORKER.read_text(encoding="utf-8").splitlines():
@@ -197,10 +227,13 @@ HARNESS = r"""
 set -l sock $argv[1]
 set -l fn $argv[2]
 set -l mode $argv[3]
-function tmux --inherit-variable sock; command tmux -L $sock $argv; end
-function claude; sleep 600; end
-mkdir -p $HOME/.claude/skills/agents-orchestrator/scripts
-echo 'import time; time.sleep(600)' > $HOME/.claude/skills/agents-orchestrator/scripts/cases.py
+set -l provider $argv[4]
+set -l session orchestrator
+if test "$provider" = codex
+    set session orchestrator-codex
+end
+function tmux --inherit-variable sock; command tmux -f /dev/null -L $sock $argv; end
+source (dirname "$fn")/agent.fish
 source $fn
 set -x TMUX dummy
 if test "$mode" = old
@@ -209,29 +242,48 @@ if test "$mode" = old
     tmux split-window -v -b -d -l 50% -t $right 'sleep 600'
     tmux set-option -p -t (tmux list-panes -t orchestrator -F '#{pane_id}')[2] @orchestrator_role cases
 end
-orchestrator >/dev/null 2>&1
-orchestrator >/dev/null 2>&1
-tmux list-panes -t '=orchestrator:^' -F '#{pane_left} #{@orchestrator_role} #{pane_active} #{pane_start_command}'
+orchestrator >/dev/null
+orchestrator >/dev/null
+tmux list-panes -t "=$session:^" -F '#{pane_left} #{@orchestrator_role} #{pane_active} #{pane_start_command}'
 """
 
 
 @unittest.skipUnless(shutil.which("fish") and shutil.which("tmux"), "fish と tmux が要る")
 class LayoutTest(unittest.TestCase):
-    def run_layout(self, mode):
+    def run_layout(self, mode, provider="claude"):
         sock = f"orchtest-{uuid.uuid4().hex[:8]}"
         with tempfile.TemporaryDirectory() as home:
             harness = Path(home) / "harness.fish"
             harness.write_text(HARNESS, encoding="utf-8")
-            env = {**os.environ, "HOME": home, "AGENT_ORCHESTRATOR_HOME": str(Path(home) / "hub")}
+            assets = Path(home) / ".config/dotfiles-agent"
+            scripts = assets / "skills/agents-orchestrator/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "cases.py").write_text("import time; time.sleep(600)\n")
+            for filename in ("select-cli.sh", "codex-orchestrator.md"):
+                shutil.copy(ROOT / "configs/agent" / filename, assets)
+            bin_dir = Path(home) / "bin"
+            bin_dir.mkdir()
+            for cli in ("claude", "codex"):
+                executable = bin_dir / cli
+                executable.write_text("#!/bin/sh\nexec sleep 600\n")
+                executable.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": home,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "DOTFILES_AGENT": provider,
+                "AGENT_ORCHESTRATOR_HOME": str(Path(home) / "hub with spaces"),
+            }
             try:
-                out = subprocess.run(
-                    ["fish", "--no-config", str(harness), sock, str(FISH_FN), mode],
-                    env=env, capture_output=True, text=True, timeout=30, check=True,
-                ).stdout
+                result = subprocess.run(
+                    ["fish", "--no-config", str(harness), sock, str(FISH_FN), mode, provider],
+                    env=env, capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
             finally:
                 subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
         panes = []
-        for line in out.splitlines():
+        for line in result.stdout.splitlines():
             left, role, active, cmd = (line.split(" ", 3) + [""])[:4]
             panes.append({"left": int(left), "role": role, "active": active == "1", "cmd": cmd})
         return sorted(panes, key=lambda p: p["left"])
@@ -250,6 +302,12 @@ class LayoutTest(unittest.TestCase):
         panes = self.run_layout("new")
         self.assert_two_panes(panes)
         self.assertIn("/agents-orchestrator", panes[0]["cmd"])
+
+    def test_codex_uses_a_separate_session_with_case_board(self):
+        panes = self.run_layout("old", "codex")
+        self.assert_two_panes(panes)
+        self.assertIn("codex", panes[0]["cmd"])
+        self.assertIn("--no-workers", panes[1]["cmd"])
 
     def test_old_session_drops_agents_pane(self):
         panes = [p for p in self.run_layout("old")]

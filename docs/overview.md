@@ -9,7 +9,7 @@ dotfilesに何があり、どこへ置かれ、何をしているかを、全体
 3. [普段の使われ方](#普段の使われ方)
 4. フォルダごとの詳細
    - [リポジトリ直下](#リポジトリ直下)
-   - [`configs/agent/`](#configsagent): Claude Codeの指示・skill・hook
+   - [`configs/agent/`](#configsagent): Claude CodeとCodexの共通資産・Claude専用hook
    - [`configs/claude/`](#configsclaude): Claude Code本体の設定
    - [`configs/fish/`](#configsfish): シェル
    - [`configs/tmux/`](#configstmux): ターミナルマルチプレクサ
@@ -30,7 +30,7 @@ dotfilesに何があり、どこへ置かれ、何をしているかを、全体
 dotfiles/
 ├── install.sh            セットアップの起点。configs/ を $HOME へ symlink し、ツールを入れる
 ├── configs/              設定の本体。アプリごとに 1 フォルダ
-│   ├── agent/            Claude Code の指示・skill・hook（いちばん大きく、よく変わる）
+│   ├── agent/            Claude Code と Codex の指示・skill・窓口
 │   ├── claude/           Claude Code 本体の settings.json・statusline
 │   ├── fish/             シェル。abbr、関数、orchestrator コマンド
 │   ├── tmux/             tmux.conf と、リンクを開く・PR を開くスクリプト
@@ -52,7 +52,7 @@ dotfiles/
 | --- | --- | --- |
 | 基本 | `mise`、`fish`、`git`、`gh` | ツールを入れ、シェルとGitの動きを決める |
 | 画面 | `ghostty`、`tmux`、`nvim`、`lazygit`、`hammerspoon`、`karabiner` | ターミナル、エディタ、ウィンドウ、キー |
-| AIエージェント | `agent`、`claude`、`textlint` | Claude Codeの指示、外に出る文面の確認、窓口（orchestrator）とworker |
+| AIエージェント | `agent`、`claude`、`textlint` | Claude CodeとCodexの指示、案件ボード、Claudeの文面確認・worker |
 
 最近の変更の大半はAIエージェントの層に入っている（2026年10月20日以降のコミットで変わったファイルの数は、`configs/agent`と`configs/tmux`がそれぞれ100前後、`docs/agent-assets.md`が47、ほかは1桁から十数）。`configs/tmux`の多くは、のちに消した前の窓口（hub）の分。
 
@@ -64,8 +64,10 @@ dotfiles/
 | --- | --- | --- |
 | `configs/<app>/`（下の3つ以外すべて） | `~/.config/<app>` | フォルダごとsymlink |
 | `configs/hammerspoon/` | `~/.hammerspoon` | フォルダごとsymlink |
-| `configs/agent/AGENTS.md` | `~/.claude/CLAUDE.md` | ファイルをsymlink |
-| `configs/agent/skills/<name>/` | `~/.claude/skills/<name>` | skillごとにsymlink（ほかで入れたskillと同居させるため） |
+| `configs/agent/` | `~/.config/dotfiles-agent` | 共通コマンドから参照するsymlink |
+| `configs/agent/cli.local` | `~/.config/dotfiles-agent-cli` | マシンごとのCLI選択ファイルをsymlink |
+| `configs/agent/AGENTS.md` | Claudeは`~/.claude/CLAUDE.md`、Codexは`~/.codex/AGENTS.md`（`CODEX_HOME`で変更可） | ファイルをsymlink |
+| `configs/agent/skills/<name>/` | Claudeは`~/.claude/skills/<name>`、Codexは`~/.agents/skills/<name>` | 選択中のCLI向けにskillごとにsymlink |
 | `configs/agent/hooks/*` | `~/.claude/hooks/` | ファイルごとにsymlinkし、実行ビットを付ける |
 | `configs/claude/*.sh` | `~/.claude/` | ファイルごとにsymlink |
 | `configs/claude/settings.json`と`settings.local.json` | `~/.claude/settings.json` | 合成して普通のファイルとして書き出す |
@@ -73,7 +75,7 @@ dotfiles/
 
 `install.sh`の動き方は3つ。
 
-- 引数なし: Homebrew、fish、ログインシェル、symlink、mise、textlint、アプリ、macOSのキーリピートまで全部。
+- 引数なし: fish、ログインシェル、symlink、mise、textlint、選んだagentのCLI、macOSではHomebrew・アプリ・キーリピートまで。
 - `--links-only`: symlinkと設定の生成だけ。ネットワークに出ず、symlinkでない本物のファイルは置き換えない。エージェントが反映に使う。
 - `--dry-run`: `--links-only`の予定だけを出す。
 
@@ -82,8 +84,9 @@ dotfiles/
 追跡しない、そのマシンだけの設定は次のとおり。中身はコミットされない。
 
 - `configs/fish/**/*.local.fish`、`configs/fish/functions/local/`
-- `configs/claude/settings.local.json`（仕事用のpluginなど）
-- `configs/mise/config.toml`（仕事用のMacではJamfが書く）
+- `configs/agent/cli.local`（メインのCLIを指定。初回の既定はmacOSでClaude、UbuntuでCodex）
+- `configs/claude/settings.local.json`（マシン固有のpluginなど）
+- `configs/mise/config.toml`（マシン固有のmise設定）
 - `configs/git/ignore`（ほかのツールが行を書き足す）
 - `configs/hammerspoon/layouts.yml`
 
@@ -97,6 +100,7 @@ dotfiles/
 2. tmux（`configs/tmux/`）はprefixが`Ctrl-Space`。Ghosttyで押すとKarabiner（`configs/karabiner/`）が英数キーも送り、IMEをオフにする。`prefix g`でlazygit、`prefix e`でnvim、`prefix p`でPRのURLからworktreeを開く。
 3. Claude Codeは`configs/claude/settings.json`で動きが決まる。tmuxのウィンドウ名に状態の印（🟡作業中、🔴確認待ち、🟢終わった）を付けるhook、外に出る文面を止めるhook、textlintのhookがここで配線される。hookの本体は`configs/agent/hooks/`にある。
 4. `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）でtmux session `orchestrator`を開く。左が窓口（`claude -n orchestrator`）、右が案件の一覧（`cases.py board`）。窓口は依頼ごとにbackgroundのworker（`claude --bg`）を起こし、見張りのworker`chore-hub-watch`が30分ごとにGitHubとSlackを読む。リポジトリを変えるworkerはそのリポジトリのworktreeで、ほかは`~/hub/workers/<worker名>/`で動く。決まりは`configs/agent/skills/`の`agents-orchestrator`・`agents-worker`・`agents-watch`の3つのskill。
+   Codexを選んだマシンでは`orchestrator-codex`にCodexと同じ案件ボードが開く。委任はCodexのサブエージェントを使う。
 5. 画面に出たリンク（OSC 8）をtmuxでクリックすると`configs/tmux/scripts/open-link.sh`が開く。`.md`はpopupのleaf、ほかのテキストはpopupのnvim、フォルダはFinder。
 6. ウィンドウの配置はHammerspoon（`configs/hammerspoon/`）が`Alt`系のキーで行う。
 
@@ -107,15 +111,19 @@ dotfiles/
 | ファイル | 役割 |
 | --- | --- |
 | `install.sh` | セットアップの起点。Phase 1（sh）でHomebrew・fish・symlink・設定の生成、Phase 2（fish）でフォント・mise・textlint・アプリ（Slack、Ghostty、Raycastなど）・macOSのキーリピート |
-| `CLAUDE.md` | このリポジトリで作業するエージェントへの決まり（`configs/`を編集する、両OSを壊さない、mainへ直接push、`./install.sh`で反映してから完了） |
+| `AGENTS.md` | このリポジトリの共通ルール。Claude Code と Codex の両方への対応、編集、Git、反映手順 |
+| `CLAUDE.md` | Claude Code が共通ルールを読み込むための入口 |
 | `README.md` | 新しいMacでのセットアップ手順と、含まれる設定の一覧 |
 | `.gitignore` | local設定、バックアップ（`*.bak.*`）、`node_modules`などを除く |
 
 ### `configs/agent/`
 
-Claude Codeに読ませる指示・skill・hook。dotfilesでいちばん大きく、最近の変更の大半がここ。決まりの全文は[`docs/agent-assets.md`](agent-assets.md)。
+Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と決まりは[`docs/agent-assets.md`](agent-assets.md)。
 
-`configs/agent/AGENTS.md`は、どのリポジトリでも毎回読まれる指示（`~/.claude/CLAUDE.md`）。中身は4つだけで、Bashはzshで動くこと、周りのコードに合わせること、外に出す文面はまず`.md`に下書きしてtextlintを通すこと、会社や案件の文脈をdotfilesに置かないこと。
+`configs/agent/AGENTS.md`は、どのリポジトリでも毎回読まれる共通の指示。対話シェルはfish、Bash・zshのツールコマンドはPOSIX構文を使う。周りのコードに合わせること、外に出す文面はまず`.md`に下書きしてtextlintを通すこと、会社や案件の文脈をdotfilesに置かないことも書く。
+
+- `configs/agent/select-cli.sh`はマシンのCLI選択を解決する。インストーラーとfishの`agent`が共用する。
+- `configs/agent/codex-orchestrator.md`はCodexを窓口として開くときの初期指示。
 
 #### skill（`configs/agent/skills/`）
 
@@ -196,15 +204,16 @@ Claude Code本体の設定。skillやhookの本体は`configs/agent/`に置く�
 | `configs/fish/conf.d/abbreviations.fish` | abbr。`g`→git、`lg`→lazygit、`cl`→claude、`n`→nvim、`gps`→git push、Rails系など |
 | `configs/fish/conf.d/fish_frozen_key_bindings.fish`、`configs/fish/conf.d/fish_frozen_theme.fish` | fish 4.3への移行でfishが作ったファイル。色のテーマ |
 | `configs/fish/conf.d/local.fish.example` | local設定の雛形 |
-| `configs/fish/agent-env.fish` | `orchestrator`が窓口を起動する前に読み込む。非対話のfishでもmise・direnv・ghtknの`gh`ラッパーを使えるようにする |
+| `configs/fish/agent-env.fish` | `orchestrator` の起動前に mise・direnv と指定された `gh` ラッパーの環境を取り込む |
 
 関数（`configs/fish/functions/`）は次のとおり。
 
 | 関数 | 何をするか |
 | --- | --- |
+| `configs/fish/functions/agent.fish` | 選択中のCLIを起動する。`agent --which`で選択を表示 |
 | `configs/fish/functions/orchestrator.fish` | 窓口と案件の一覧のtmux sessionを開く（[普段の使われ方](#普段の使われ方)の4） |
 | `configs/fish/functions/cd.fish`、`configs/fish/functions/code.fish` | 引数なしなら`ghq list`をfzfで選んで移る、VS Codeで開く |
-| `configs/fish/functions/cw.fish` | ghqのリポジトリを`--add-dir`で足してClaude Codeを起動 |
+| `configs/fish/functions/cw.fish` | ghqのリポジトリを`--add-dir`で足して選択中のCLIを起動 |
 | `configs/fish/functions/td.fish` | 今のフォルダ名でtmux sessionを作って移る |
 | `configs/fish/functions/review-pr.fish` | 自分宛てのレビュー依頼をfzfで選んでcheckout |
 | `configs/fish/functions/create-pr.fish`、`configs/fish/functions/plan-issue.fish` | gooseのrecipe（`~/.goose/recipes/`、dotfilesの外）でPRや計画を作る。古い仕組み |
@@ -284,7 +293,7 @@ AstroNvim v5のテンプレートから作った設定。`~/.config/nvim`へsyml
 | `configs/mise/config.local.toml` | dotfilesが入れるCLIツールの一覧（fd、fzf、rg、gh、ghq、tmux、lazygit、delta、eza、zoxide、leaf、node、python、go、各種のlinter）。`minimum_release_age = "7d"`で出たばかりの版は入れない |
 | `configs/mise/default-python-packages` | pythonを入れたときにpipで入れるライブラリ（PyYAML） |
 
-`config.toml`はJamfに任せるためgitignore済み。`mise use -g`は`config.toml`に書くので、dotfilesには入らない。
+`config.toml` はマシン固有の設定として Git 管理外。`mise use -g` は `config.toml` に書く。
 
 ### `configs/textlint/`
 

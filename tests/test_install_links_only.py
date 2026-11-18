@@ -8,6 +8,7 @@ brew・fish・chsh などは PATH の先頭に置いた偽物に差し替え、�
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,9 @@ class InstallTestCase(unittest.TestCase):
         (configs / "claude" / "statusline.sh").write_text("#!/bin/sh\n")
         (configs / "claude" / "settings.json").write_text(json.dumps({"hooks": {"Stop": [{"command": "a"}]}}))
         (configs / "agent" / "skills" / "demo").mkdir(parents=True)
+        (configs / "agent" / "skills" / "agents-worker").mkdir()
         (configs / "agent" / "AGENTS.md").write_text("# agents\n")
+        shutil.copy(INSTALL_SH.parent / "configs" / "agent" / "select-cli.sh", configs / "agent")
         (configs / "agent" / "hooks").mkdir()
         (configs / "agent" / "hooks" / "guard.py").write_text("print()\n")
         (configs / "hammerspoon").mkdir()
@@ -53,7 +56,7 @@ class InstallTestCase(unittest.TestCase):
             stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{self.log}"\n')
             stub.chmod(0o755)
 
-    def run_install(self, *args, repo=None, check=True):
+    def run_install(self, *args, repo=None, check=True, platform="Darwin", agent=None, codex_home=None):
         repo = repo or self.repo
         env = {
             "HOME": str(self.home),
@@ -61,6 +64,13 @@ class InstallTestCase(unittest.TestCase):
             "SHELL": str(self.bin / "fish"),
             "TMPDIR": str(self.tmp),
         }
+        uname = self.bin / "uname"
+        uname.write_text(f"#!/bin/sh\nprintf '%s\\n' {platform}\n")
+        uname.chmod(0o755)
+        if agent is not None:
+            env["DOTFILES_AGENT"] = agent
+        if codex_home is not None:
+            env["CODEX_HOME"] = str(codex_home)
         r = subprocess.run(
             ["sh", str(repo / "install.sh"), *args], env=env, capture_output=True, text=True, check=False
         )
@@ -124,6 +134,9 @@ class InstallLinksOnlyTest(InstallTestCase):
     def test_dry_run_changes_nothing(self):
         r = self.run_install("--dry-run")
         self.assertEqual(list(self.home.iterdir()), [])
+        choice = self.repo / "configs/agent/cli.local"
+        self.assertFalse(choice.exists())
+        self.assertIn(f"(dry-run) write {choice} (claude)", r.stdout)
         self.assertIn(f"(dry-run) link {self.home}/.config/foo -> {self.repo}/configs/foo", r.stdout.splitlines())
         self.assertIn(f"(dry-run) write {self.home}/.claude/settings.json", r.stdout.splitlines())
         self.assertEqual(self.installer_calls(), "")
@@ -228,6 +241,114 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertIn("Phase 2", r.stdout)
         self.assertIn("fish -c", self.installer_calls())
         self.assertEqual(self.link(".config/foo"), str(self.repo / "configs" / "foo"))
+
+    @unittest.skipUnless(shutil.which("fish"), "fish が要る")
+    def test_full_linux_setup_installs_codex_without_macos_tools(self):
+        fish = shlex.quote(shutil.which("fish"))
+        (self.bin / "fish").write_text(f'#!/bin/sh\nexec {fish} --no-config "$@"\n')
+        (self.repo / "configs" / "textlint").mkdir()
+        curl = self.bin / "curl"
+        curl.write_text(
+            '#!/bin/sh\n'
+            f'printf "%s\\n" "$*" >> {shlex.quote(str(self.log))}\n'
+            '[ "$2" = https://chatgpt.com/codex/install.sh ] || exit 1\n'
+            'printf "%s\\n" \'mkdir -p "$HOME/.local/bin"\' \'ln -s /usr/bin/true "$HOME/.local/bin/codex"\'\n'
+        )
+
+        self.run_install(platform="Linux")
+
+        self.assertTrue((self.home / ".local/bin/codex").is_file())
+        self.assertFalse((self.home / ".claude").exists())
+        calls = self.installer_calls()
+        self.assertIn("https://chatgpt.com/codex/install.sh", calls)
+        self.assertNotIn("brew ", calls)
+        self.assertNotIn("defaults ", calls)
+
+    def test_linux_links_codex_assets_without_touching_claude(self):
+        self.run_install("--links-only", platform="Linux")
+        assets = self.repo / "configs" / "agent"
+        self.assertEqual(self.link(".config/dotfiles-agent-cli"), str(assets / "cli.local"))
+        self.assertEqual((assets / "cli.local").read_text(), "codex\n")
+        self.assertEqual(self.link(".config/dotfiles-agent"), str(assets))
+        self.assertEqual(self.link(".codex/AGENTS.md"), str(assets / "AGENTS.md"))
+        self.assertEqual(self.link(".agents/skills/demo"), str(assets / "skills" / "demo"))
+        self.assertFalse((self.home / ".agents/skills/agents-worker").exists())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertEqual(self.run_install("--links-only", platform="Linux").stdout, "変更なし\n")
+
+    def test_machine_setting_and_env_override(self):
+        choice = self.home / ".config" / "dotfiles-agent-cli"
+        source = self.repo / "configs/agent/cli.local"
+        choice.parent.mkdir()
+        choice.write_text("codex\n")
+        codex_home = self.home / "codex-profile"
+        plan = self.run_install("--dry-run", codex_home=codex_home).stdout
+        self.assertIn(f"link {codex_home}/AGENTS.md", plan)
+        self.assertFalse(codex_home.exists())
+        self.assertNotIn(".claude/", plan)
+        self.assertIn(f"move {choice} to {source}", plan)
+        self.assertFalse(source.exists())
+        self.assertFalse(choice.is_symlink())
+        self.run_install("--links-only", agent="claude")
+        self.assertTrue((self.home / ".claude/CLAUDE.md").exists())
+        self.assertFalse((self.home / ".codex").exists())
+        self.assertEqual(self.link(".config/dotfiles-agent-cli"), str(source))
+        self.assertEqual(choice.read_text(), "codex\n")
+        self.assertEqual(source.read_text(), "codex\n")
+
+    def test_checkout_choice_wins_and_legacy_file_is_backed_up(self):
+        source = self.repo / "configs/agent/cli.local"
+        source.write_text("codex\n")
+        choice = self.home / ".config/dotfiles-agent-cli"
+        choice.parent.mkdir()
+        choice.write_text("claude\n")
+
+        self.run_install("--links-only")
+
+        self.assertEqual(self.link(".config/dotfiles-agent-cli"), str(source))
+        self.assertEqual(source.read_text(), "codex\n")
+        self.assertTrue((self.home / ".codex/AGENTS.md").is_file())
+        self.assertEqual([p.read_text() for p in choice.parent.glob("dotfiles-agent-cli.bak.*/choice")], ["claude\n"])
+
+    def test_env_override_does_not_seed_local_file_with_override(self):
+        self.run_install("--links-only", agent="codex")
+        choice = self.home / ".config/dotfiles-agent-cli"
+        self.assertEqual(choice.read_text(), "claude\n")
+        self.assertTrue((self.home / ".codex/AGENTS.md").is_file())
+
+    def test_rejects_invalid_agent_before_writing(self):
+        r = self.run_install("--links-only", agent="other", check=False)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("expected claude or codex", r.stderr)
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_existing_codex_instructions_and_skills_survive_full_install(self):
+        codex_home = self.home / "codex-profile"
+        codex_home.mkdir()
+        (codex_home / "AGENTS.md").write_text("mine\n")
+        (codex_home / "config.toml").write_text("# mine\n")
+        existing_skill = self.home / ".agents/skills/demo"
+        existing_skill.mkdir(parents=True)
+        (existing_skill / "SKILL.md").write_text("mine\n")
+        r = self.run_install(agent="codex", codex_home=codex_home)
+        self.assertIn(f"skip: {codex_home}/AGENTS.md already exists", r.stderr)
+        self.assertEqual((codex_home / "AGENTS.md").read_text(), "mine\n")
+        self.assertEqual((codex_home / "config.toml").read_text(), "# mine\n")
+        self.assertEqual([p.name for p in existing_skill.iterdir()], ["SKILL.md"])
+        self.assertFalse((self.home / ".claude").exists())
+
+    def test_repairs_dangling_claude_hooks_link_with_backup(self):
+        hooks = self.home / ".claude" / "hooks"
+        hooks.parent.mkdir()
+        hooks.symlink_to("/nix/store/gone/.claude/hooks")
+        self.assertIn("back up dangling link", self.run_install("--dry-run").stdout)
+        self.assertTrue(hooks.is_symlink())
+        self.run_install("--links-only")
+        self.assertFalse(hooks.is_symlink())
+        self.assertTrue((hooks / "guard.py").is_file())
+        backups = list(hooks.parent.glob("hooks.bak.*/link"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(os.readlink(backups[0]), "/nix/store/gone/.claude/hooks")
 
 
 class GitIgnoreTest(InstallTestCase):

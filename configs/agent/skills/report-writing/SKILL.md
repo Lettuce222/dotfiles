@@ -63,7 +63,7 @@ description: 上長や関係者に向けた進捗報告、定例の報告資料�
 Google Docs の「Markdown から貼り付け」は、`- ` の箇条書きの入れ子を正しく読めないことがある。貼り先が Google Docs なら、資料を Markdown のファイルに書いてから次のコマンドでコピーし、ユーザーに「Markdown から貼り付け」で貼ってもらう。
 
 ```sh
-python3 ~/.claude/skills/report-writing/scripts/md_to_gdocs.py <ファイル>
+python3 ~/.config/dotfiles-agent/skills/report-writing/scripts/md_to_gdocs.py <ファイル>
 ```
 
 - 箇条書きの記号 `- ` を `* ` に直す（入れ子も）。コードブロックの中、表、水平線は変えない

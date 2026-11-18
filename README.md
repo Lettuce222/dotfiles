@@ -1,6 +1,6 @@
 # dotfiles
 
-macOS (Apple Silicon) 用の個人設定ファイル群。
+macOS (Apple Silicon) と Ubuntu 用の個人設定ファイル群。
 
 ## セットアップ
 
@@ -25,6 +25,11 @@ ghq get Lettuce222/dotfiles
 # install.shの実行
 cd "$(ghq root)/github.com/Lettuce222/dotfiles" && ./install.sh
 ```
+
+Ubuntuではこのリポジトリを取得して `./install.sh` を実行します。
+メインの coding agent CLI は macOS では Claude Code、Ubuntu では Codex が既定です。
+fish で `agent` を実行すると起動し、`agent --which` で選択を確認できます。
+マシンごとの切り替えは [設定ガイド](docs/configuration.md#メインの-coding-agent-cli) を参照してください。
 
 ## 含まれる設定
 

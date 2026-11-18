@@ -1,12 +1,12 @@
-function cw --description "Claude Code with extra repo context (Vault + ghq repos)"
-    set repos
+function cw --description 'ghq から作業ディレクトリを追加してメインの agent を起動する'
+    set -l repos
     for arg in $argv
-        set path (ghq list --full-path | grep $arg | head -1)
-        if test -n "$path"
-            set repos $repos "--add-dir" $path
+        set -l repo (ghq list --full-path | grep -F -- "$arg" | head -n 1)
+        if test -n "$repo"
+            set -a repos --add-dir "$repo"
         else
             echo "Warning: repo '$arg' not found in ghq" >&2
         end
     end
-    claude $repos
+    agent $repos
 end

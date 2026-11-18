@@ -20,8 +20,8 @@ refuse_worktree_checkout() {
 # -----------------------------------------------------------------------------
 # --links-only: place symlinks and generate settings without installing
 # anything. It is safe to run unattended: it never touches the network, never
-# asks for a password, and only changes things under $HOME. Anything that is
-# not a symlink is left in place and reported instead of being replaced.
+# asks for a password. Existing files are preserved; the legacy agent choice
+# file is moved into the checkout or backed up before linking.
 # Without --links-only these helpers behave exactly as the full install did.
 # -----------------------------------------------------------------------------
 LINKS_ONLY=0
@@ -110,11 +110,14 @@ Usage: ./install.sh [--links-only] [--dry-run]
 
   (no options)  Full setup: Homebrew, fish, login shell, symlinks, mise, apps,
                 macOS defaults.
-  --links-only  Only place the symlinks and generate ~/.claude/settings.json
-                and configs/git/ignore.
-                Never installs anything, asks for a password, or replaces a
-                file that is not a symlink. Prints one line per change.
+  --links-only  Place symlinks for the selected agent and generate settings.
+                Never installs anything or asks for a password.
+                Prints one line per change.
   --dry-run     Like --links-only, but changes nothing and prints the plan.
+
+Agent: DOTFILES_AGENT or configs/agent/cli.local (claude or codex).
+       Links ~/.config/dotfiles-agent-cli to the local file.
+       Defaults to claude on macOS and codex on Linux.
 USAGE
 }
 
@@ -131,7 +134,10 @@ install_homebrew() {
 install_fish() {
     if ! command -v fish >/dev/null 2>&1; then
         echo "Installing fish..."
-        brew install fish
+        case "$platform" in
+            Darwin) brew install fish ;;
+            Linux) sudo apt-get install -y fish ;;
+        esac
     else
         echo "fish is already installed."
     fi
@@ -173,7 +179,7 @@ create_symlinks() {
         if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
             # Skip dirs handled separately:
-            #   claude/agent -> ~/.claude (per-file/per-skill), hammerspoon -> ~/.hammerspoon
+            #   claude/agent -> selected agent, hammerspoon -> ~/.hammerspoon
             if [ "$dirname" = "claude" ] || [ "$dirname" = "agent" ] || [ "$dirname" = "hammerspoon" ]; then
                 continue
             fi
@@ -452,44 +458,67 @@ $(summarize_settings_diff "$dest" "$new")"
     fi
 }
 
-# Link the agent assets in configs/agent into a single tool home.
-#   $1 = destination home dir (e.g. ~/.claude)
-#   $2 = filename for the instructions file in that home (e.g. CLAUDE.md)
-link_agent_assets() {
-    home_dir="$1"
-    instructions_name="$2"
-    script_dir=$(cd "$(dirname "$0")" && pwd)
-    agent_dir="$script_dir/configs/agent"
-
-    ensure_dir "$home_dir"
-
-    # Instructions file: one source, linked under the name the tool reads.
-    if [ -f "$agent_dir/AGENTS.md" ]; then
-        place_link "$agent_dir/AGENTS.md" "$home_dir/$instructions_name"
-    fi
-
-    # Skills: link each skill dir individually so unmanaged skills
-    # (skills installed by other means) survive.
-    if [ -d "$agent_dir/skills" ]; then
-        ensure_dir "$home_dir/skills"
-        resolved_target=$(cd "$home_dir/skills" 2>/dev/null && pwd -P)
-        resolved_source=$(cd "$agent_dir/skills" 2>/dev/null && pwd -P)
-        if [ "$resolved_target" != "$resolved_source" ]; then
-            for skill_dir in "$agent_dir/skills"/*; do
-                if [ -d "$skill_dir" ]; then
-                    place_link "$skill_dir" "$home_dir/skills/$(basename "$skill_dir")"
-                fi
-            done
+place_agent_link() {
+    # Codex may already have user instructions and individually installed skills.
+    if [ "$agent_provider" = codex ] && { [ -e "$2" ] || [ -L "$2" ]; }; then
+        [ -L "$2" ] && [ "$(readlink "$2")" = "$1" ] && return 0
+        if [ "$LINKS_ONLY" -eq 1 ]; then
+            record_skip "$2 already exists; left it in place"
         else
-            [ "$LINKS_ONLY" -eq 1 ] || echo "$home_dir/skills already points to source directory, skipping symlinks."
+            printf 'skip: %s already exists; left it in place\n' "$2" >&2
+        fi
+        return 0
+    fi
+    place_link "$1" "$2"
+}
+
+link_agent_skills() {
+    skills_dest=$1
+    [ -d "$agent_dir/skills" ] || return 0
+    ensure_dir "$skills_dest" || return 1
+    resolved_target=$(cd "$skills_dest" 2>/dev/null && pwd -P)
+    resolved_source=$(cd "$agent_dir/skills" && pwd -P)
+    [ "$resolved_target" = "$resolved_source" ] && return 0
+
+    for skill_dir in "$agent_dir/skills"/*; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        # These skills use claude --bg, claude agents and Claude-specific hooks.
+        case "$agent_provider:$skill_name" in
+            codex:agents-orchestrator|codex:agents-worker|codex:agents-thread|codex:agents-watch) continue ;;
+        esac
+        place_agent_link "$skill_dir" "$skills_dest/$skill_name"
+    done
+}
+
+prepare_claude_hooks() {
+    hooks_dest=$1
+    if [ -L "$hooks_dest" ] && [ ! -e "$hooks_dest" ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            record_change "back up dangling link $hooks_dest and replace it with a directory"
+            return 0
+        fi
+        hooks_backup=$(mktemp -d "$hooks_dest.bak.XXXXXX") || return 1
+        mv "$hooks_dest" "$hooks_backup/link" || return 1
+        if [ "$LINKS_ONLY" -eq 1 ]; then
+            record_change "back up dangling link $hooks_dest to $hooks_backup/link"
+        else
+            printf 'Backed up dangling link %s to %s/link\n' "$hooks_dest" "$hooks_backup"
         fi
     fi
+    ensure_dir "$hooks_dest"
+}
 
+link_claude_assets() {
+    home_dir="$HOME/.claude"
+    ensure_dir "$home_dir" || return 1
+    [ ! -f "$agent_dir/AGENTS.md" ] || place_link "$agent_dir/AGENTS.md" "$home_dir/CLAUDE.md"
+    link_agent_skills "$home_dir/skills"
     # Hooks: shell scripts (tmux window title, etc.).
     # NOTE: this only places the scripts. Wiring them up is done in
     # configs/claude/settings.json.
     if [ -d "$agent_dir/hooks" ]; then
-        ensure_dir "$home_dir/hooks"
+        prepare_claude_hooks "$home_dir/hooks" || return 1
         resolved_target=$(cd "$home_dir/hooks" 2>/dev/null && pwd -P)
         resolved_source=$(cd "$agent_dir/hooks" 2>/dev/null && pwd -P)
         if [ "$resolved_target" != "$resolved_source" ]; then
@@ -506,42 +535,61 @@ link_agent_assets() {
     fi
 }
 
-create_shared_agent_symlinks() {
-    script_dir=$(cd "$(dirname "$0")" && pwd)
-    agent_dir="$script_dir/configs/agent"
-
-    if [ ! -d "$agent_dir" ]; then
-        return 0
+configure_agent_cli() {
+    ensure_dir "$HOME/.config" || return 1
+    if [ ! -L "$agent_cli_link" ] && [ -f "$agent_cli_link" ]; then
+        if [ -f "$agent_cli_file" ]; then
+            if [ "$DRY_RUN" -eq 1 ]; then
+                record_change "back up $agent_cli_link before linking it to $agent_cli_file"
+            else
+                choice_backup=$(mktemp -d "$agent_cli_link.bak.XXXXXX") || return 1
+                mv "$agent_cli_link" "$choice_backup/choice" || return 1
+                printf 'Backed up %s to %s/choice\n' "$agent_cli_link" "$choice_backup"
+            fi
+        else
+            record_change "move $agent_cli_link to $agent_cli_file"
+            run_change mv -n "$agent_cli_link" "$agent_cli_file" || return 1
+        fi
+        if [ "$DRY_RUN" -eq 1 ]; then
+            record_change "link $agent_cli_link -> $agent_cli_file"
+            return 0
+        fi
+        # mv -n can leave the original in place if another install won the race.
+        [ ! -e "$agent_cli_link" ] || return 1
+    elif [ ! -f "$agent_cli_file" ]; then
+        record_change "write $agent_cli_file ($agent_default)"
+        if [ "$DRY_RUN" -eq 0 ]; then
+            (set -C; printf '%s\n' "$agent_default" > "$agent_cli_file") || return 1
+        fi
     fi
 
-    link_agent_assets "$HOME/.claude" "CLAUDE.md"
+    if [ -L "$agent_cli_link" ]; then
+        return 0
+    fi
+    place_link "$agent_cli_file" "$agent_cli_link"
 }
 
-# dotfiles no longer manages Codex. Remove the symlinks it used to place under
-# ~/.codex (AGENTS.md, skills, hooks, prompts, rules) and leave everything
-# Codex owns untouched. Idempotent.
-cleanup_codex_symlinks() {
-    script_dir=$(cd "$(dirname "$0")" && pwd)
-    codex_home="$HOME/.codex"
-
-    [ -d "$codex_home" ] || return 0
-
-    for link in "$codex_home/AGENTS.md" \
-        "$codex_home/skills"/* "$codex_home/hooks"/* \
-        "$codex_home/prompts"/* "$codex_home/rules"/*; do
-        [ -L "$link" ] || continue
-        case "$(readlink "$link")" in
-            "$script_dir"/configs/*)
-                echo "Removing codex symlink: $link"
-                rm -f "$link"
-                ;;
-        esac
-    done
-
-    for dir in "$codex_home/hooks" "$codex_home/prompts" "$codex_home/rules"; do
-        rmdir "$dir" 2>/dev/null && echo "Removed empty dir: $dir"
-    done
-    return 0
+setup_agent() {
+    agent_dir="$script_dir/configs/agent"
+    place_link "$agent_dir" "$HOME/.config/dotfiles-agent"
+    case "$agent_provider" in
+        claude)
+            create_claude_symlinks
+            if ! generate_claude_settings; then
+                if [ "$LINKS_ONLY" -eq 1 ]; then
+                    record_skip "could not generate ~/.claude/settings.json (see the message above)"
+                fi
+            fi
+            link_claude_assets
+            ;;
+        codex)
+            codex_home=${CODEX_HOME:-"$HOME/.codex"}
+            if ensure_dir "$codex_home"; then
+                place_agent_link "$agent_dir/AGENTS.md" "$codex_home/AGENTS.md"
+            fi
+            link_agent_skills "$HOME/.agents/skills"
+            ;;
+    esac
 }
 
 create_hammerspoon_symlinks() {
@@ -566,29 +614,50 @@ for arg in "$@"; do
 done
 
 refuse_worktree_checkout
+agent_cli_file="$script_dir/configs/agent/cli.local"
+agent_cli_link="$HOME/.config/dotfiles-agent-cli"
+if [ -L "$agent_cli_file" ] || { [ -e "$agent_cli_file" ] && [ ! -f "$agent_cli_file" ]; }; then
+    printf 'dotfiles: expected a regular file at %s\n' "$agent_cli_file" >&2
+    exit 1
+fi
+if [ -L "$agent_cli_link" ]; then
+    if [ "$(readlink "$agent_cli_link")" != "$agent_cli_file" ]; then
+        printf 'dotfiles: %s points outside this checkout. Move it aside before creating the dotfiles link.\n' "$agent_cli_link" >&2
+        exit 1
+    fi
+elif [ -e "$agent_cli_link" ] && [ ! -f "$agent_cli_link" ]; then
+    printf 'dotfiles: expected a file or symlink at %s\n' "$agent_cli_link" >&2
+    exit 1
+fi
+
+agent_cli_source="$agent_cli_file"
+[ -f "$agent_cli_file" ] || agent_cli_source="$agent_cli_link"
+agent_selector="$script_dir/configs/agent/select-cli.sh"
+agent_default=$(DOTFILES_AGENT='' sh "$agent_selector" "$agent_cli_source") || exit "$?"
+agent_provider=$(DOTFILES_AGENT="${DOTFILES_AGENT:-$agent_default}" sh "$agent_selector" "$agent_cli_source") || exit "$?"
+platform=$(uname -s)
+export DOTFILES_AGENT="$agent_provider"
+configure_agent_cli || exit 1
 
 if [ "$LINKS_ONLY" -eq 1 ]; then
     create_symlinks
-    create_claude_symlinks
-    generate_claude_settings || record_skip "could not generate ~/.claude/settings.json (see the message above)"
     generate_git_ignore || record_skip "could not generate configs/git/ignore"
-    create_shared_agent_symlinks
+    setup_agent
     create_hammerspoon_symlinks
     print_link_summary
     exit 0
 fi
 
 # Phase 1 実行
-echo "=== Phase 1: Setting up Homebrew, fish, and symlinks ==="
-install_homebrew
-install_fish
+echo "=== Phase 1: Setting up fish and symlinks ($agent_provider) ==="
+if [ "$platform" = Darwin ]; then
+    install_homebrew || exit 1
+fi
+install_fish || exit 1
 set_fish_as_default_shell
 create_symlinks
-create_claude_symlinks
-generate_claude_settings
 generate_git_ignore
-create_shared_agent_symlinks
-cleanup_codex_symlinks
+setup_agent
 create_hammerspoon_symlinks
 
 # =============================================================================
@@ -611,7 +680,8 @@ fish -c '
     function install_mise
         if not type -q mise
             echo "Installing mise..."
-            curl https://mise.run | sh
+            curl -fsSL https://mise.run | sh
+            fish_add_path --path "$HOME/.local/bin"
         else
             echo "mise is already installed."
         end
@@ -628,6 +698,31 @@ fish -c '
         pushd ~/.config/textlint
         mise exec -- npm ci
         popd
+    end
+
+    function install_agent_cli
+        fish_add_path --path "$HOME/.local/bin"
+        if command -q $DOTFILES_AGENT
+            echo "$DOTFILES_AGENT is already installed."
+            return 0
+        end
+
+        switch $DOTFILES_AGENT
+            case codex
+                curl -fsSL https://chatgpt.com/codex/install.sh | sh
+            case claude
+                if test (uname -s) = Darwin
+                    brew install --cask claude-code
+                else
+                    curl -fsSL https://claude.ai/install.sh | bash
+                end
+        end
+        fish_add_path --path "$HOME/.local/bin"
+        command -q $DOTFILES_AGENT
+        or begin
+            echo "Could not find $DOTFILES_AGENT after installation." >&2
+            return 1
+        end
     end
 
     function configure_macos
@@ -682,13 +777,6 @@ fish -c '
             echo "tmuxinator is already installed."
         end
 
-        if not type -q claude
-            echo "Installing claude-code..."
-            brew install --cask claude-code
-        else
-            echo "claude-code is already installed."
-        end
-
         if not type -q gh
             echo "Installing gh..."
             brew install gh
@@ -721,11 +809,17 @@ fish -c '
     end
 
     # Phase 2 実行
-    install_udev_gothic_nf
+    set -l platform (uname -s)
+    if test "$platform" = Darwin
+        install_udev_gothic_nf
+    end
     install_mise
+    install_agent_cli; or exit 1
     install_textlint
-    install_apps
-    configure_macos
+    if test "$platform" = Darwin
+        install_apps
+        configure_macos
+    end
 
     echo ""
     echo "=== Setup complete! ==="
