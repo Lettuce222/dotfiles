@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { actionText, latestAction } from '../src/case-actions.mjs'
 import { buildHubModel } from '../src/hub-model.mjs'
 import { renderHub } from '../src/hub-render.mjs'
-import { createOrchestratorSender, findOrchestrator, orchestratorLine } from '../src/orchestrator.mjs'
+import { createOrchestratorChannel, createOrchestratorSender, findOrchestrator, fullQuestions, orchestratorLine, questionKeys } from '../src/orchestrator.mjs'
 import { PREFIX } from '../src/deliver.mjs'
 
 const HUB = '/Users/me/hub'
@@ -43,11 +43,15 @@ test('the line names the case and the item, says it is no approval, and stays on
   assert.equal(orchestratorLine('x'.repeat(2000)), null)
 })
 
-function orca({ terminals, state = 'done', sessions }) {
+function orca({ terminals, state = 'done', sessions, agent = {}, screen = '' }) {
   const sent = []
   const run = async (args) => {
     if (args[0] === 'terminal' && args[1] === 'list') return { result: { terminals } }
-    if (args[0] === 'worktree') return { result: { worktrees: [{ path: HUB, agents: [{ paneKey: 't1:l1', state, hasLivePty: true }] }] } }
+    if (args[0] === 'terminal' && args[1] === 'read') return { result: { terminal: { tail: [typeof screen === 'function' ? screen() : screen] } } }
+    if (args[0] === 'worktree') {
+      const extra = typeof agent === 'function' ? agent() : agent
+      return { result: { worktrees: [{ path: HUB, agents: [{ paneKey: 't1:l1', state, hasLivePty: true, ...extra }] }] } }
+    }
     if (args[0] === 'terminal' && args[1] === 'send') {
       sent.push(args)
       return { result: { send: { accepted: true } } }
@@ -57,12 +61,12 @@ function orca({ terminals, state = 'done', sessions }) {
   return { run, sent, readSessions: async () => sessions }
 }
 
-const ORCH = { name: 'orchestrator', kind: 'interactive', alive: true, cwd: HUB }
+const ORCH = { name: 'orchestrator', kind: 'interactive', alive: true, cwd: HUB, sessionId: 'sess-orch' }
 const TERM = { handle: 'h1', title: 'orchestrator', agentIdentity: 'claude', writable: true, worktreePath: HUB, tabId: 't1', leafId: 'l1' }
 
 test('the line goes only to the one orchestrator terminal, and only while it waits for a prompt', async () => {
   const ok = orca({ terminals: [TERM, { ...TERM, handle: 'h2', title: 'hub-49', tabId: 't2' }], sessions: [ORCH] })
-  assert.deepEqual(await findOrchestrator({ ...ok, hubRoot: HUB }), { ok: true, reason: null, handle: 'h1' })
+  assert.deepEqual(await findOrchestrator({ ...ok, hubRoot: HUB }), { ok: true, reason: null, handle: 'h1', since: null })
   const send = createOrchestratorSender({ ...ok, hubRoot: HUB, sleep: async () => {} })
   assert.deepEqual(await send('案件の指示'), { sent: true, reason: null })
   assert.deepEqual(ok.sent.map((args) => args.slice(2, 6)), [['--terminal', 'h1', '--text', '\u0013'], ['--terminal', 'h1', '--text', `${PREFIX} 案件の指示`]])
@@ -85,4 +89,64 @@ test('a working orchestrator is waited for, then refused', async () => {
   assert.deepEqual(await send('x'), { sent: false, reason: 'busy' })
   assert.ok(clock >= 180_000)
   assert.deepEqual(busy.sent, [])
+})
+
+test('lines go one at a time, and the next waits until the orchestrator took the one before', async () => {
+  let since = 100
+  const busy = orca({ terminals: [TERM], sessions: [ORCH], agent: () => ({ stateStartedAt: since }) })
+  let clock = 0
+  const channel = createOrchestratorChannel({ ...busy, hubRoot: HUB, sleep: async (ms) => { clock += ms; if (clock >= 6000) since = 200 }, now: () => clock })
+  const [first, second] = await Promise.all([channel.send('一つ目'), channel.send('二つ目')])
+  assert.deepEqual([first, second], [{ sent: true, reason: null }, { sent: true, reason: null }])
+  const lines = busy.sent.filter((args) => args.includes('--enter')).map((args) => args[5])
+  assert.deepEqual(lines, [`${PREFIX} 一つ目`, `${PREFIX} 二つ目`])
+  assert.ok(clock >= 6000, 'the second waited for a new turn')
+})
+
+const ASKED = {
+  toolUseId: 'toolu_1',
+  questions: [{ question: '送りますか\n本文は下のとおり', header: '承認', multiSelect: false, options: [
+    { label: '送る（推奨）', description: 'gh pr comment で送る', preview: '全文\u200bの本文\n2 行目' },
+    { label: '見送る', description: '送らない' }
+  ] }]
+}
+
+test('the question is read in full, and only while the orchestrator waits on AskUserQuestion', async () => {
+  const waiting = orca({ terminals: [TERM], state: 'waiting', sessions: [ORCH], agent: { toolName: 'AskUserQuestion', stateStartedAt: 5 } })
+  const channel = createOrchestratorChannel({ ...waiting, hubRoot: HUB, readPending: async (id) => (id === 'sess-orch' ? ASKED : null) })
+  const offer = await channel.readQuestion()
+  assert.equal(offer.kind, 'orchestrator-question')
+  assert.deepEqual(offer.questions[0].options[0], { label: '送る（推奨）', description: 'gh pr comment で送る', preview: '全文\u200bの本文\n2 行目' }, 'nothing shortened')
+  const html = renderHub(buildHubModel([], [], [], { orchestratorQuestion: offer }))
+  assert.ok(html.includes('<p class="ask full">送りますか\n本文は下のとおり</p>'))
+  assert.ok(html.includes('<pre class="preview">全文<span class="hidden-char">⟨U+200B⟩</span>の本文\n2 行目</pre>'))
+  assert.ok(html.includes(`data-next="${offer.id}" data-index="1"`))
+  const permission = orca({ terminals: [TERM], state: 'waiting', sessions: [ORCH], agent: { toolName: 'Bash' } })
+  assert.equal(await createOrchestratorChannel({ ...permission, hubRoot: HUB, readPending: async () => ASKED }).readQuestion(), null)
+  assert.equal(fullQuestions({ questions: [{ question: 'q', options: Array.from({ length: 10 }, (_, i) => ({ label: `o${i}` })) }] }), null, 'more options than keys')
+})
+
+test('an answer presses the menu keys once, and not after the question was answered at the terminal', async () => {
+  let pending = ASKED
+  const waiting = orca({ terminals: [TERM], state: 'waiting', sessions: [ORCH], agent: { toolName: 'AskUserQuestion', stateStartedAt: 5 } })
+  const channel = createOrchestratorChannel({ ...waiting, hubRoot: HUB, readPending: async () => pending, sleep: async () => {} })
+  const offer = await channel.readQuestion()
+  assert.deepEqual(await channel.answer({ offer: offer.id, index: 1 }), { sent: true, reason: null })
+  assert.deepEqual(waiting.sent.map((args) => args[5]), ['2'])
+  assert.deepEqual(await channel.answer({ offer: offer.id, index: 0 }), { sent: false, reason: 'stale' }, 'answered once')
+  pending = { ...ASKED, toolUseId: 'toolu_2' }
+  const next = await channel.readQuestion()
+  pending = null
+  assert.deepEqual(await channel.answer({ offer: next.id, index: 0 }), { sent: false, reason: 'stale' }, 'answered at the terminal first')
+  assert.deepEqual(waiting.sent.map((args) => args[5]), ['2'])
+})
+
+test('several questions or answers are ticked, then sent from the review page', () => {
+  const two = fullQuestions({ questions: [
+    { question: 'a', multiSelect: true, options: [{ label: 'x' }, { label: 'y' }] },
+    { question: 'b', options: [{ label: 'z' }, { label: 'w' }] }
+  ] })
+  assert.deepEqual(questionKeys(two, { answers: [[0, 1], [1]] }), { keys: ['1', '2', '\t', '2'], review: true })
+  assert.equal(questionKeys(two, { answers: [[0], [0, 1]] }), null, 'one answer for a single-select question')
+  assert.equal(questionKeys(two, { index: 0 }), null)
 })

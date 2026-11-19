@@ -477,3 +477,10 @@ export function createPendingReader(home, pick) {
     return pending.length === 1 ? pending[0] : null
   }
 }
+
+/** What `pick` finds in the transcript of one session, by its id, or null. */
+export async function readPendingOf(home, sessionId, pick) {
+  const { projectsRoot } = claudePaths(home)
+  const transcript = await findTranscript(projectsRoot, sessionId)
+  return transcript ? pick(await readTail(transcript).catch(() => '')) : null
+}

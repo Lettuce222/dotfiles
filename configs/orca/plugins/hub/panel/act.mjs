@@ -105,6 +105,13 @@ export function setUpActions({ view, notice, composer, request }) {
     }
   })
 
+  // Cmd+Enter (Ctrl+Enter elsewhere) sends; Enter alone makes a new line.
+  textarea.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.isComposing) return
+    event.preventDefault()
+    composer.requestSubmit()
+  })
+
   composer.addEventListener('submit', (event) => {
     event.preventDefault()
     const text = textarea.value.trim()

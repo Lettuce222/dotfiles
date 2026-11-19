@@ -28,11 +28,12 @@ import {
   createPendingReader,
   pendingCall,
   pendingQuestion,
+  readPendingOf,
   turnEnded
 } from './claude-sessions.mjs'
 import { createNextSender, readPaneScreen } from './next-actions.mjs'
 import { actionText, latestAction } from './case-actions.mjs'
-import { createOrchestratorSender } from './orchestrator.mjs'
+import { createOrchestratorChannel } from './orchestrator.mjs'
 import { buildHubModel, isInside } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { renderHub, renderLoading } from './hub-render.mjs'
@@ -118,7 +119,16 @@ export function createHubWorker({
   // What was pressed for a project's latest action, while it is being delivered, and why it failed.
   const caseSending = new Map()
   const caseFailures = new Map()
-  const sendToOrchestrator = createOrchestratorSender({ run: runArgs, readSessions: () => readClaude(claudeCli), hubRoot })
+  const orchestrator = createOrchestratorChannel({
+    run: runArgs,
+    // The sessions of the last refresh: the orchestrator's name and folder do not change between them.
+    readSessions: async () => (sessions.length > 0 ? sessions : readClaude(claudeCli)),
+    hubRoot,
+    readPending: (sessionId) => readPendingOf(home, sessionId, pendingQuestion)
+  })
+  const sendToOrchestrator = orchestrator.send
+  // The question the orchestrator waits on, shown in full above everything else.
+  let orchestratorQuestion = null
   const sendOffer = createNextSender({
     readOffers: async () => (await readOrca(cli, runCli, readers)).offers ?? [],
     run: runArgs
@@ -310,6 +320,15 @@ export function createHubWorker({
         orca.log(`hub: could not read the Claude sessions: ${error.message}`)
       }
     }
+    if (askOrca) {
+      // After the sessions, which tell where the orchestrator is.
+      orchestratorQuestion = await orchestrator.readQuestion().catch((error) => {
+        orca.log(`hub: could not read the orchestrator's question: ${error.message}`)
+        return null
+      })
+      // The orchestrator's question has its own card; no shortened copy of it in the workspace's.
+      if (orchestratorQuestion) offers = offers.filter((offer) => offer.paneKey !== orchestratorQuestion.paneKey)
+    }
     const lists = await allSessions()
     if (casesChanged || now() - casesAt >= CASES_MAX_MS) {
       casesChanged = false
@@ -322,7 +341,7 @@ export function createHubWorker({
     }
     asks = await readAsks(asksDir)
     const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null }))
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -411,7 +430,8 @@ export function createHubWorker({
   /** Sends a pressed card of an Orca agent (src/next-actions.mjs); the panel shows what went wrong. */
   async function sendNext(request) {
     try {
-      const result = await sendOffer(request)
+      const isOrchestrator = orchestratorQuestion && request?.offer === orchestratorQuestion.id
+      const result = isOrchestrator ? await orchestrator.answer(request) : await sendOffer(request)
       if (result.sent) schedule(true)
       return result
     } catch (error) {

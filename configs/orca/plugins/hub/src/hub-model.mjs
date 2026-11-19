@@ -178,7 +178,7 @@ function watcherLine(agents) {
  *   workspace ({ path, displayName, agentStates, background }) and offers what Orca's agents offer
  *   (src/next-actions.mjs)
  */
-export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [], projects = [] } = {}) {
+export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [], projects = [], orchestratorQuestion = null } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
   // A worker's ask shows in its row, which then waits for the user whatever the session says.
   const cardOf = new Map(cards.map((card) => [card.sessionId, card]))
@@ -207,6 +207,7 @@ export function buildHubModel(agents, lists, orcaAgents = [], { home = null, foc
   const outside = live.filter((row) => !owned.has(row))
   const group = (state) => outside.filter((row) => row.state === state)
   return {
+    orchestratorQuestion,
     // Projects whose workers need the user come first; otherwise the order of cases.py.
     projects: shown.toSorted((a, b) => Number(b.rows.some((row) => row.state === 'attention')) - Number(a.rows.some((row) => row.state === 'attention'))),
     focused: focusedView(focused, lists, offers, new Set(agents.filter((agent) => agent.kind === 'background').map((agent) => agent.sessionId))),

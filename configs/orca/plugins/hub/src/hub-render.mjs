@@ -318,6 +318,47 @@ function renderNext(offer) {
   return `<div class="next ${escape(offer.kind)}" data-key="${escape(`next\n${offer.id}`)}">${heading}${body}</div>`
 }
 
+// Characters that do not show, or turn text around, shown by their code point so nothing in a
+// question the user approves is hidden.
+const HIDDEN = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad]/g
+
+function visible(value) {
+  return escape(value).replace(HIDDEN, (c) => `<span class="hidden-char">⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩</span>`)
+}
+
+function optionBody(option) {
+  const description = option.description ? `<span class="detail full">${visible(option.description)}</span>` : ''
+  const preview = option.preview ? `<pre class="preview">${visible(option.preview)}</pre>` : ''
+  return `<span class="label">${visible(option.label)}</span>${description}${preview}`
+}
+
+/**
+ * The question the orchestrator asks the user, in full: every question, every option's label and
+ * description, every preview, nothing cut. Pressing here answers the terminal's menu with the same
+ * keys, so the card shows everything that menu shows. Other (a written answer) stays at the terminal.
+ */
+function renderOrchestratorQuestion(offer) {
+  if (!offer) return ''
+  const single = offer.questions.length === 1 && !offer.questions[0].multiSelect
+  const body = offer.questions
+    .map((q, position) => {
+      const header = q.header ? `<span class="q-header">${visible(q.header)}</span>` : ''
+      const hint = q.multiSelect ? '<p class="hint">複数選択できます</p>' : ''
+      const options = q.options
+        .map((option, index) =>
+          single
+            ? `<li><button type="button" class="action full" data-next="${escape(offer.id)}" data-index="${index}">${optionBody(option)}</button></li>`
+            : `<li><button type="button" class="action option full" data-form="${escape(offer.id)}" data-question="${position}" data-option="${index}" data-multi="${q.multiSelect ? '1' : '0'}">${optionBody(option)}</button></li>`
+        )
+        .join('')
+      return `<div class="question">${header}<p class="ask full">${visible(q.question)}</p>${hint}<ol class="actions">${options}</ol></div>`
+    })
+    .join('')
+  const submit = single ? '' : `<button type="button" class="submit" data-submit="${escape(offer.id)}" data-count="${offer.questions.length}" disabled>回答を送信</button>`
+  const other = '<p class="hint">選択肢に無い答え（Other）や、話して決めたいときは、窓口のターミナルで答えてください。</p>'
+  return `<div class="next orchestrator-question" data-key="${escape(`orchestrator\n${offer.id}`)}"><h2>窓口の問い<span>ターミナルで押すのと同じです</span></h2>${body}${submit}${other}</div>`
+}
+
 function renderFocused(focused) {
   if (!focused || focused.kind === 'no-workspace') return ''
   const agent = AGENT_LABELS[focused.agent] ?? ''
@@ -336,6 +377,7 @@ function renderWatcher(watcher) {
 
 export function renderHub(model) {
   const groups = [
+    renderOrchestratorQuestion(model.orchestratorQuestion),
     renderFocused(model.focused),
     renderCards(model.cards),
     renderProjects(model.projects),
