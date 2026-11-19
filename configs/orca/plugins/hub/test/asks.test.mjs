@@ -106,7 +106,7 @@ test('only a background worker that is not working takes text, and an idle one i
   assert.deepEqual(await delivery.send(SESSION, '答え'), { sent: true, reason: null })
   assert.deepEqual(runs, [
     ['claude', 'stop', 'aaaaaaaa', ''],
-    ['claude', '--bg', '--resume', SESSION, '--permission-mode', 'auto', `${PREFIX}\n答え`, '/Users/me/hub/workers/impl-x']
+    ['claude', '--bg', '--resume', SESSION, '-n', 'impl-x', '--permission-mode', 'auto', `${PREFIX}\n答え`, '/Users/me/hub/workers/impl-x']
   ])
 })
 

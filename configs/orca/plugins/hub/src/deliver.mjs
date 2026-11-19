@@ -141,7 +141,7 @@ export function createDelivery({ home, hubRoot, claudeCli, python, readSessions,
     const { ok, reason, session } = await settled(sessionId)
     if (!ok) return { sent: false, reason }
     if (!(await stopIfRunning(session))) return { sent: false, reason: 'stop-failed' }
-    const resumed = await run(claudeCli, ['--bg', '--resume', sessionId, '--permission-mode', 'auto', withPrefix(body)], { cwd: session.cwd ?? undefined })
+    const resumed = await run(claudeCli, ['--bg', '--resume', sessionId, '-n', session.name, '--permission-mode', 'auto', withPrefix(body)], { cwd: session.cwd ?? undefined })
     return resumed.code === 0 ? { sent: true, reason: null } : { sent: false, reason: 'resume-failed', detail: resumed.stderr.slice(0, 300) }
   }
 

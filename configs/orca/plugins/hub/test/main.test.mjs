@@ -159,7 +159,7 @@ test('what the panel runs to act is the short list of src/deliver.mjs', () => {
   const calls = [...text.matchAll(/\brun\((\w+), \[([^\]]*)\]/g)].map((match) => `${match[1]}: ${match[2]}`)
   assert.deepEqual(calls, [
     "claudeCli: 'stop', session.id",
-    "claudeCli: '--bg', '--resume', sessionId, '--permission-mode', 'auto', withPrefix(body)",
+    "claudeCli: '--bg', '--resume', sessionId, '-n', session.name, '--permission-mode', 'auto', withPrefix(body)",
     "python: asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha",
     "python: casesScript, 'log', caseName, line"
   ])
