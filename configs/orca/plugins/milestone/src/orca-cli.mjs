@@ -7,13 +7,24 @@
 // Left out: the offers (next steps, questions, permissions) read for the cards.
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
-/** The CLI bundled with the Orca app that runs this worker, else `orca` on PATH. */
-export function resolveOrcaCli(execPath = process.execPath) {
-  // The worker runs Orca's own binary as Node: Orca.app/Contents/MacOS/Orca.
-  const bundled = join(dirname(execPath), '..', 'Resources', 'bin', 'orca')
-  return existsSync(bundled) ? bundled : 'orca'
+/**
+ * The CLI bundled with the Orca app that runs this worker, else `orca` on PATH. The worker runs one
+ * of Orca's own binaries as Node: Orca.app/Contents/MacOS/Orca in older builds, and the helper
+ * Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper since about 1.4.262,
+ * whose own bundle has no CLI. So every app bundle above the binary is tried, innermost first.
+ */
+export function resolveOrcaCli(execPath = process.execPath, exists = existsSync) {
+  let dir = dirname(execPath)
+  while (dir !== dirname(dir)) {
+    if (basename(dir) === 'Contents') {
+      const bundled = join(dir, 'Resources', 'bin', 'orca')
+      if (exists(bundled)) return bundled
+    }
+    dir = dirname(dir)
+  }
+  return 'orca'
 }
 
 export function runOrca(cli, args, timeout = 10_000) {
