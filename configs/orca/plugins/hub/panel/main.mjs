@@ -29,6 +29,7 @@ plugin.on('view.changed', ({ html }) => {
   loaded = true
   patchChildren(view, html)
   presses.restore()
+  acts.restore()
 })
 
 async function load() {
@@ -39,6 +40,7 @@ async function load() {
     if (pushes === seen) {
       patchChildren(view, html)
       presses.restore()
+      acts.restore()
     }
     loaded = true
   } catch (error) {
@@ -48,7 +50,7 @@ async function load() {
 }
 
 scrollExpandedRows(view)
-setUpActions({
+const acts = setUpActions({
   view,
   notice: document.getElementById('notice'),
   composer: document.getElementById('composer'),

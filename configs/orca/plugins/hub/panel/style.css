@@ -198,6 +198,28 @@ button { font: inherit; color: inherit; }
 .project .due.today { color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
 .project .due.overdue { color: oklch(63.7% 0.237 25.331); background: color-mix(in oklch, oklch(63.7% 0.237 25.331) 18%, transparent); }
 .project .bang { margin-right: 4px; font-weight: 800; color: var(--ms-todo); }
+/* The latest action in full; the rest folded to one quiet line each, opened by its button. */
+.project .latest { margin: 4px 0 2px; }
+.project .latest-text { margin: 0 0 6px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.project .wait-mark { margin-right: 4px; padding: 0 4px; border-radius: 3px; font-size: 11px; font-weight: 600;
+  color: var(--orca-muted-foreground); background: color-mix(in oklch, var(--orca-foreground) 8%, transparent); }
+.project .choices { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.project .choices li { display: block; padding: 0; }
+.project .chip { padding: 2px 10px; border: 1px solid color-mix(in oklch, var(--orca-foreground) 14%, transparent); border-radius: 999px;
+  font-size: 12px; cursor: pointer; background: color-mix(in oklch, var(--orca-foreground) 6%, var(--orca-card)); }
+.project .chip:hover:not(:disabled) { background: color-mix(in oklch, var(--orca-foreground) 12%, var(--orca-card)); }
+.project .chip.other { color: var(--orca-muted-foreground); }
+.project .chip:disabled { opacity: 0.5; cursor: default; }
+.project .chip.chosen { opacity: 1; background: color-mix(in oklch, var(--ms-bar) 22%, var(--orca-card)); border-color: color-mix(in oklch, var(--ms-bar) 55%, transparent); }
+.project .more { display: block; margin: 4px 0 0; padding: 0; border: none; background: none; cursor: pointer;
+  font-size: 11px; color: var(--orca-muted-foreground); }
+.project .more::before { content: '▸ '; }
+.project.open .more::before { content: '▾ '; }
+.project .items.rest { display: none; opacity: 0.75; }
+.project.open .items.rest { display: block; }
+.project .items.rest .text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project .items.rest li:hover .text { white-space: normal; }
+.project .latest .status { margin: 6px 0 0; font-size: 12px; color: var(--ms-todo); }
 .project .rows { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--orca-border); }
 .project .quiet { margin: 2px 0 0; font-size: 11px; color: var(--orca-muted-foreground); }
 .row .say { flex: none; padding: 0 4px; border: none; background: none; cursor: pointer; color: var(--orca-muted-foreground); }

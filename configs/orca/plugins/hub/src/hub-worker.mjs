@@ -31,6 +31,8 @@ import {
   turnEnded
 } from './claude-sessions.mjs'
 import { createNextSender, readPaneScreen } from './next-actions.mjs'
+import { actionText, latestAction } from './case-actions.mjs'
+import { createOrchestratorSender } from './orchestrator.mjs'
 import { buildHubModel, isInside } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { renderHub, renderLoading } from './hub-render.mjs'
@@ -113,6 +115,10 @@ export function createHubWorker({
     // Orca calls an agent working while its background shells run, even after its turn.
     readTurnEnded: createPendingReader(home, turnEnded)
   }
+  // What was pressed for a project's latest action, while it is being delivered, and why it failed.
+  const caseSending = new Map()
+  const caseFailures = new Map()
+  const sendToOrchestrator = createOrchestratorSender({ run: runArgs, readSessions: () => readClaude(claudeCli), hubRoot })
   const sendOffer = createNextSender({
     readOffers: async () => (await readOrca(cli, runCli, readers)).offers ?? [],
     run: runArgs
@@ -316,7 +322,7 @@ export function createHubWorker({
     }
     asks = await readAsks(asksDir)
     const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null }))
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, projects })))
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -414,6 +420,45 @@ export function createHubWorker({
     }
   }
 
+  /**
+   * A choice or a note for a project's latest action, handed to the orchestrator. The cases are read
+   * again: the action must still be the latest one the row showed.
+   */
+  async function actOnCase({ slug, kind, text, choice, note } = {}) {
+    const written = note === undefined ? undefined : cleanText(note)
+    if (typeof slug !== 'string' || typeof text !== 'string' || (note !== undefined && !written)) return { ok: false, reason: 'invalid' }
+    if (caseSending.has(slug)) return { ok: false, reason: 'pressed' }
+    caseSending.set(slug, written ? `指示: ${written}` : '')
+    caseFailures.delete(slug)
+    schedule()
+    const fail = (reason, detail = '') => {
+      caseFailures.set(slug, reason)
+      orca.log(`hub: the action for ${slug} was not delivered: ${reason}${detail ? ` (${detail})` : ''}`)
+      return { ok: false, reason }
+    }
+    try {
+      projects = await readCases()
+      casesAt = now()
+      const project = projects.find((p) => p.slug === slug)
+      const action = project ? latestAction(project) : null
+      if (!action || action.kind !== kind || action.text !== text) return fail('stale')
+      const line = actionText(project, action, written ? { note: written } : { choice })
+      if (!line) return fail('invalid')
+      caseSending.set(slug, written ? `指示: ${written}` : line.slice(line.lastIndexOf(': ') + 2))
+      schedule()
+      const sent = await sendToOrchestrator(line)
+      if (!sent.sent) return fail(sent.reason)
+      orca.log(`hub: delivered the action for ${slug} to the orchestrator`)
+      await deliver.log({ case: slug, card: 'case', kind, item: text, ...(written ? { text: written } : { choice }) })
+      return { ok: true }
+    } catch (error) {
+      return fail('failed', error.message)
+    } finally {
+      caseSending.delete(slug)
+      schedule()
+    }
+  }
+
   /** A line a person wrote to a worker from its row. */
   async function sendToSession({ sessionId, text } = {}) {
     const body = cleanText(text)
@@ -455,5 +500,5 @@ export function createHubWorker({
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext }
+  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase }
 }

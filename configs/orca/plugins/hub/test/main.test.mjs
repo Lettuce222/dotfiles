@@ -24,7 +24,7 @@ test('registers the commands and events declared in the manifest, and starts not
   })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
-  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send'], 'no handler that writes an approval')
+  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send', 'case.act'], 'no handler that writes an approval')
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
 })
 
@@ -124,11 +124,15 @@ test('no code answers a permission through a hook, approves, adds settings or re
   }
 })
 
-test('only src/next-actions.mjs types into an Orca terminal, and only 1, Esc, an answer or a prompt', () => {
+test('only src/next-actions.mjs and src/orchestrator.mjs type into an Orca terminal, and only 1, Esc, an answer or a prompt', () => {
   const typing = sources()
     .filter(([, source]) => /['"]send['"]/.test(CODE_ONLY(source)))
     .map(([file]) => file)
-  assert.deepEqual(typing, [join('src', 'next-actions.mjs')])
+    .sort()
+  assert.deepEqual(typing, [join('src', 'next-actions.mjs'), join('src', 'orchestrator.mjs')])
+  const orchestrator = CODE_ONLY(readFileSync(join(root, 'src', 'orchestrator.mjs'), 'utf8'))
+  assert.match(orchestrator, /const STASH_KEY = '\\u0013'/)
+  assert.match(orchestrator, /agent\.state !== 'done'/, 'only into a session waiting for a prompt')
   const text = CODE_ONLY(readFileSync(join(root, 'src', 'next-actions.mjs'), 'utf8'))
   assert.match(text, /const ALLOW_ONCE_KEY = '1'/)
   assert.doesNotMatch(text, /['"]2['"]|['"]3['"]/, 'never the options that allow for good or switch modes')

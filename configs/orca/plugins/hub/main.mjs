@@ -29,6 +29,7 @@ export default function activate(orca) {
   orca.panels.handle('ask.answer', (params) => worker.answerAsk(params))
   orca.panels.handle('session.send', (params) => worker.sendToSession(params))
   orca.panels.handle('next.send', (request) => worker.sendNext(request))
+  orca.panels.handle('case.act', (request) => worker.actOnCase(request))
   orca.commands.register('hub.refresh', async () => {
     await worker.start()
     await worker.refresh(true)

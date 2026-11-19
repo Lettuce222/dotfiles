@@ -5,6 +5,8 @@
 // andoshin11/orca-milestone src/render.mjs (MIT, see ../LICENSE and ../NOTICE.md). Left out: the
 // restart card and the list of what "the rest of this turn" allowed.
 
+import { CHOICES, latestAction } from './case-actions.mjs'
+
 const GOAL_MAX = 160
 const DETAIL_MAX = 160
 const FULL_MAX = 2000
@@ -98,17 +100,51 @@ function renderWaiting(item) {
   return `<li class="waiting"><span class="mark">…</span><span class="text">${escape(plain(item.text))}${next}</span></li>`
 }
 
-/** A project: its name, what the user has to do, what it waits for, and the workers on it. */
+const ACTION_FAILURES = {
+  busy: '窓口が作業を終えないので、届けられませんでした。もう一度押してください。',
+  asking: '窓口が問いや確認の途中なので、届けませんでした。窓口の画面で答えてから押してください。',
+  'no-orchestrator': '窓口（hub のワークスペースの orchestrator）が見つかりません。',
+  stale: 'このアクションは変わりました。出し直したものを見てください。',
+  refused: '窓口のターミナルが受け取りませんでした。',
+  invalid: '届けられない指示です。',
+  failed: '届けるときに失敗しました。'
+}
+
+/** The latest action in full, with what the orchestrator can be asked to do about it. */
+function renderLatest(project, action) {
+  const key = escape(`latest\n${project.slug}\n${action.kind}\n${action.text}`)
+  const mark = action.kind === 'todo' ? `${dueLabel(action)}${action.bang ? '<span class="bang">!</span>' : ''}` : '<span class="wait-mark">待ち</span>'
+  const then = action.kind === 'waiting' && action.next ? `<span class="then"> → ${escape(plain(action.next))}</span>` : ''
+  const text = `<p class="latest-text">${mark}${escape(plain(action.text))}${then}</p>`
+  if (project.sending) {
+    return `<div class="latest next sending" data-key="${key}">${text}<div class="action sent"><span class="label">${escape(project.sending)}</span><span class="detail">窓口に届けています…</span></div></div>`
+  }
+  const data = `data-case="${escape(project.slug)}" data-kind="${action.kind}" data-text="${escape(action.text)}"`
+  const choices = CHOICES[action.kind]
+    .map((c) => `<li><button type="button" class="chip" data-case-act ${data} data-choice="${c.id}" title="${c.detail}"><span class="label">${c.label}</span></button></li>`)
+    .join('')
+  const write = `<li><button type="button" class="chip other" data-case-write ${data} data-name="${escape(project.short)}" title="こうしてほしい、を窓口に届ける"><span class="label">指示を書く…</span></button></li>`
+  const failure = project.failure ? `<p class="status">${ACTION_FAILURES[project.failure] ?? ACTION_FAILURES.failed}</p>` : ''
+  return `<div class="latest next" data-key="${key}">${text}<ol class="choices">${choices}${write}</ol>${failure}</div>`
+}
+
+/** A project: its name, its latest action in full, the rest folded, and the workers on it. */
 function renderProject(project) {
   const attention = project.rows.filter((row) => row.state === 'attention').length
   const badge = attention > 0 ? `<span class="badge">あなたの番 ${attention}</span>` : ''
   const open = project.path ? ` role="button" tabindex="0" data-report="${escape(project.path)}"` : ''
   const head = `<div class="project-head"${open}><span class="name">${escape(project.short)}</span><span class="title">${escape(project.title)}</span>${badge}</div>`
-  const todo = project.todo.length > 0 ? `<ol class="items">${project.todo.map(renderTodo).join('')}</ol>` : ''
-  const waiting = project.waiting.length > 0 ? `<ol class="items">${project.waiting.map(renderWaiting).join('')}</ol>` : ''
+  const action = latestAction(project)
+  const latest = action ? renderLatest(project, action) : ''
+  const restTodo = action?.kind === 'todo' ? project.todo.slice(1) : []
+  const restWaiting = action?.kind === 'waiting' ? project.waiting.slice(1) : project.waiting
+  const restCount = restTodo.length + restWaiting.length
+  const rest = restCount > 0
+    ? `<button type="button" class="more" data-more="${escape(project.slug)}">ほか ${restCount} 件（TODO ${restTodo.length}・待ち ${restWaiting.length}）</button><ol class="items rest">${restTodo.map(renderTodo).join('')}${restWaiting.map(renderWaiting).join('')}</ol>`
+    : ''
   const rows = project.rows.length > 0 ? `<ol class="rows">${project.rows.map(renderRow).join('')}</ol>` : ''
-  const empty = !todo && !waiting && !rows ? '<p class="quiet">TODO も待ちもありません</p>' : ''
-  return `<li class="project${attention > 0 ? ' attention' : ''}" data-key="${escape(`project\n${project.slug}`)}">${head}${todo}${waiting}${rows}${empty}</li>`
+  const empty = !latest && !rows ? '<p class="quiet">TODO も待ちもありません</p>' : ''
+  return `<li class="project${attention > 0 ? ' attention' : ''}" data-project="${escape(project.slug)}" data-key="${escape(`project\n${project.slug}`)}">${head}${latest}${rest}${rows}${empty}</li>`
 }
 
 function renderProjects(projects) {

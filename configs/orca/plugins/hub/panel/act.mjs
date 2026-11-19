@@ -14,7 +14,10 @@ const MESSAGES = {
   'not-worker': '窓口と見張りには、それぞれの画面で話してください。',
   'stop-failed': 'worker を止められず、届けられませんでした。',
   'resume-failed': 'worker に届けられませんでした。',
-  invalid: '送れない内容です（空、長すぎる、見えない文字がある）。'
+  invalid: '送れない内容です（空、長すぎる、見えない文字がある）。',
+  asking: '窓口が問いや確認の途中なので、届けませんでした。',
+  'no-orchestrator': '窓口が見つかりません。',
+  refused: '窓口のターミナルが受け取りませんでした。'
 }
 
 export function messageOf(result) {
@@ -26,6 +29,14 @@ export function setUpActions({ view, notice, composer, request }) {
   const textarea = composer.querySelector('textarea')
   const to = composer.querySelector('.to')
   let target = null
+  // A note for a project's latest action, when the composer was opened from one.
+  let caseAction = null
+  // Projects whose folded items are open, put back after every patch.
+  const opened = new Set()
+
+  function restore() {
+    for (const project of view.querySelectorAll('[data-project]')) project.classList.toggle('open', opened.has(project.dataset.project))
+  }
   // The ask a written answer is for, when the composer was opened from a card.
   let ask = null
 
@@ -43,6 +54,35 @@ export function setUpActions({ view, notice, composer, request }) {
   }
 
   view.addEventListener('click', (event) => {
+    const more = event.target.closest('button[data-more]')
+    if (more) {
+      event.stopPropagation()
+      const slug = more.dataset.more
+      if (opened.has(slug)) opened.delete(slug)
+      else opened.add(slug)
+      restore()
+      return
+    }
+    const act = event.target.closest('button[data-case-act]')
+    if (act) {
+      event.stopPropagation()
+      const latest = act.closest('.latest')
+      latest.classList.add('sending')
+      act.classList.add('chosen')
+      for (const button of latest.querySelectorAll('button')) button.disabled = true
+      void call('case.act', { slug: act.dataset.case, kind: act.dataset.kind, text: act.dataset.text, choice: act.dataset.choice })
+      return
+    }
+    const write = event.target.closest('button[data-case-write]')
+    if (write) {
+      event.stopPropagation()
+      target = null
+      caseAction = { slug: write.dataset.case, kind: write.dataset.kind, text: write.dataset.text }
+      to.textContent = `窓口への指示（${write.dataset.name}）`
+      composer.hidden = false
+      textarea.focus()
+      return
+    }
     const answer = event.target.closest('button[data-answer]')
     if (answer) {
       event.stopPropagation()
@@ -68,6 +108,14 @@ export function setUpActions({ view, notice, composer, request }) {
   composer.addEventListener('submit', (event) => {
     event.preventDefault()
     const text = textarea.value.trim()
+    if (caseAction && text) {
+      const action = caseAction
+      composer.hidden = true
+      textarea.value = ''
+      caseAction = null
+      void call('case.act', { ...action, note: text })
+      return
+    }
     if (!target || !text) return
     const sessionId = target
     const answering = ask
@@ -83,5 +131,8 @@ export function setUpActions({ view, notice, composer, request }) {
     composer.hidden = true
     target = null
     ask = null
+    caseAction = null
   })
+
+  return { restore }
 }
