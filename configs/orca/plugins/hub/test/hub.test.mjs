@@ -197,7 +197,10 @@ test('openReport opens only a report of a hub worker, in the workspace that hold
   const worker = createHubWorker({ orca, home, hubRoot, cli: 'orca', readClaude: async () => [], watchDir: () => {} })
   const report = join(hubRoot, 'workers', 'impl-a', 'report.md')
   assert.deepEqual(await worker.openReport(report), { opened: true })
-  assert.deepEqual(orca.calls.at(-1), { method: 'editor.open', params: { workspaceId: 'ws-hub', path: report } })
+  assert.deepEqual(orca.calls.slice(-2), [
+    { method: 'workspace.open', params: { workspaceId: 'ws-hub' } },
+    { method: 'editor.open', params: { workspaceId: 'ws-hub', path: 'workers/impl-a/report.md' } }
+  ], 'Orca takes the path inside the workspace')
   for (const path of [join(hubRoot, 'state', 'cases', 'x.md'), join(hubRoot, 'workers', 'impl-a', '..', '..', 'CLAUDE.md'), join(hubRoot, 'workers', 'a', 'b', 'report.md'), join(home, '.ssh', 'report.md'), 42]) {
     assert.deepEqual(await worker.openReport(path), { opened: false }, String(path))
   }

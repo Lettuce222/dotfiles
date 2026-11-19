@@ -9,7 +9,7 @@
 // through src/deliver.mjs.
 import { watch } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { ASK_ID, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
 import { answerText, cleanText, createDelivery, resolvePython } from './deliver.mjs'
@@ -231,7 +231,9 @@ export function createHubWorker({
         orca.log(`hub: no workspace holds ${target}`)
         return { opened: false }
       }
-      await orca.host.call('editor.open', { workspaceId: holder.id, path: target })
+      // Orca opens a file by its path inside the workspace, and shows it in that workspace.
+      await orca.host.call('workspace.open', { workspaceId: holder.id })
+      await orca.host.call('editor.open', { workspaceId: holder.id, path: relative(holder.path, target) })
       return { opened: true }
     } catch (error) {
       orca.log(`hub: could not open the report: ${error.message}`)
