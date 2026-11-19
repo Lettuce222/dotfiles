@@ -42,7 +42,7 @@ dotfiles/
 │   ├── textlint/         agent の hook が使う textlint のルールと npm 依存
 │   ├── hammerspoon/      ウィンドウ配置（macOS）
 │   ├── karabiner/        キー配置（macOS）
-│   └── orca/             Orca の自前 plugin（タスクの進み具合のパネル）
+│   └── orca/             Orca の自前 plugin（全部のセッションと、タスクの進み具合のパネル）
 ├── docs/                 決まりの文書（このページ、agent-assets.md、configuration.md）
 ├── tests/                install.sh と tmux のリンクのテスト
 └── hooks/pre-commit      gitleaks で秘密情報のコミットを止める
@@ -331,10 +331,11 @@ macOSのキー配置。`~/.config/karabiner`へsymlink。
 
 ### `configs/orca/`
 
-Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.config/orca`へsymlinkするが、Orcaはこのフォルダを読まない。pluginは`orca plugin dev load ~/.config/orca/plugins/milestone`で開発フォルダーとして読み込む（カタログを使わないので自動更新は無い）。
+Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.config/orca`へsymlinkするが、Orcaはこのフォルダを読まない。Milestone (local)は`orca plugin dev load ~/.config/orca/plugins/milestone`で開発フォルダーとして読み込む。Hub (local)はフォルダーからインストールする（開発フォルダーにすると`orca plugin dev request`でパネルの受け口を外から呼べるため）。どちらもカタログを使わないので自動更新は無い。
 
 | ファイル | 役割 |
 | --- | --- |
+| `configs/orca/plugins/hub/` | Hub (local)。このマシンの全部のClaude Codeのセッション（`claude --bg`のworkerと、Orcaのワークスペースを含む）のゴールと進み具合を、「あなたの番」「動いている」「待っている」「済んだ」に分けて右サイドバーに出す。`claude agents --json --all`、`~/.claude/jobs/<id>/state.json`、`~/.claude/tasks/`、`orca worktree ps`を読むだけで、セッションへの送信も許可の返答もしない（段1）。Milestone (local)のコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
 | `configs/orca/plugins/milestone/` | Milestone (local)。Orcaのターミナルで起動したClaude Codeにゴール付きのタスクを書かせ、フォーカス中のワークスペースのゴールとマイルストーンを右サイドバーに出す。見るだけで、セッションへの送信も許可の返答もしない。[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone)（MIT）から表示の部分だけを持ってきた。出典と除いた部分は`NOTICE.md`、テストは`node --test test/` |
 
 ### `docs/`

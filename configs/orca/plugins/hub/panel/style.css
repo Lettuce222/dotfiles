@@ -1,0 +1,94 @@
+/* Adapted from andoshin11/orca-milestone panel/style.css (MIT, see ../LICENSE and ../NOTICE.md).
+   Left out: the styles of the cards. */
+/* Panels only get Orca's neutral tokens, so the status hues are Orca's own Tailwind v4 values
+   copied from its sources: the bars are the green-600 of its merge button, other greens the
+   emerald of the sidebar's status dot (done), orange is --agent-question (the task in progress,
+   waiting), yellow is --agent-working. Orca puts `dark` or `light` on the panel's <html>, which
+   picks the shade for each theme. */
+:root { color-scheme: light dark; --ms-bar: oklch(62.7% 0.194 149.214);
+  --ms-done: oklch(59.6% 0.145 163.225); --ms-todo: oklch(64.6% 0.222 41.116);
+  --ms-working: oklch(68.1% 0.162 75.834); --ms-track: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
+html.dark { --ms-done: oklch(69.6% 0.17 162.48); --ms-todo: oklch(70.5% 0.213 47.604);
+  --ms-working: oklch(79.5% 0.184 86.047); --ms-track: color-mix(in oklch, var(--orca-foreground) 16%, transparent); }
+/* The groups scroll as one list. */
+main { flex: 1 1 0; min-height: 0; overflow: auto; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+h1 { margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent { flex: none; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.agent.working { color: var(--ms-working); }
+.agent.waiting { color: var(--ms-todo); }
+section { padding: 10px; margin-bottom: 10px; border: 1px solid var(--orca-border);
+  border-radius: var(--orca-radius, 6px); background: var(--orca-card); color: var(--orca-card-foreground); }
+.goal { margin: 0 0 8px; font-weight: 600; }
+.count { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; color: var(--orca-muted-foreground); }
+.count strong { font-size: 12px; color: var(--ms-done); }
+.bar { height: 6px; margin: 4px 0 10px; border-radius: 3px; background: var(--ms-track); overflow: hidden; }
+.bar > div { height: 100%; border-radius: 3px; background: var(--ms-bar); transition: width 400ms ease-out; }
+ol { margin: 0; padding: 0; list-style: none; }
+li { display: flex; gap: 8px; padding: 2px 0; transition: color 300ms ease-out; }
+li .mark { flex: none; width: 1em; text-align: center; font-weight: 700; color: var(--ms-todo); transition: color 300ms ease-out; }
+li.completed { color: var(--orca-muted-foreground); }
+li.completed .mark { color: var(--ms-done); }
+li.pending .mark { color: var(--orca-muted-foreground); }
+/* A background, because text-decoration cannot be drawn gradually. On an inline box it runs on
+   across wrapped lines. */
+li .strike { background: linear-gradient(currentColor, currentColor) 0 55% / 0 1px no-repeat; transition: background-size 400ms ease-out; }
+li.completed .strike { background-size: 100% 1px; }
+li.in_progress { font-weight: 600; }
+.empty { color: var(--orca-muted-foreground); }
+code { font-size: 12px; }
+.others { flex: none; padding-top: 12px; border-top: 1px solid var(--orca-border); }
+.others h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px;
+  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.others h2 .attention { color: var(--ms-todo); }
+.rows { margin: 0; padding: 0; list-style: none; }
+/* Reversed, so a row grows upward from its head. The rows are anchored to the bottom edge, so the
+   head stays under the pointer and the rows above slide up. */
+.row { display: flex; flex-direction: column-reverse; gap: 0; padding: 0 6px; margin: 0 -6px; border-radius: 4px; }
+.row:has(.head:hover), .row:has(.head:focus-visible), .row.long:has(.detail:hover) { background: color-mix(in oklch, var(--orca-foreground) 7%, transparent); }
+.row .head { display: block; padding: 4px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; user-select: none; }
+.row .head:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: -1px; }
+/* The head keeps a row open. Leaving it closes the row, which brings every row back to where it
+   was, so the pointer ends up on the row it was heading for. A long list is the exception: the
+   pointer may enter it to scroll. The delay on opening lets the pointer cross a row on its way
+   elsewhere without moving anything. */
+.row .detail { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; pointer-events: none;
+  transition: grid-template-rows 180ms ease-in-out, opacity 180ms ease-in-out, visibility 180ms; font-size: 12px; }
+.row.long .detail { pointer-events: auto; }
+.row .head:hover + .detail, .row .head:focus-visible + .detail, .row.long .detail:hover { grid-template-rows: 1fr; opacity: 1; visibility: visible;
+  transition-delay: 150ms; }
+.row .detail .inner { min-height: 0; max-height: 45vh; overflow: hidden auto; overscroll-behavior: contain; }
+.row .detail .goal { margin: 4px 0 4px 14px; }
+.row .detail ol { margin: 0 0 4px 14px; }
+.row .detail li { gap: 6px; }
+.row .top { display: flex; align-items: center; gap: 6px; }
+.row .dot { flex: none; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--orca-muted-foreground); }
+.row.attention .dot, .row .dot.running { background: var(--ms-todo); }
+.row .check { flex: none; width: 8px; font-size: 11px; font-weight: 700; line-height: 1; text-align: center; color: var(--ms-done); }
+.row .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .repo { margin-left: 6px; font-size: 11px; color: var(--orca-muted-foreground); }
+.row .badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px;
+  color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
+.row .working { flex: none; font-size: 11px; font-weight: 600; color: var(--ms-working); }
+.row .background { flex: none; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.row .of { flex: none; font-size: 11px; color: var(--ms-done); }
+.row .bar { height: 4px; margin: 4px 0 0 14px; }
+/* Hub: groups of sessions, newest state first. Rows grow downward here, since the list scrolls. */
+.group { margin-bottom: 12px; }
+.group h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 4px;
+  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.group.attention h2 { color: var(--ms-todo); }
+.group .row { flex-direction: column; }
+.row.focused .name { font-weight: 600; }
+.row .dot.attention { background: var(--ms-todo); }
+.row .dot.working { background: var(--ms-working); }
+.row .dot.done { background: var(--ms-done); }
+.row .kind { flex: none; font-size: 10px; color: var(--orca-muted-foreground); }
+.row .finished { flex: none; font-size: 11px; color: var(--ms-done); }
+.row .sub { margin-left: 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .head:not([role]) { cursor: default; }
+.group .row .head:hover + .detail, .group .row .head:focus-visible + .detail { transition-delay: 300ms; }
+.watcher { margin: 8px 0 0; font-size: 11px; color: var(--ms-todo); }
+@media (prefers-reduced-motion: reduce) {
+  .bar > div, li, li .mark, li .strike, .row .detail { transition: none; }
+}

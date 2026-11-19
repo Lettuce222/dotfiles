@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
+  "id": "hub-local",
+  "publisher": "lettuce222",
+  "name": "Hub (local)",
+  "version": "0.1.0",
+  "description": "Shows every Claude Code session of this computer, background ones included, with its goal and progress. Adapted from andoshin11/orca-milestone.",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "pluginApi": 1,
+  "main": "main.mjs",
+  "contributes": {
+    "panels": [
+      {
+        "id": "hub",
+        "title": "Hub",
+        "icon": "flag",
+        "entry": "panel/index.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "hub.refresh",
+        "title": "Hub: Refresh"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.changed"
+      }
+    ],
+    "hooks": [
+      {
+        "event": "agent.launch.before"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "workspace:write"
+    }
+  ]
+}
