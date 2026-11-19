@@ -10,8 +10,12 @@
   --ms-working: oklch(68.1% 0.162 75.834); --ms-track: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
 html.dark { --ms-done: oklch(69.6% 0.17 162.48); --ms-todo: oklch(70.5% 0.213 47.604);
   --ms-working: oklch(79.5% 0.184 86.047); --ms-track: color-mix(in oklch, var(--orca-foreground) 16%, transparent); }
-/* The groups scroll as one list. */
-main { flex: 1 1 0; min-height: 0; overflow: auto; }
+/* The panel never scrolls as a whole: the groups scroll as one list inside it. The rows reach 6px
+   past their group on each side for the hover background, so the list scrolls only downward. */
+body { box-sizing: border-box; display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  margin: 0; padding: 12px; font: 13px/1.5 system-ui, sans-serif;
+  color: var(--orca-foreground); background: var(--orca-background); }
+main { flex: 1 1 0; min-height: 0; overflow: hidden auto; padding: 0 6px; margin: 0 -6px; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 h1 { margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent { flex: none; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
