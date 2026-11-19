@@ -4,8 +4,6 @@
 
 export const WATCHER = 'chore-hub-watch'
 const ORCHESTRATOR = 'orchestrator'
-const DONE_MAX = 8
-const DONE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const TEAM_LIST_ID = /^session-([0-9a-f]{8})$/
 // An Orca agent needs the user when it asks for input or for a permission.
 const ORCA_NEEDS_USER = new Set(['waiting', 'blocked', 'permission'])
@@ -142,6 +140,22 @@ function focusedView(workspace, lists, offers, workers) {
   }
 }
 
+/**
+ * Which project a row belongs to: the case whose file links the worker's folder, the case its ask
+ * names, or a case whose file name the worker's name holds (impl-hub-orca-setup and orca-setup).
+ */
+function projectOf(row, projects) {
+  if (row.kind !== 'worker') return null
+  return (
+    projects.find((project) => project.workers.includes(row.name)) ??
+    projects.find((project) => row.card?.case === project.slug) ??
+    projects.find((project) => row.name.includes(project.slug)) ??
+    null
+  )
+}
+
+const STATE_ORDER = { attention: 0, working: 1, idle: 2 }
+
 function watcherLine(agents) {
   const watcher = agents
     .filter((agent) => agent.name === WATCHER && agent.kind === 'background')
@@ -158,12 +172,13 @@ function watcherLine(agents) {
  * @param agents     [{ sessionId, id, name, kind, cwd, state, status, waitingFor, alive, startedAt, job, report }]
  * @param lists      [{ listId, cwd, goal, tasks, updatedAt }] of the running sessions that keep tasks
  * @param orcaAgents [{ workspace, repo, path, focused, state, background, since }] of `orca worktree ps`
- * @param options    { home, focusedPath, now, cards, focused, offers }; cards are the open asks
+ * @param options    { home, focusedPath, now, cards, focused, offers, projects }; projects are the
+ *   cases of `cases.py json` (src/cases.mjs), in its order; cards are the open asks
  *   (src/asks.mjs) with `check` (checkAsk) and `pressed`, oldest first; focused is the focused
  *   workspace ({ path, displayName, agentStates, background }) and offers what Orca's agents offer
  *   (src/next-actions.mjs)
  */
-export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [] } = {}) {
+export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [], projects = [] } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
   // A worker's ask shows in its row, which then waits for the user whatever the session says.
   const cardOf = new Map(cards.map((card) => [card.sessionId, card]))
@@ -178,20 +193,28 @@ export function buildHubModel(agents, lists, orcaAgents = [], { home = null, foc
     ...rest.map((orcaAgent) => workspaceRow(orcaAgent, lists, home, focusedPath))
   ]
   const listed = new Set(agents.filter((agent) => agent.name !== WATCHER).map((agent) => agent.sessionId))
-  const group = (state) => rows.filter((row) => row.state === state)
+  // Finished sessions are not shown: what is left of their work is in the projects.
+  const live = rows.filter((row) => row.state !== 'done')
   // The focused workspace first, then the oldest wait or the newest change.
   const byFocus = (a, b) => Number(b.focused) - Number(a.focused)
+  const byState = (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || (a.state === 'attention' ? a.since - b.since : b.since - a.since)
+  const owned = new Map()
+  for (const row of live) {
+    const project = projectOf(row, projects)
+    if (project) owned.set(row, project.slug)
+  }
+  const shown = projects.map((project) => ({ ...project, rows: live.filter((row) => owned.get(row) === project.slug).toSorted(byState) }))
+  const outside = live.filter((row) => !owned.has(row))
+  const group = (state) => outside.filter((row) => row.state === state)
   return {
+    // Projects whose workers need the user come first; otherwise the order of cases.py.
+    projects: shown.toSorted((a, b) => Number(b.rows.some((row) => row.state === 'attention')) - Number(a.rows.some((row) => row.state === 'attention'))),
     focused: focusedView(focused, lists, offers, new Set(agents.filter((agent) => agent.kind === 'background').map((agent) => agent.sessionId))),
     // Asks of a session no longer listed (removed without closing them) show on their own.
     cards: cards.filter((card) => !listed.has(card.sessionId)).map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
     attention: group('attention').toSorted((a, b) => byFocus(a, b) || a.since - b.since),
     working: group('working').toSorted((a, b) => byFocus(a, b) || b.since - a.since),
     idle: group('idle').toSorted((a, b) => byFocus(a, b) || b.since - a.since),
-    done: group('done')
-      .filter((row) => !now || !row.since || now - row.since <= DONE_MAX_AGE_MS)
-      .toSorted((a, b) => b.since - a.since)
-      .slice(0, DONE_MAX),
     watcher: watcherLine(agents)
   }
 }

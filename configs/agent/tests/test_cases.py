@@ -200,6 +200,38 @@ class ScheduleSweepTest(Base):
         self.assertNotIn("日付の無い", (self.dir / "x.md").read_text())
 
 
+class JsonTest(Base):
+    def test_cases_with_marks_waiting_and_linked_workers(self):
+        import datetime as dt
+
+        self.write("a", "# 案件 A\n略称: A\n\n## TODO\n- 読む\n- [11/20] ! 出す\n- [11/18] 遅れた\n\n"
+                        "## Waiting\n- 返事待ち → 続ける\n\n## 資料\n- [r](file:///Users/me/hub/workers/impl-a/report.md)\n"
+                        "- [w](file:///Users/me/repo/.claude/worktrees/impl-b)\n")
+        self.write("b", "# 案件 B\n\n## Waiting\n- 待つ\n")
+        self.write("c", "# 案件 C\n\n## TODO\n- ! 急ぐ\n")
+        out = cases.cases_json(self.dir, dt.date(2026, 11, 19))
+        self.assertEqual(out["today"], "2026-11-19")
+        self.assertEqual([c["slug"] for c in out["cases"]], ["a", "c", "b"])
+        a = out["cases"][0]
+        self.assertEqual(a["short"], "A")
+        self.assertEqual([t["text"] for t in a["todo"]], ["遅れた", "出す", "読む"])
+        self.assertEqual(a["todo"][0], {"text": "遅れた", "due": "2026-11-18", "bang": False, "overdue": True, "today": False})
+        self.assertTrue(a["todo"][1]["bang"])
+        self.assertEqual(a["waiting"], [{"text": "返事待ち", "next": "続ける"}])
+        self.assertEqual(a["workers"], ["impl-a", "impl-b"])
+
+    def test_main_prints_json(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        self.write()
+        buf = io.StringIO()
+        with mock.patch.dict(os.environ, {"AGENT_CASES_DIR": str(self.dir)}), redirect_stdout(buf):
+            self.assertEqual(cases.main(["json"]), 0)
+        self.assertEqual(json.loads(buf.getvalue())["cases"][0]["slug"], "x")
+
+
 class ResolveTest(Base):
     def test_resolve_moves_next(self):
         p = self.write()

@@ -49,6 +49,8 @@ Usage:
   cases.py resolve <案件> <文字列> [--section Waiting]
       節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。Waiting・予定なら
       ` → ` のあとを「TODO」に移す。<案件> はファイル名（.md は省略可）。
+  cases.py json
+      全案件を JSON で標準出力に出す（Orca の Hub パネルが読む）。形は下の「json の出力」。
   cases.py log <案件> <1 行>
       「資料」の節に 1 行足す（節が無ければ作る）。Hub のパネルで答えたことを残すのに使う。
       改行と制御文字は空白にする。<案件> はファイル名（.md は省略可、パスの区切りは不可）。
@@ -59,6 +61,14 @@ sweep の出力（1 行に 1 つ）:
   {"action": "stale", "case", "section", "item", "prs"}        Waiting 以外で、PR がすべて閉じた項目（消さない）
   {"action": "open", "case", "section", "item", "prs"}         Waiting で、まだ開いている PR がある項目
   prs は [{"url", "state", "reviewDecision", "isDraft", "reviews": [{"author", "state"}]}]（reviews は人ごとの最新のレビュー）
+
+json の出力:
+  {"today": "2026-11-19", "cases": [{"slug", "title", "short", "path",
+    "todo": [{"text", "due" (YYYY-MM-DD か null), "bang", "overdue", "today"}]  急ぐ順,
+    "waiting": [{"text", "next"}], "later": 件数, "schedule": [{"date", "text"}],
+    "workers": [<worker 名>]}]}
+  workers は、案件のファイルにリンクのある作業場所（~/hub/workers/<名前>/、.claude/worktrees/<名前>）の名前。
+  案件は、期日のある TODO・! の TODO・TODO・Waiting だけ、の順に並べる（同じならファイル名の順）。
 
 TODO の一覧:
   全案件の TODO を 1 つの一覧にし、上から番号を付ける。並びは、期日のあるもの（早い順。期日が同じなら
@@ -466,6 +476,50 @@ def archive(case: Case) -> Path:
         dest = done / f"{case.path.stem}-{dt.datetime.now():%Y%m%d%H%M%S}.md"
     os.replace(case.path, dest)
     return dest
+
+
+WORKER_LINK = re.compile(r"(?:/hub/workers|/\.claude/worktrees)/([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def case_json(case: Case, today: dt.date) -> dict:
+    todo = []
+    for i, it in enumerate(case.items(MINE)):
+        due, bang, text = todo_marks(it.text, today)
+        todo.append({"text": text, "due": due.isoformat() if due else None, "bang": bang,
+                     "overdue": bool(due and due < today), "today": due == today, "_i": i})
+    todo.sort(key=lambda t: (0 if t["due"] else 1 if t["bang"] else 2, t["due"] or "9999", not t["bang"], t["_i"]))
+    for t in todo:
+        del t["_i"]
+    waiting = [dict(zip(("text", "next"), split_next(it.text))) for it in case.items(WAITING)]
+    schedule = []
+    for it in case.items(SCHEDULE):
+        text, _ = split_next(it.text)
+        date, _, rest = todo_marks(text, today)
+        schedule.append({"date": date.isoformat() if date else None, "text": rest})
+    workers = []
+    for line in case.dump().splitlines():
+        for name in WORKER_LINK.findall(line):
+            name = name.removesuffix(".md")
+            if name not in workers and name != "report":
+                workers.append(name)
+    return {"slug": case.slug, "title": case.title, "short": case.short, "path": str(case.path),
+            "todo": todo, "waiting": waiting, "later": len(case.items(LATER)), "schedule": schedule,
+            "workers": workers}
+
+
+def cases_json(d: Path, today: dt.date | None = None) -> dict:
+    today = today or current_date()
+    out = [case_json(c, today) for c in load_cases(d)]
+
+    def rank(c):
+        if any(t["due"] for t in c["todo"]):
+            return (0, min(t["due"] for t in c["todo"] if t["due"]))
+        if any(t["bang"] for t in c["todo"]):
+            return (1, "")
+        return (2 if c["todo"] else 3 if c["waiting"] else 4, "")
+
+    out.sort(key=lambda c: (rank(c), c["slug"]))
+    return {"today": today.isoformat(), "cases": out}
 
 
 def log(d: Path, slug: str, text: str) -> dict:
@@ -1064,6 +1118,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("case")
     r.add_argument("needle")
     r.add_argument("--section", default=WAITING, choices=TASK_SECTIONS)
+    sub.add_parser("json")
     lg = sub.add_parser("log")
     lg.add_argument("case")
     lg.add_argument("text")
@@ -1083,6 +1138,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "resolve":
         print(json.dumps(resolve(d, args.case, args.needle, args.section), ensure_ascii=False))
+        return 0
+    if args.cmd == "json":
+        print(json.dumps(cases_json(d), ensure_ascii=False))
         return 0
     if args.cmd == "log":
         print(json.dumps(log(d, args.case, args.text), ensure_ascii=False))

@@ -148,7 +148,10 @@ test('the claude CLI is only asked to list the sessions, and nothing else runs a
     .filter(([, source]) => /node:child_process/.test(CODE_ONLY(source)))
     .map(([file]) => file)
     .sort()
-  assert.deepEqual(spawning, [join('src', 'claude-agents.mjs'), join('src', 'deliver.mjs'), join('src', 'orca-cli.mjs')])
+  assert.deepEqual(spawning, [join('src', 'cases.mjs'), join('src', 'claude-agents.mjs'), join('src', 'deliver.mjs'), join('src', 'orca-cli.mjs')])
+  // The cases are read with `cases.py json` and nothing else.
+  const cases = CODE_ONLY(readFileSync(join(root, 'src', 'cases.mjs'), 'utf8'))
+  assert.deepEqual([...cases.matchAll(/execFile\(([^)]*?)\{/g)].map((match) => match[1].trim()), ["python, [script, 'json'],"])
 })
 
 test('what the panel runs to act is the short list of src/deliver.mjs', () => {
@@ -164,7 +167,7 @@ test('what the panel runs to act is the short list of src/deliver.mjs', () => {
   assert.match(text, /casesScript = join\(home, '\.claude', 'skills', 'agents-orchestrator', 'scripts', 'cases\.py'\)/)
   // Every other run(...) in the plugin is a read of src/claude-agents.mjs or src/orca-cli.mjs.
   for (const [file, source] of sources()) {
-    if ([join('src', 'deliver.mjs'), join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs')].includes(file)) continue
+    if ([join('src', 'deliver.mjs'), join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs'), join('src', 'cases.mjs')].includes(file)) continue
     assert.doesNotMatch(CODE_ONLY(source), /execFile|spawn\(/, file)
   }
 })

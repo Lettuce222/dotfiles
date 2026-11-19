@@ -80,7 +80,7 @@ test('sessions are grouped by whose turn it is, with goal, progress and the step
   assert.equal(model.attention[0].where, '~/hub/workers/impl-b')
   assert.deepEqual(model.working.map((row) => [row.name, row.goal, row.done, row.total, row.step]), [['impl-a', 'Build the panel', 1, 3, 'Writing']])
   assert.deepEqual(model.idle.map((row) => row.name), ['orchestrator'])
-  assert.deepEqual(model.done.map((row) => row.name), ['research-c'])
+  assert.ok(![...model.attention, ...model.working, ...model.idle].some((row) => row.name === 'research-c'), 'finished workers are not shown')
   assert.deepEqual(model.watcher, { state: 'missing', detail: null })
 })
 
@@ -122,16 +122,49 @@ test('the watcher has no row, and a line only when it is not running well', () =
   assert.deepEqual(buildHubModel([watcher({ state: 'blocked', job: { needs: 'reconnect Slack' } })], []).watcher, { state: 'blocked', detail: 'reconnect Slack' })
   assert.equal(buildHubModel([watcher({ alive: false })], []).watcher.state, 'stopped')
   const model = buildHubModel([watcher({ state: 'working' })], [])
-  assert.equal([...model.attention, ...model.working, ...model.idle, ...model.done].length, 0)
+  assert.equal([...model.attention, ...model.working, ...model.idle].length, 0)
 })
 
-test('finished workers older than three days drop off, and at most eight show', () => {
-  const day = 24 * 60 * 60 * 1000
-  const agents = Array.from({ length: 10 }, (_, i) => agent({ sessionId: `s${i}`, name: `w${i}`, kind: 'background', state: 'done', job: { state: 'done', updatedAt: 10 * day - i } }))
-  agents.push(agent({ sessionId: 'old', name: 'old', kind: 'background', state: 'done', job: { state: 'done', updatedAt: 1 } }))
-  const model = buildHubModel(agents, [], [], { now: 10 * day })
-  assert.equal(model.done.length, 8)
-  assert.ok(!model.done.some((row) => row.name === 'old'))
+test('workers go under the project that links them, names them in its ask, or whose name they hold', () => {
+  const project = (slug, extra = {}) => ({ slug, title: slug, short: slug, path: null, todo: [], waiting: [], later: 0, workers: [], ...extra })
+  const projects = [project('orca-setup', { workers: ['research-hub-orca-policy'] }), project('ai-mania')]
+  const agents = [
+    agent({ sessionId: 'a', name: 'research-hub-orca-policy', kind: 'background', state: 'blocked' }),
+    agent({ sessionId: 'b', name: 'impl-hub-orca-setup', kind: 'background', state: 'working', status: 'busy' }),
+    agent({ sessionId: 'c', name: 'impl-x', kind: 'background', state: 'blocked' }),
+    agent({ sessionId: 'd', name: 'impl-y', kind: 'background', state: 'blocked' }),
+    agent({ sessionId: 'e', name: 'impl-hub-orca-setup-old', kind: 'background', state: 'done', alive: false }),
+    agent({ sessionId: 'f', name: 'orchestrator', cwd: '/h/hub', status: 'idle' })
+  ]
+  const cards = [{ id: '20261119-000000-deadbeef', kind: 'decide', sessionId: 'c', case: 'ai-mania', check: { ok: true }, pressed: null, question: 'q', options: [] }]
+  const model = buildHubModel(agents, [], [], { projects, cards })
+  assert.deepEqual(model.projects.map((p) => [p.slug, p.rows.map((row) => row.name)]), [
+    ['orca-setup', ['research-hub-orca-policy', 'impl-hub-orca-setup']],
+    ['ai-mania', ['impl-x']]
+  ])
+  assert.deepEqual(model.attention.map((row) => row.name), ['impl-y'], 'outside the projects')
+  assert.deepEqual(model.idle.map((row) => row.name), ['orchestrator'])
+})
+
+test('a project shows its TODO with dates and marks, what it waits for, and links its case file', () => {
+  const projects = [
+    { slug: 'quiet', title: '静かな案件', short: '静か', path: null, todo: [], waiting: [], later: 0, workers: [] },
+    {
+      slug: 'orca-setup', title: 'Orca で仕事を進める', short: 'Orca', path: '/h/hub/state/cases/orca-setup.md', later: 0, workers: ['impl-a'],
+      todo: [{ text: '[資料](https://x/y) を読む', due: '2026-11-18', bang: false, overdue: true, today: false }, { text: '出す', due: '2026-11-19', bang: true, overdue: false, today: true }],
+      waiting: [{ text: 'レビュー待ち', next: '直す' }]
+    }
+  ]
+  const model = buildHubModel([agent({ sessionId: 'a', name: 'impl-a', kind: 'background', state: 'blocked' })], [], [], { projects })
+  assert.deepEqual(model.projects.map((p) => p.slug), ['orca-setup', 'quiet'], 'a project waiting for the user comes first')
+  const html = renderHub(model)
+  assert.ok(html.includes('<div class="project-head" role="button" tabindex="0" data-report="/h/hub/state/cases/orca-setup.md"><span class="name">Orca</span>'))
+  assert.ok(html.includes('<span class="badge">あなたの番 1</span>'))
+  assert.ok(html.includes('<span class="due overdue">過ぎた 11/18</span>資料 を読む'))
+  assert.ok(html.includes('<span class="due today">今日 11/19</span><span class="bang">!</span>出す'))
+  assert.ok(html.includes('レビュー待ち<span class="then"> → 直す</span>'))
+  assert.ok(html.includes('<p class="quiet">TODO も待ちもありません</p>'))
+  assert.ok(!html.includes('あなたの番（プロジェクトの外）'), 'the worker is under its project')
 })
 
 test('the render escapes what sessions write and links a row to its workspace or report', () => {
@@ -201,7 +234,8 @@ test('openReport opens only a report of a hub worker, in the workspace that hold
     { method: 'workspace.open', params: { workspaceId: 'ws-hub' } },
     { method: 'editor.open', params: { workspaceId: 'ws-hub', path: 'workers/impl-a/report.md' } }
   ], 'Orca takes the path inside the workspace')
-  for (const path of [join(hubRoot, 'state', 'cases', 'x.md'), join(hubRoot, 'workers', 'impl-a', '..', '..', 'CLAUDE.md'), join(hubRoot, 'workers', 'a', 'b', 'report.md'), join(home, '.ssh', 'report.md'), 42]) {
+  assert.deepEqual(await worker.openReport(join(hubRoot, 'state', 'cases', 'orca-setup.md')), { opened: true }, 'a case opens too')
+  for (const path of [join(hubRoot, 'state', 'cases', 'done', 'x.md'), join(hubRoot, 'state', 'approvals', 'x.md'), join(hubRoot, 'workers', 'impl-a', '..', '..', 'CLAUDE.md'), join(hubRoot, 'workers', 'a', 'b', 'report.md'), join(home, '.ssh', 'report.md'), 42]) {
     assert.deepEqual(await worker.openReport(path), { opened: false }, String(path))
   }
 })
@@ -211,14 +245,14 @@ test('what a session says is never cut: in full when it needs the user, and in t
   const model = buildHubModel(
     [
       agent({ sessionId: 'a', id: 'aaaaaaaa', name: 'impl-a', kind: 'background', cwd: `${HOME}/hub/workers/impl-a`, state: 'blocked', job: { state: 'blocked', needs: long, inFlight: 0, updatedAt: 1 } }),
-      agent({ sessionId: 'b', id: 'bbbbbbbb', name: 'impl-b', kind: 'background', cwd: `${HOME}/hub/workers/impl-b`, state: 'done', alive: false, job: { state: 'done', detail: long, inFlight: 0, updatedAt: 1 } })
+      agent({ sessionId: 'b', id: 'bbbbbbbb', name: 'impl-b', kind: 'background', cwd: `${HOME}/hub/workers/impl-b`, state: null, status: 'idle', alive: true, job: { state: 'idle', detail: long, inFlight: 0, updatedAt: 1 } })
     ],
     [],
     [],
     { home: HOME }
   )
   const html = renderHub(model)
-  const [attention, done] = html.split('<div class="group done">')
+  const [attention, done] = html.split('<div class="group idle">')
   assert.ok(attention.includes(`<div class="sub">${long}</div>`), 'the need in full')
   assert.ok(done.includes(`<p class="said">${long}</p>`), 'the expansion has the whole line')
   assert.ok(done.includes('<p class="where">~/hub/workers/impl-b</p>'), 'the place moved off the name line')
@@ -243,4 +277,21 @@ test('cards are shaped as orca-milestone draws them, and the panel has their sty
   const css = await readFile(join(import.meta.dirname, '..', 'panel', 'style.css'), 'utf8')
   // The label and its line sit one under the other only with these.
   for (const rule of ['.action {', '.action .label', '.next h2 {', '.actions {', '.submit {']) assert.ok(css.includes(rule), rule)
+})
+
+test('parseCases keeps the fields the panel uses and drops what cases.py would not write', async () => {
+  const { parseCases, readCases } = await import('../src/cases.mjs')
+  const parsed = parseCases({ today: '2026-11-19', cases: [
+    { slug: 'a', title: 'A', short: 'A', path: '/h/a.md', todo: [{ text: 'x', due: '2026-11-19', bang: true, overdue: false, today: true }, { text: '' }], waiting: [{ text: 'w', next: null }], later: 2, workers: ['impl-a', '../x'] },
+    { slug: '../bad' },
+    null
+  ] })
+  assert.deepEqual(parsed, [{ slug: 'a', title: 'A', short: 'A', path: '/h/a.md', todo: [{ text: 'x', due: '2026-11-19', bang: true, overdue: false, today: true }], waiting: [{ text: 'w', next: null }], later: 2, workers: ['impl-a'] }])
+  assert.deepEqual(parseCases({ not: 'cases' }), [])
+  const runs = []
+  await readCases('python3', '/s/cases.py', { AGENT_ORCHESTRATOR_HOME: '/h' }, async (...args) => {
+    runs.push(args)
+    return { cases: [] }
+  })
+  assert.deepEqual(runs, [['python3', '/s/cases.py', { AGENT_ORCHESTRATOR_HOME: '/h' }]])
 })

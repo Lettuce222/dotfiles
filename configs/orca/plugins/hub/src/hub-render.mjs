@@ -75,6 +75,48 @@ function renderRow(row) {
 <div class="detail"><div class="inner">${where}${said}${goal}${tasks}</div></div></li>`
 }
 
+/** Markdown links shown as their labels: the panel shows a case's lines as text. */
+function plain(value) {
+  return String(value).replace(/\[([^\]]+)\]\([^)\s]+\)/g, '$1')
+}
+
+function dueLabel(item) {
+  if (!item.due) return ''
+  const [, month, day] = item.due.split('-').map(Number)
+  const kind = item.overdue ? ' overdue' : item.today ? ' today' : ''
+  const word = item.overdue ? '過ぎた ' : item.today ? '今日 ' : ''
+  return `<span class="due${kind}">${word}${month}/${day}</span>`
+}
+
+function renderTodo(item) {
+  const bang = item.bang ? '<span class="bang">!</span>' : ''
+  return `<li class="todo"><span class="mark">○</span><span class="text">${dueLabel(item)}${bang}${escape(plain(item.text))}</span></li>`
+}
+
+function renderWaiting(item) {
+  const next = item.next ? `<span class="then"> → ${escape(plain(item.next))}</span>` : ''
+  return `<li class="waiting"><span class="mark">…</span><span class="text">${escape(plain(item.text))}${next}</span></li>`
+}
+
+/** A project: its name, what the user has to do, what it waits for, and the workers on it. */
+function renderProject(project) {
+  const attention = project.rows.filter((row) => row.state === 'attention').length
+  const badge = attention > 0 ? `<span class="badge">あなたの番 ${attention}</span>` : ''
+  const open = project.path ? ` role="button" tabindex="0" data-report="${escape(project.path)}"` : ''
+  const head = `<div class="project-head"${open}><span class="name">${escape(project.short)}</span><span class="title">${escape(project.title)}</span>${badge}</div>`
+  const todo = project.todo.length > 0 ? `<ol class="items">${project.todo.map(renderTodo).join('')}</ol>` : ''
+  const waiting = project.waiting.length > 0 ? `<ol class="items">${project.waiting.map(renderWaiting).join('')}</ol>` : ''
+  const rows = project.rows.length > 0 ? `<ol class="rows">${project.rows.map(renderRow).join('')}</ol>` : ''
+  const empty = !todo && !waiting && !rows ? '<p class="quiet">TODO も待ちもありません</p>' : ''
+  return `<li class="project${attention > 0 ? ' attention' : ''}" data-key="${escape(`project\n${project.slug}`)}">${head}${todo}${waiting}${rows}${empty}</li>`
+}
+
+function renderProjects(projects) {
+  if (!projects || projects.length === 0) return ''
+  return `<div class="group projects"><h2><span>プロジェクト</span><span class="n">${projects.length}</span></h2>
+<ol class="project-list">${projects.map(renderProject).join('')}</ol></div>`
+}
+
 function renderGroup(title, rows, className) {
   if (rows.length === 0) return ''
   return `<div class="group ${className}"><h2><span>${title}</span><span class="n">${rows.length}</span></h2>
@@ -260,10 +302,10 @@ export function renderHub(model) {
   const groups = [
     renderFocused(model.focused),
     renderCards(model.cards),
-    renderGroup('あなたの番', model.attention, 'attention'),
-    renderGroup('動いている', model.working, 'working'),
-    renderGroup('待っている', model.idle, 'idle'),
-    renderGroup('済んだ', model.done, 'done')
+    renderProjects(model.projects),
+    renderGroup('あなたの番（プロジェクトの外）', model.attention, 'attention'),
+    renderGroup('動いている（プロジェクトの外）', model.working, 'working'),
+    renderGroup('待っている', model.idle, 'idle')
   ].join('')
   const body = groups || '<p class="empty">Claude Code のセッションはありません。</p>'
   return `<main>${body}${renderWatcher(model.watcher)}</main>`

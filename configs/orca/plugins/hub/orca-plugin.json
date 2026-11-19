@@ -5,7 +5,7 @@
   "id": "hub-local",
   "publisher": "lettuce222",
   "name": "Hub (local)",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Shows every Claude Code session of this computer, background ones included, with its goal and progress. Adapted from andoshin11/orca-milestone.",
   "license": "MIT",
   "engines": {

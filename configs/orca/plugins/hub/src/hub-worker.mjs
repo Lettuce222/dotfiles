@@ -11,6 +11,7 @@ import { watch } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { ASK_ID, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
+import { casesScriptOf, readCases as readCasesJson } from './cases.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
 import { answerText, cleanText, createDelivery, resolvePython, writtenAnswerText } from './deliver.mjs'
 import {
@@ -43,6 +44,7 @@ const REQUEST_RETRY_MS = 30_000
 // `claude agents` is asked again at most this often when only a task list changed.
 const AGENTS_MIN_MS = 5_000
 const REPORT_NAME = 'report.md'
+const CASES_MAX_MS = 60_000
 
 /** 11/19 */
 function dayOf(ms) {
@@ -62,9 +64,15 @@ export function createHubWorker({
   readJob = (id) => readJobState(home, id),
   now = Date.now,
   watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange),
-  delivery = null
+  delivery = null,
+  readCases = () => readCasesJson(resolvePython(home), casesScriptOf(home), { AGENT_ORCHESTRATOR_HOME: hubRoot })
 }) {
   const asksDir = asksDirOf(hubRoot)
+  const casesDir = join(hubRoot, 'state', 'cases')
+  let projects = []
+  // Read again when a case changes, and once a minute for the dates.
+  let casesAt = -Infinity
+  let casesChanged = true
   const deliver =
     delivery ??
     createDelivery({
@@ -230,13 +238,18 @@ export function createHubWorker({
     )
   }
 
-  /** Opens a hub worker's report in an editor tab of the workspace that holds it. Other paths are refused. */
+  /** A hub worker's report, or a case file: the only paths a pressed row may open. */
+  function openable(target) {
+    const workers = join(hubRoot, 'workers')
+    if (isInside(target, workers)) return target.endsWith(`/${REPORT_NAME}`) && target.split('/').length === workers.split('/').length + 2
+    const cases = join(hubRoot, 'state', 'cases')
+    return isInside(target, cases) && target.endsWith('.md') && target.split('/').length === cases.split('/').length + 1
+  }
+
+  /** Opens a hub worker's report or a case in an editor tab of the workspace that holds it. Other paths are refused. */
   async function openReport(path) {
     const target = typeof path === 'string' ? resolve(path) : ''
-    const workers = join(hubRoot, 'workers')
-    if (!isInside(target, workers) || !target.endsWith(`/${REPORT_NAME}`) || target.split('/').length !== workers.split('/').length + 2) {
-      return { opened: false }
-    }
+    if (!openable(target)) return { opened: false }
     try {
       const { workspaces } = await orca.host.call('workspace.list')
       const holder = workspaces
@@ -292,9 +305,18 @@ export function createHubWorker({
       }
     }
     const lists = await allSessions()
+    if (casesChanged || now() - casesAt >= CASES_MAX_MS) {
+      casesChanged = false
+      try {
+        projects = await readCases()
+        casesAt = now()
+      } catch (error) {
+        orca.log(`hub: could not read the cases: ${error.message}`)
+      }
+    }
     asks = await readAsks(asksDir)
     const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null }))
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers })))
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, projects })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -422,6 +444,11 @@ export function createHubWorker({
       })
       await mkdir(asksDir, { recursive: true })
       watchDir(asksDir, () => schedule())
+      await mkdir(casesDir, { recursive: true })
+      watchDir(casesDir, () => {
+        casesChanged = true
+        schedule()
+      })
       setInterval(() => schedule(true), SYNC_MS)
       await refresh(true)
     })()
