@@ -20,7 +20,9 @@ through once the user approved it there (approvals.py).
     - a one-shot record for this session matches the call -> allow, consume
       it. This covers calls that get no dialog but would be refused, such as
       auto mode classifier blocks. gh writes and MCP calls with prose are left
-      to external-post-guard.py, which consumes records for those itself.
+      to external-post-guard.py, and the UI and typing commands it stops
+      (orca, osascript, tmux send-keys, ...) to agent-ui-guard.py; those
+      hooks consume records for them themselves.
 
 Sessions are told apart by `claude agents --json` (see approvals.py).
 """
@@ -41,8 +43,8 @@ EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHOWN_LIMIT = 300
 
 
-def load_guard():
-    spec = importlib.util.spec_from_file_location("external_post_guard", HERE / "external-post-guard.py")
+def load_guard(name="external-post-guard.py"):
+    spec = importlib.util.spec_from_file_location(name.removesuffix(".py").replace("-", "_"), HERE / name)
     if spec is None or spec.loader is None:
         return None
     mod = importlib.util.module_from_spec(spec)
@@ -59,8 +61,12 @@ def left_to_guard(tool_name, tool_input):
     if guard is None:
         return False
     if tool_name == "Bash":
+        command = tool_input.get("command") or ""
+        ui_guard = load_guard("agent-ui-guard.py")
+        if ui_guard is not None and ui_guard.problems(command):
+            return True
         try:
-            return bool(guard.gh_writes(tool_input.get("command") or ""))
+            return bool(guard.gh_writes(command))
         except ValueError:
             return True  # unparsable; the guard checks it conservatively
     if tool_name.startswith("mcp__"):

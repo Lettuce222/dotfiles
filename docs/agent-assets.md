@@ -118,6 +118,18 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 
 実行ビットに頼らないよう、`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_tmux_socket_guard.py`で実行する。
 
+### エージェントに承認のボタンを押させない
+
+`agent-ui-guard.py`はClaude Codeの`PreToolUse`（`Bash`）で、人が押すボタン（窓口の問い、OrcaのHub (local)のカード）や、ほかのセッションへの入力に届くコマンドを、どのセッションでも確認に回す。エージェントが自分の操作を承認できないようにするため。
+
+- OrcaのCLIは、読むだけのサブコマンド（`status`、`worktree ps/list/show/current`、`terminal list/read/show`、`agent list/show/read`、`plugin list/logs/validate/inspect/test/check/types/release-entry/shot`、`repo list/show`、`project list`、`agent-context`、`--help`）だけを通す。`orca computer`、`orca terminal send`、`orca plugin dev request`・`dev load`・`install`・`update`・`enable`・`catalog add`などは止める。`orca plugin shot`も`--act`・`--scenario`を付けたものはパネルを押すので止める。CLIはパスで呼ばれても、`sh -c`・`eval`・`$(...)`の中でも見る
+- `osascript`は、System Eventsや`click`・`keystroke`・`key code`を含むスクリプトを止める。`-e`の文と、渡されたファイルの中身を読む。読めないファイルや標準入力から読むものも止める。`cliclick`はいつも止める
+- tmuxは、ペインに打ち込むコマンド（`send-keys`、`send-prefix`、`paste-buffer`）、ファイルや標準入力からコマンドを読むもの（`source-file`、`tmux -C`）を止める。`\;`で続けたものや`if-shell`の中も見る。`-L`・`-S`で別のサーバーを選んだものは通す
+- 止めたものは、そのセッション向けの承認の記録（`approvals.py`）と一致すれば1回だけ通す。無ければ`ask`を返し、対話のセッションでは人がダイアログで決め、workerでは`approval-gate.py`が「要判断」に回す。`approval-gate.py pre`はこれらの呼び出しの記録を使わない（2つのhookで同じ記録を取り合わないように）
+- 見るのはコマンドラインだけで、実行するスクリプトの中や、nodeから動かしたOrcaのCLIは見えない。同じユーザーで動くので、間違いと素直な試みを止めるもので、サンドボックスではない
+
+`settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_agent_ui_guard.py`。
+
 ### AskUserQuestionのpreview
 
 Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを、全部出せるときだけ出す。
