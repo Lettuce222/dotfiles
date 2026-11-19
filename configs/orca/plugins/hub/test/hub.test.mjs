@@ -205,3 +205,42 @@ test('openReport opens only a report of a hub worker, in the workspace that hold
     assert.deepEqual(await worker.openReport(path), { opened: false }, String(path))
   }
 })
+
+test('what a session says is never cut: in full when it needs the user, and in the expansion otherwise', () => {
+  const long = `${'あ'.repeat(300)}おわり`
+  const model = buildHubModel(
+    [
+      agent({ sessionId: 'a', id: 'aaaaaaaa', name: 'impl-a', kind: 'background', cwd: `${HOME}/hub/workers/impl-a`, state: 'blocked', job: { state: 'blocked', needs: long, inFlight: 0, updatedAt: 1 } }),
+      agent({ sessionId: 'b', id: 'bbbbbbbb', name: 'impl-b', kind: 'background', cwd: `${HOME}/hub/workers/impl-b`, state: 'done', alive: false, job: { state: 'done', detail: long, inFlight: 0, updatedAt: 1 } })
+    ],
+    [],
+    [],
+    { home: HOME }
+  )
+  const html = renderHub(model)
+  const [attention, done] = html.split('<div class="group done">')
+  assert.ok(attention.includes(`<div class="sub">${long}</div>`), 'the need in full')
+  assert.ok(done.includes(`<p class="said">${long}</p>`), 'the expansion has the whole line')
+  assert.ok(done.includes('<p class="where">~/hub/workers/impl-b</p>'), 'the place moved off the name line')
+  assert.ok(!html.includes('<span class="repo">'))
+})
+
+test('the focused workspace shows its own agent, not the workers working inside its folder', () => {
+  const lists = [
+    { listId: SESSION_A, cwd: `${HOME}/hub`, goal: 'hub の作業', tasks: [task(1, 'a', 'pending')], updatedAt: 2 },
+    { listId: SESSION_B, cwd: `${HOME}/hub/workers/impl-x`, goal: 'worker の作業', tasks: [task(1, 'b', 'pending')], updatedAt: 3 }
+  ]
+  const agents = [agent({ sessionId: SESSION_B, name: 'impl-x', kind: 'background', cwd: `${HOME}/hub/workers/impl-x` })]
+  const model = buildHubModel(agents, lists, [], { home: HOME, focused: { path: `${HOME}/hub`, displayName: 'hub', agentStates: [] } })
+  assert.deepEqual(model.focused.sessions.map((s) => s.goal), ['hub の作業'])
+})
+
+test('cards are shaped as orca-milestone draws them, and the panel has their styles', async () => {
+  const offer = { kind: 'permission', id: 'o1', path: '/w', question: 'Bash を許可しますか？ touch a', risk: 'write', where: '', dangerous: false, suggestions: [{ label: '許可', action: 'allow', detail: '今回だけ実行します' }] }
+  const html = renderHub(buildHubModel([], [], [], { focused: { path: '/w', displayName: 'w', agentStates: ['waiting'] }, offers: [offer] }))
+  assert.ok(html.includes('<button type="button" class="action" data-next="o1" data-index="0"><span class="label">許可</span><span class="detail">今回だけ実行します</span></button>'))
+  const { readFile } = await import('node:fs/promises')
+  const css = await readFile(join(import.meta.dirname, '..', 'panel', 'style.css'), 'utf8')
+  // The label and its line sit one under the other only with these.
+  for (const rule of ['.action {', '.action .label', '.next h2 {', '.actions {', '.submit {']) assert.ok(css.includes(rule), rule)
+})

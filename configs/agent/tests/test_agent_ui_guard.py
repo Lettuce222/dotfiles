@@ -126,6 +126,17 @@ class AgentUiGuardTest(unittest.TestCase):
         ):
             self.assertStopped(command)
 
+    def test_heredoc_bodies_are_data_unless_a_shell_runs_them(self):
+        script = "python3 - <<'EOF'\nprint(\"orca-milestone's card\")\nrun('orca terminal send')\nEOF\necho done"
+        self.assertPasses(script)
+        self.assertPasses("cat > /tmp/x.md <<EOF\nthe plugin's orca computer click\nEOF")
+        self.assertStopped("bash <<'EOF'\norca computer click --x 1 --y 1\nEOF")
+        self.assertStopped("python3 - <<'EOF'\nx = 1\nEOF\norca terminal send --text y")
+
+    def test_unreadable_command_is_read_as_text(self):
+        self.assertStopped("orca terminal send --text 'it''s")
+        self.assertPasses("echo \"orca-milestone's\" 'x")
+
     def test_orca_in_text_is_not_a_call(self):
         self.assertPasses("echo 'orca computer click'")
         self.assertPasses("git log --grep 'orca terminal send'")

@@ -196,15 +196,47 @@ def tmux_problem(args):
     return None
 
 
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+RAW_CALL = re.compile(r"(^|[\s;&|(`])(?:\S*/)?(orca|cliclick|osascript)(?=\s|$)|\btmux\b.*\b(send|paste|source)")
+
+
+def split_heredocs(command):
+    """The command lines without heredoc bodies, and the bodies a shell would run.
+
+    A heredoc body is data for the command's stdin (a script for python, a file for cat), not
+    commands, and an apostrophe in it would make the whole line unreadable. A body fed to a shell
+    (`sh <<EOF`) is commands, so it is read as such.
+    """
+    lines = command.split("\n")
+    kept, run = [], []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for match in HEREDOC.finditer(line):
+            word = match.group(2)
+            body = []
+            while i < len(lines) and lines[i].strip() != word:
+                body.append(lines[i])
+                i += 1
+            i += 1  # the terminator
+            before = line[: match.start()]
+            if re.search(r"(^|[\s;&|(])(?:\S*/)?(sh|bash|zsh|dash|fish)(\s+-\S+)*\s*$", before):
+                run.append("\n".join(body))
+    return "\n".join(kept), run
+
+
 def problems(command):
+    command, scripts = split_heredocs(command)
+    out = [p for script in scripts for p in problems(script)]
     try:
         argvs = calls(command)
     except ValueError:
         # Unparsable (unbalanced quotes): look at the raw text conservatively.
-        if re.search(r"(^|[\s/;&|(])(orca|cliclick|osascript)\b|\btmux\b.*\b(send|paste|source)", command):
-            return ["読めないコマンドの中の orca・osascript・cliclick・tmux"]
-        return []
-    out = []
+        if RAW_CALL.search(command):
+            out.append("読めないコマンドの中の orca・osascript・cliclick・tmux")
+        return out
     for argv in argvs:
         name = os.path.basename(argv[0])
         args = argv[1:]

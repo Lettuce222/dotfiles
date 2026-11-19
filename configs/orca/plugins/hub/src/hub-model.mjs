@@ -118,10 +118,12 @@ const FOCUSED_SESSIONS_MAX = 3
  * of its newest lists, and what its agent offers to choose from.
  * Adapted from andoshin11/orca-milestone src/model.mjs (MIT, see ../LICENSE and ../NOTICE.md).
  */
-function focusedView(workspace, lists, offers) {
+function focusedView(workspace, lists, offers, workers) {
   if (!workspace) return { kind: 'no-workspace' }
+  // A background worker that works inside the folder (~/hub/workers/<name>) is not this workspace's
+  // agent; it has its own row below.
   const mine = lists
-    .filter((list) => list.cwd && isInside(list.cwd, workspace.path) && list.tasks.length > 0)
+    .filter((list) => list.cwd && isInside(list.cwd, workspace.path) && list.tasks.length > 0 && !workers.has(list.listId))
     .slice(0, FOCUSED_SESSIONS_MAX)
     .map((list) => ({ listId: list.listId, ...progress(list) }))
   const states = workspace.agentStates ?? []
@@ -173,7 +175,7 @@ export function buildHubModel(agents, lists, orcaAgents = [], { home = null, foc
   // The focused workspace first, then the oldest wait or the newest change.
   const byFocus = (a, b) => Number(b.focused) - Number(a.focused)
   return {
-    focused: focusedView(focused, lists, offers),
+    focused: focusedView(focused, lists, offers, new Set(agents.filter((agent) => agent.kind === 'background').map((agent) => agent.sessionId))),
     cards: cards.map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
     attention: group('attention').toSorted((a, b) => byFocus(a, b) || a.since - b.since),
     working: group('working').toSorted((a, b) => byFocus(a, b) || b.since - a.since),

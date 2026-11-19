@@ -7,6 +7,9 @@
 
 const GOAL_MAX = 160
 const DETAIL_MAX = 160
+const FULL_MAX = 2000
+// A said line longer than this may need scrolling, so the pointer can enter the expansion.
+const LONG_SAID = 400
 const SUBJECT_MAX = 200
 const ROW_TASKS_SHORT = 8
 
@@ -49,21 +52,26 @@ function renderRow(row) {
     : `<span class="dot ${row.state}"></span>`
   const kind = `<span class="kind">${KIND_LABELS[row.kind] ?? ''}</span>`
   const focused = row.focused ? ' focused' : ''
+  // What the session says, never cut: in full on a row that needs the user, in at most two lines on
+  // the others, whose expansion then shows it in full.
   const line = row.step ?? row.detail
-  const sub = line ? `<div class="sub">${row.step ? '▶ ' : ''}${escape(clip(line, DETAIL_MAX))}</div>` : ''
-  const where = row.where && row.where !== row.name ? `<span class="repo">${escape(row.where)}</span>` : ''
+  const sub = line ? `<div class="sub">${row.step ? '▶ ' : ''}${escape(clip(line, FULL_MAX))}</div>` : ''
   const say = row.say ? `<button type="button" class="say" data-say="${escape(row.say)}" data-name="${escape(row.name)}" title="指示を書く">✎</button>` : ''
-  const head = `<div class="top">${mark}<span class="name">${escape(row.name)}${where}</span>${kind}${STATE_BADGES[row.state] ?? ''}${of}${say}</div>${sub}${bar}`
+  const head = `<div class="top">${mark}<span class="name" title="${escape(row.name)}">${escape(row.name)}</span>${kind}${STATE_BADGES[row.state] ?? ''}${of}${say}</div>${sub}${bar}`
   const key = escape(`${row.key}\n${clip(row.goal ?? '', GOAL_MAX)}`)
   const open = target(row)
   const button = open
     ? `<div class="head" role="button" tabindex="0"${open}>${head}</div>`
     : `<div class="head">${head}</div>`
-  if (row.total === 0 && !row.goal) return `<li class="row ${row.state}${focused}" data-key="${key}">${button}</li>`
+  const where = row.where && row.where !== row.name ? `<p class="where">${escape(row.where)}</p>` : ''
+  // A step hides what the session last said, and a clamped line may hide its end.
+  const said = row.detail && (row.step || row.state !== 'attention') ? `<p class="said">${escape(clip(row.detail, FULL_MAX))}</p>` : ''
   const goal = row.goal ? `<p class="goal">${escape(clip(row.goal, GOAL_MAX))}</p>` : ''
-  const long = row.tasks.length > ROW_TASKS_SHORT ? ' long' : ''
+  const tasks = row.tasks.length > 0 ? `<ol>${row.tasks.map(renderTask).join('')}</ol>` : ''
+  if (!where && !said && !goal && !tasks) return `<li class="row ${row.state}${focused}" data-key="${key}">${button}</li>`
+  const long = row.tasks.length > ROW_TASKS_SHORT || said.length > LONG_SAID ? ' long' : ''
   return `<li class="row ${row.state}${focused} has-detail${long}" data-key="${key}">${button}
-<div class="detail"><div class="inner">${goal}<ol>${row.tasks.map(renderTask).join('')}</ol></div></div></li>`
+<div class="detail"><div class="inner">${where}${said}${goal}${tasks}</div></div></li>`
 }
 
 function renderGroup(title, rows, className) {
@@ -80,23 +88,31 @@ const CHECK_NOTES = {
   level: 'レベル B より上の情報を含む依頼です。窓口で確かめてください。'
 }
 
-function answerButton(card, choice, label, recommended) {
-  const disabled = card.pressed ? ' disabled' : ''
-  const mark = recommended ? '<span class="recommended">推奨</span>' : ''
-  return `<button type="button" class="answer" data-answer data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${choice}"${disabled}>${choice}. ${escape(label)}${mark}</button>`
+function lineSpans(lines) {
+  return lines.filter(([, text]) => text).map(([kind, text]) => `<span class="${kind}">${escape(text)}</span>`).join('')
 }
 
+function answerButton(card, choice, label, lines, recommended) {
+  const disabled = card.pressed ? ' disabled' : ''
+  const mark = recommended ? '<span class="recommended">推奨</span>' : ''
+  return `<button type="button" class="action answer" data-answer data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${choice}"${disabled}><span class="label">${choice}. ${escape(label)}${mark}</span>${lineSpans(lines)}</button>`
+}
+
+function plainOption(choice, label, lines) {
+  return `<div class="action plain"><span class="label">${choice}. ${escape(label)}</span>${lineSpans(lines)}</div>`
+}
+
+// The question in full, each option as a card of the focused agent: what it makes the worker do is
+// written in the card, under its label.
 function cardBody(card) {
+  const item = (choice, label, lines, recommended) =>
+    `<li>${card.check.ok ? answerButton(card, choice, label, lines, recommended) : plainOption(choice, label, lines)}</li>`
   if (card.kind === 'decide') {
-    const options = card.options
-      .map((option, index) => `<li>${card.check.ok ? answerButton(card, index + 1, option.label, card.recommended === index + 1) : `<span class="label">${index + 1}. ${escape(option.label)}</span>`}<p class="desc">${escape(option.description)}</p></li>`)
-      .join('')
-    return `<p class="question">${escape(card.question)}</p><ol class="options">${options}</ol>`
+    const options = card.options.map((option, index) => item(index + 1, option.label, [['detail', option.description]], card.recommended === index + 1)).join('')
+    return `<p class="ask">${escape(card.question)}</p><ol class="actions">${options}</ol>`
   }
-  const steps = card.suggestions
-    .map((step, index) => `<li>${card.check.ok ? answerButton(card, index + 1, step.label, false) : `<span class="label">${index + 1}. ${escape(step.label)}</span>`}<p class="desc">${escape(step.prompt)}</p><p class="reason">${escape(step.reason)}</p></li>`)
-    .join('')
-  return `<ol class="options">${steps}</ol>`
+  const steps = card.suggestions.map((step, index) => item(index + 1, step.label, [['reason', step.reason], ['detail', step.prompt]], false)).join('')
+  return `<ol class="actions">${steps}</ol>`
 }
 
 function renderCard(card) {
@@ -182,7 +198,7 @@ function renderFocused(focused) {
   const body = focused.kind === 'no-tasks'
     ? '<p class="empty">このワークスペースのエージェントはまだタスクを作っていません。</p>'
     : focused.sessions.map(renderSession).join('')
-  return `<div class="focused">${header}${body}${renderNext(focused.next)}</div>`
+  return `<div class="focus">${header}${body}${renderNext(focused.next)}</div>`
 }
 
 function renderWatcher(watcher) {

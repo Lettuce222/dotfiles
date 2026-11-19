@@ -70,7 +70,7 @@ code { font-size: 12px; }
 .row .dot { flex: none; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--orca-muted-foreground); }
 .row.attention .dot, .row .dot.running { background: var(--ms-todo); }
 .row .check { flex: none; width: 8px; font-size: 11px; font-weight: 700; line-height: 1; text-align: center; color: var(--ms-done); }
-.row .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .row .repo { margin-left: 6px; font-size: 11px; color: var(--orca-muted-foreground); }
 .row .badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px;
   color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
@@ -90,35 +90,78 @@ code { font-size: 12px; }
 .row .dot.done { background: var(--ms-done); }
 .row .kind { flex: none; font-size: 10px; color: var(--orca-muted-foreground); }
 .row .finished { flex: none; font-size: 11px; color: var(--ms-done); }
-.row .sub { margin-left: 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { margin-left: 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* A row that needs the user says it in full. */
+.row.attention .sub { display: block; -webkit-line-clamp: none; color: var(--orca-foreground); }
+.row .detail .where, .row .detail .said { margin: 4px 0 4px 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
+.row .detail .said { color: var(--orca-foreground); white-space: normal; }
 .row .head:not([role]) { cursor: default; }
 .group .row .head:hover + .detail, .group .row .head:focus-visible + .detail { transition-delay: 300ms; }
 .watcher { margin: 8px 0 0; font-size: 11px; color: var(--ms-todo); }
 /* The cards of an Orca agent, from orca-milestone. */
-.focused { margin-bottom: 12px; }
-/* Cards: the whole question or prompt, and what each button makes the worker do. */
+.focus { margin-bottom: 12px; }
+/* What the agent proposes to do next, one card under another, as on the phone. A soft raised
+   surface instead of a border; green only on the card being sent. */
+.next { margin: 2px 0 10px; }
+.next h2 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 6px;
+  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.next h2 span { font-weight: 400; }
+.actions { display: flex; flex-direction: column; gap: 6px; }
+.actions li { display: block; padding: 0; }
+.action { display: flex; flex-direction: column; gap: 3px; box-sizing: border-box; width: 100%; padding: 10px 12px;
+  border: 1px solid color-mix(in oklch, var(--orca-foreground) 9%, transparent); border-radius: 10px;
+  font: inherit; text-align: left; color: var(--orca-card-foreground); cursor: pointer;
+  background: linear-gradient(color-mix(in oklch, var(--orca-foreground) 7%, var(--orca-card)), var(--orca-card));
+  transition: transform 100ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out; }
+.action:hover { background: color-mix(in oklch, var(--orca-foreground) 10%, var(--orca-card)); }
+.action:active { transform: scale(0.98); }
+.action:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: 1px; }
+.action .label { font-weight: 600; }
+.action .reason { font-size: 12px; }
+.action .prompt { font-size: 11px; color: var(--orca-muted-foreground);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.next.busy .action, .next.busy .submit { cursor: default; }
+.next.busy .action:not(.sending) { opacity: 0.55; }
+.next.settling .action, .next.settling .submit { opacity: 0.55; cursor: default; }
+.action.sending, .action.chosen { background: color-mix(in oklch, var(--ms-bar) 22%, var(--orca-card));
+  border-color: color-mix(in oklch, var(--ms-bar) 55%, transparent); }
+/* A question, its options and the form's button. */
+.next .ask { margin: 0 0 8px; font-weight: 600; }
+.next .hint { margin: -4px 0 6px; font-size: 11px; color: var(--orca-muted-foreground); }
+.next .question { margin-bottom: 12px; }
+.action .detail { font-size: 12px; color: var(--orca-muted-foreground); }
+.submit { display: block; box-sizing: border-box; width: 100%; padding: 8px 12px; border: 0; border-radius: 10px;
+  font: inherit; font-weight: 600; color: white; background: var(--ms-bar); cursor: pointer; transition: opacity 150ms ease-out; }
+.submit:disabled { opacity: 0.4; cursor: default; }
+.submit.sending { opacity: 0.7; }
+/* A permission for a dangerous command: the first press only asks for a second. */
+.next h2 .danger { font-weight: 700; color: var(--ms-todo); }
+/* What a permitted call would do: read only, write here, or reach past this machine. */
+.next h2 .risk { font-weight: 600; color: var(--orca-muted-foreground); }
+.next h2 .risk.read { color: var(--ms-done); }
+.next h2 .risk.outside { color: var(--ms-working); }
+.next .where { margin: -4px 0 8px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
+.action.armed { background: color-mix(in oklch, var(--ms-todo) 16%, var(--orca-card));
+  border-color: color-mix(in oklch, var(--ms-todo) 60%, transparent); }
+.next .status { margin: 6px 0 0; font-size: 11px; color: var(--ms-todo); }
+/* Workers' cards: the question in full, the options shaped as the focused agent's cards. */
 .card-list { margin: 0; padding: 0; list-style: none; }
-.card { display: block; padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--orca-border);
-  border-radius: var(--orca-radius, 6px); background: var(--orca-card); color: var(--orca-card-foreground); }
-.card-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.card { display: block; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--orca-border);
+  border-radius: 10px; background: var(--orca-card); color: var(--orca-card-foreground); }
+.card-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
 .card-head[role] { cursor: pointer; }
 .card-head .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-kind { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px;
   color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
 .card .case { flex: none; font-size: 11px; color: var(--orca-muted-foreground); }
-.card .question { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.card .options { margin: 0; padding: 0; list-style: none; }
-.card .options li { display: block; padding: 0; margin-bottom: 6px; }
-.card .desc, .card .reason { margin: 2px 0 0 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--orca-muted-foreground); }
-.card .reason { font-size: 11px; }
+.card .ask { margin: 0 0 8px; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card .note { margin: 0 0 6px; font-size: 12px; color: var(--ms-todo); }
-.card .label { font-weight: 600; }
+.card .action .detail, .card .action .reason { white-space: pre-wrap; overflow-wrap: anywhere; }
+.action.plain { cursor: default; }
+.action:disabled { opacity: 0.55; cursor: default; }
+.recommended { margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--ms-done); }
 button { font: inherit; color: inherit; }
-.answer { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 8px; text-align: left;
-  border: 1px solid var(--orca-border); border-radius: 4px; background: color-mix(in oklch, var(--orca-foreground) 6%, transparent); cursor: pointer; }
-.answer:hover:not(:disabled) { background: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
-.answer:disabled { opacity: 0.5; cursor: default; }
-.recommended { font-size: 10px; font-weight: 700; color: var(--ms-done); }
 .row .say { flex: none; padding: 0 4px; border: none; background: none; cursor: pointer; color: var(--orca-muted-foreground); }
 .row .say:hover { color: var(--orca-foreground); }
 #notice { flex: none; margin: 8px 0 0; font-size: 12px; color: var(--orca-muted-foreground); }
