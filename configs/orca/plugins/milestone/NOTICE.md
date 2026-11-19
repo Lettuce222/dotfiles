@@ -13,7 +13,7 @@ Orca の右サイドバーに、フォーカス中のワークスペースで Cl
 | `main.mjs` | `main.mjs` | `next.send` の受け口を外した |
 | `src/launch-hook.mjs` | `src/launch-hook.mjs` | Claude Code に `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` とタスクの指示だけを足す。`next` のブロックの指示、`--settings` の PermissionRequest フック、Codex の MCP を外した |
 | `src/claude-sessions.mjs` | `src/claude-sessions.mjs` | 未回答の AskUserQuestion・許可待ちの呼び出しを読む関数を外した |
-| `src/orca-cli.mjs` | `src/orca-cli.mjs` | カードの元（`offersOf`）を外した。CLI には `worktree ps` と `terminal list` だけを頼む |
+| `src/orca-cli.mjs` | `src/orca-cli.mjs` | カードの元（`offersOf`）を外した。CLI には `worktree ps` と `terminal list` だけを頼む。Orca 1.4.262 では worker が `Orca Helper.app` の中で動くので、CLI を上のアプリのバンドルからも探すようにした |
 | `src/model.mjs`、`src/render.mjs` | 同名 | カード（次の作業、質問、許可）を外した |
 | `src/milestone-worker.mjs` | 同名 | Codex の進捗、カード、端末への送信、「このターンの残りも許可」、再開を外した |
 | `panel/` | `panel/` | `next.mjs` とカードのスタイルを外した |
