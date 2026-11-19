@@ -3,6 +3,7 @@
 // real changes.
 
 export const WATCHER = 'chore-hub-watch'
+const ORCHESTRATOR = 'orchestrator'
 const DONE_MAX = 8
 const DONE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const TEAM_LIST_ID = /^session-([0-9a-f]{8})$/
@@ -84,6 +85,8 @@ function sessionRow(agent, orcaAgent, lists, home, focusedPath) {
     ...counts,
     report: agent.report ?? null,
     open: orcaAgent ? orcaAgent.path : null,
+    // A worker that is not working can be handed a line from its row (it resumes with it).
+    say: agent.kind === 'background' && agent.name && agent.name !== ORCHESTRATOR && state !== 'working' ? agent.sessionId : null,
     focused: Boolean(focusedPath && agent.cwd && isInside(agent.cwd, focusedPath)),
     since: job?.updatedAt || agent.startedAt || 0
   }
@@ -102,6 +105,7 @@ function workspaceRow(orcaAgent, lists, home, focusedPath) {
     ...progress(list),
     report: null,
     open: orcaAgent.path,
+    say: null,
     focused: Boolean(focusedPath && isInside(orcaAgent.path, focusedPath)),
     since: orcaAgent.since ?? 0
   }
@@ -123,9 +127,10 @@ function watcherLine(agents) {
  * @param agents     [{ sessionId, id, name, kind, cwd, state, status, waitingFor, alive, startedAt, job, report }]
  * @param lists      [{ listId, cwd, goal, tasks, updatedAt }] of the running sessions that keep tasks
  * @param orcaAgents [{ workspace, repo, path, focused, state, background, since }] of `orca worktree ps`
- * @param options    { home, focusedPath, now }
+ * @param options    { home, focusedPath, now, cards }; cards are the open asks (src/asks.mjs) with
+ *   `check` (checkAsk) and `pressed`, oldest first
  */
-export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0 } = {}) {
+export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [] } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
   const rows = [
     ...agents
@@ -137,6 +142,7 @@ export function buildHubModel(agents, lists, orcaAgents = [], { home = null, foc
   // The focused workspace first, then the oldest wait or the newest change.
   const byFocus = (a, b) => Number(b.focused) - Number(a.focused)
   return {
+    cards: cards.map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
     attention: group('attention').toSorted((a, b) => byFocus(a, b) || a.since - b.since),
     working: group('working').toSorted((a, b) => byFocus(a, b) || b.since - a.since),
     idle: group('idle').toSorted((a, b) => byFocus(a, b) || b.since - a.since),

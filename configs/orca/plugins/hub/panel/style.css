@@ -15,6 +15,7 @@ html.dark { --ms-done: oklch(69.6% 0.17 162.48); --ms-todo: oklch(70.5% 0.213 47
 body { box-sizing: border-box; display: flex; flex-direction: column; height: 100vh; overflow: hidden;
   margin: 0; padding: 12px; font: 13px/1.5 system-ui, sans-serif;
   color: var(--orca-foreground); background: var(--orca-background); }
+#view { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 main { flex: 1 1 0; min-height: 0; overflow: hidden auto; padding: 0 6px; margin: 0 -6px; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 h1 { margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -93,6 +94,39 @@ code { font-size: 12px; }
 .row .head:not([role]) { cursor: default; }
 .group .row .head:hover + .detail, .group .row .head:focus-visible + .detail { transition-delay: 300ms; }
 .watcher { margin: 8px 0 0; font-size: 11px; color: var(--ms-todo); }
+/* Cards: the whole question or prompt, and what each button makes the worker do. */
+.card-list { margin: 0; padding: 0; list-style: none; }
+.card { display: block; padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--orca-border);
+  border-radius: var(--orca-radius, 6px); background: var(--orca-card); color: var(--orca-card-foreground); }
+.card-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.card-head[role] { cursor: pointer; }
+.card-head .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-kind { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px;
+  color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
+.card .case { flex: none; font-size: 11px; color: var(--orca-muted-foreground); }
+.card .question { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card .options { margin: 0; padding: 0; list-style: none; }
+.card .options li { display: block; padding: 0; margin-bottom: 6px; }
+.card .desc, .card .reason { margin: 2px 0 0 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--orca-muted-foreground); }
+.card .reason { font-size: 11px; }
+.card .note { margin: 0 0 6px; font-size: 12px; color: var(--ms-todo); }
+.card .label { font-weight: 600; }
+button { font: inherit; color: inherit; }
+.answer { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 8px; text-align: left;
+  border: 1px solid var(--orca-border); border-radius: 4px; background: color-mix(in oklch, var(--orca-foreground) 6%, transparent); cursor: pointer; }
+.answer:hover:not(:disabled) { background: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
+.answer:disabled { opacity: 0.5; cursor: default; }
+.recommended { font-size: 10px; font-weight: 700; color: var(--ms-done); }
+.row .say { flex: none; padding: 0 4px; border: none; background: none; cursor: pointer; color: var(--orca-muted-foreground); }
+.row .say:hover { color: var(--orca-foreground); }
+#notice { flex: none; margin: 8px 0 0; font-size: 12px; color: var(--orca-muted-foreground); }
+#composer { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--orca-border); }
+#composer[hidden], #notice[hidden] { display: none; }
+#composer .to { margin: 0; font-size: 12px; font-weight: 600; }
+#composer textarea { box-sizing: border-box; width: 100%; resize: vertical; font: inherit; color: inherit;
+  background: var(--orca-background); border: 1px solid var(--orca-border); border-radius: 4px; padding: 4px 6px; }
+#composer .actions { display: flex; gap: 6px; }
+#composer button { padding: 2px 10px; border: 1px solid var(--orca-border); border-radius: 4px; background: var(--orca-card); cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .bar > div, li, li .mark, li .strike, .row .detail { transition: none; }
 }

@@ -226,6 +226,28 @@ class ResolveTest(Base):
         self.assertEqual(p.read_text(), "# t\n\n## TODO\n- 届いたら設定する\n\n## Waiting\n- ほか\n")
 
 
+class LogTest(Base):
+    def test_adds_one_line_to_refs(self):
+        p = self.write()
+        out = cases.log(self.dir, "x.md", "11/19 パネルで答えた:\n設定の置き場所 [report.md](file:///tmp/r.md)")
+        self.assertEqual(out["section"], "資料")
+        refs = [it.text for it in cases.parse(p).items("資料")]
+        self.assertEqual(refs[-1], "11/19 パネルで答えた: 設定の置き場所 [report.md](file:///tmp/r.md)")
+        self.assertEqual(len(refs), 2)
+
+    def test_creates_the_refs_section(self):
+        p = self.write(text="# 案件\n\n## TODO\n- 読む\n")
+        cases.log(self.dir, "x", "残す")
+        self.assertEqual([it.text for it in cases.parse(p).items("資料")], ["残す"])
+        self.assertEqual([it.text for it in cases.parse(p).items("TODO")], ["読む"])
+
+    def test_refuses_paths_and_missing_cases(self):
+        self.write()
+        for slug in ("../x", "a/b", ".x", "nothing"):
+            with self.assertRaises(SystemExit, msg=slug):
+                cases.log(self.dir, slug, "残す")
+
+
 class ByCaseRenderTest(Base):
     """--by-case の表示（案件ごとに全部の節を描く）。"""
 

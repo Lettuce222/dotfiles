@@ -4,8 +4,10 @@
 // stopped as idle, which would end its watch on the task lists.
 //
 // Adapted from andoshin11/orca-milestone panel/main.mjs (MIT, see ../LICENSE and ../NOTICE.md).
-// Left out: the cards that sent next steps and answers to the session (panel/next.mjs).
-// Added: a row of a hub worker opens its report.
+// Left out: the cards of orca-milestone (panel/next.mjs), which answered permission prompts.
+// Added: a row of a hub worker opens its report, and the cards of the asks workers write
+// (panel/act.mjs).
+import { setUpActions } from './act.mjs'
 import { scrollExpandedRows } from './expand.mjs'
 import { openOnPress } from './open.mjs'
 import { patchChildren } from './patch.mjs'
@@ -18,11 +20,12 @@ let pushes = 0
 let loaded = false
 
 const { plugin } = window.orca
+const view = document.getElementById('view')
 
 plugin.on('view.changed', ({ html }) => {
   pushes += 1
   loaded = true
-  patchChildren(document.body, html)
+  patchChildren(view, html)
 })
 
 async function load() {
@@ -30,7 +33,7 @@ async function load() {
   try {
     const { html } = await plugin.request('view.get')
     // A post that arrived while this was on its way is newer.
-    if (pushes === seen) patchChildren(document.body, html)
+    if (pushes === seen) patchChildren(view, html)
     loaded = true
   } catch (error) {
     console.warn(`hub: view.get failed: ${error.code ?? error.message}`)
@@ -38,8 +41,14 @@ async function load() {
   }
 }
 
-scrollExpandedRows(document.body)
-openOnPress(document.body, ({ kind, path }) => {
+scrollExpandedRows(view)
+setUpActions({
+  view,
+  notice: document.getElementById('notice'),
+  composer: document.getElementById('composer'),
+  request: (name, params) => plugin.request(name, params)
+})
+openOnPress(view, ({ kind, path }) => {
   const name = kind === 'workspace' ? 'workspace.open' : 'report.open'
   plugin.request(name, { path }).catch((error) => {
     console.warn(`hub: ${name} failed: ${error.code ?? error.message}`)

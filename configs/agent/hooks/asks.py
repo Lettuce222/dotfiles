@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Asks: what a worker wants from the user, as files the Hub (local) panel shows as cards.
+
+A worker (a `claude --bg` session the orchestrator started) that stops for the
+user writes one ask besides its report to the orchestrator. The Hub panel of
+Orca reads the asks and shows each as a card; a person presses an answer there
+or in the orchestrator, and whoever answers first takes the ask.
+
+An ask is not an approval. Approvals are records only the orchestrator (and,
+from stage 3 on, the Hub panel) writes; see approvals.py. A card answer is sent
+to the worker as text, and text never lets a guarded operation through.
+
+Asks live in ~/hub/state/asks/<id>.json (AGENT_ASKS_DIR, or
+$AGENT_ORCHESTRATOR_HOME/state/asks). The answer is <id>.answer.json, created
+with O_EXCL, so one answer wins when the panel and the orchestrator answer at
+once.
+
+CLI:
+  asks.py decide --question <text> --option '<label>|<what the worker does>' ...
+                 [--recommended N] [--case SLUG] [--level B]
+      A question with 2-4 options (the worker's 「要判断」 that is not an approval).
+  asks.py next --suggest '<label>|<prompt>|<reason>' ... [--case SLUG] [--level B]
+      Up to 3 next steps a finished worker suggests; the prompt is what the panel
+      sends to the worker when one is pressed.
+  asks.py list [--json] [--all]
+      Open asks (with --all, answered ones too).
+  asks.py answer <id> --by panel|orchestrator --choice <text> [--shown <sha256>]
+      Take the ask. --shown is the sha256 of the ask file as the card showed it;
+      a changed file is refused. Exit 0 when taken, 3 when someone answered
+      first, 4 when the ask is gone or changed. Prints the ask as JSON.
+  asks.py claim <id>
+      The orchestrator takes the ask to ask the user in its own window.
+  asks.py close <id> | close --worker NAME
+      Remove an ask and its answer (the orchestrator, when it removes a worker).
+
+decide and next run in the worker: the worker's name, session and cwd come from
+CLAUDE_CODE_SESSION_ID and `claude agents --json`, never from arguments. A new
+ask from a session replaces the open asks that session wrote before.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{8}$")
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]")
+LEVELS = ("C", "B", "A", "S")
+NOT_WORKERS = {"chore-hub-watch"}
+LIMITS = {
+    "question": 1000,
+    "option_label": 60,
+    "option_description": 300,
+    # The same limits as the `next` block of Orca terminal agents (orca-milestone's parseSuggestions).
+    "suggest_label": 30,
+    "suggest_prompt": 300,
+    "suggest_reason": 80,
+}
+EXIT_TAKEN = 3
+EXIT_GONE = 4
+
+
+class AskError(Exception):
+    pass
+
+
+def hub_home():
+    return Path(os.environ.get("AGENT_ORCHESTRATOR_HOME") or Path.home() / "hub")
+
+
+def asks_dir():
+    explicit = os.environ.get("AGENT_ASKS_DIR")
+    return Path(explicit) if explicit else hub_home() / "state" / "asks"
+
+
+def orchestrator_name():
+    return os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator"
+
+
+def agents():
+    claude = shutil.which("claude") or "claude"
+    try:
+        out = subprocess.run([claude, "agents", "--json"], capture_output=True, text=True, timeout=15, check=False)
+        data = json.loads(out.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def caller():
+    """The background worker that runs this command."""
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        raise AskError("Claude Code のセッションの中で実行してください（CLAUDE_CODE_SESSION_ID がありません）")
+    entry = next((a for a in agents() if isinstance(a, dict) and a.get("sessionId") == session_id), None)
+    if not entry or entry.get("kind") != "background" or not entry.get("name"):
+        raise AskError("依頼を書けるのは claude --bg の worker だけです")
+    if entry["name"] == orchestrator_name() or entry["name"] in NOT_WORKERS:
+        raise AskError("窓口と見張りは依頼を書きません")
+    return entry
+
+
+def check_text(text, limit, what, multiline=False):
+    text = (text or "").strip()
+    if not text:
+        raise AskError(f"{what}が空です")
+    if len(text) > limit:
+        raise AskError(f"{what}は {limit} 文字までです（{len(text)} 文字）")
+    bad = CONTROL.search(text) or (not multiline and "\n" in text)
+    if bad:
+        raise AskError(f"{what}に改行や見えない文字があります")
+    return text
+
+
+def parse_option(raw):
+    label, sep, description = raw.partition("|")
+    if not sep:
+        raise AskError(f"選択肢は '<label>|<選ばれたら何をするか>' の形で書いてください: {raw}")
+    return {
+        "label": check_text(label, LIMITS["option_label"], "選択肢の label"),
+        "description": check_text(description, LIMITS["option_description"], "選択肢の説明", multiline=True),
+    }
+
+
+def parse_suggestion(raw):
+    parts = raw.split("|")
+    if len(parts) != 3:
+        raise AskError(f"次の作業は '<label>|<依頼文>|<理由>' の形で書いてください: {raw}")
+    label, prompt, reason = parts
+    prompt = check_text(prompt, LIMITS["suggest_prompt"], "依頼文")
+    if prompt.startswith("-"):
+        raise AskError("依頼文を - で始めないでください")
+    return {
+        "label": check_text(label, LIMITS["suggest_label"], "次の作業の label"),
+        "prompt": prompt,
+        "reason": check_text(reason, LIMITS["suggest_reason"], "理由"),
+    }
+
+
+def report_of(name):
+    path = hub_home() / "workers" / name / "report.md"
+    return str(path) if path.is_file() else None
+
+
+def new_ask(kind, entry, case=None, level="B", **fields):
+    if case is not None and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", case):
+        raise AskError(f"案件の名前ではありません: {case}")
+    if level not in LEVELS:
+        raise AskError(f"level は {', '.join(LEVELS)} のどれかです")
+    now = time.time()
+    return {
+        "id": time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + "-" + uuid.uuid4().hex[:8],
+        "kind": kind,
+        "created_at": now,
+        "worker": entry["name"],
+        "session_id": entry["sessionId"],
+        "job_id": entry.get("id"),
+        "cwd": entry.get("cwd"),
+        "case": case,
+        "report": report_of(entry["name"]),
+        "level": level,
+        **fields,
+    }
+
+
+def path_of(ask_id, directory=None):
+    if not ID.match(ask_id or ""):
+        raise AskError(f"依頼の id ではありません: {ask_id}")
+    return (directory or asks_dir()) / f"{ask_id}.json"
+
+
+def answer_path(path):
+    return path.with_name(path.stem + ".answer.json")
+
+
+def load(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def all_asks(directory=None, include_answered=False):
+    d = directory or asks_dir()
+    if not d.is_dir():
+        return []
+    out = []
+    for path in sorted(d.glob("*.json")):
+        if path.name.endswith(".answer.json") or not ID.match(path.stem):
+            continue
+        answered = answer_path(path).exists()
+        if answered and not include_answered:
+            continue
+        ask = load(path)
+        if isinstance(ask, dict):
+            out.append({**ask, "answered": answered})
+    return out
+
+
+def remove(path):
+    for p in (answer_path(path), path):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def save(ask, directory=None):
+    d = directory or asks_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    # A new ask replaces what the same session asked before and nobody answered.
+    for old in all_asks(d):
+        if old.get("session_id") == ask["session_id"]:
+            remove(path_of(old["id"], d))
+    path = path_of(ask["id"], d)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(ask, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def sha_file(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def answer(ask_id, by, choice, shown=None, directory=None):
+    """Take an ask. Returns (exit code, ask or None)."""
+    path = path_of(ask_id, directory)
+    if not path.is_file():
+        return EXIT_GONE, None
+    if shown and sha_file(path) != shown:
+        return EXIT_GONE, None
+    record = {"by": by, "at": time.time(), "choice": choice, "shown_sha256": shown}
+    try:
+        fd = os.open(answer_path(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return EXIT_TAKEN, load(path)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False)
+    return 0, load(path)
+
+
+def cmd_decide(args):
+    options = [parse_option(o) for o in args.option]
+    if not 2 <= len(options) <= 4:
+        raise AskError("選択肢は 2〜4 個にしてください")
+    if args.recommended is not None and not 1 <= args.recommended <= len(options):
+        raise AskError("--recommended は選択肢の番号（1 から）です")
+    ask = new_ask(
+        "decide", caller(), args.case, args.level,
+        question=check_text(args.question, LIMITS["question"], "問い", multiline=True),
+        options=options, recommended=args.recommended,
+    )
+    print(save(ask))
+    return 0
+
+
+def cmd_next(args):
+    suggestions = [parse_suggestion(s) for s in args.suggest]
+    if not 1 <= len(suggestions) <= 3:
+        raise AskError("次の作業は 1〜3 件にしてください")
+    print(save(new_ask("next", caller(), args.case, args.level, suggestions=suggestions)))
+    return 0
+
+
+def cmd_list(args):
+    items = all_asks(include_answered=args.all)
+    if args.json:
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+        return 0
+    for ask in items:
+        head = ask.get("question") or " / ".join(s["label"] for s in ask.get("suggestions", []))
+        mark = " (答え済み)" if ask["answered"] else ""
+        print(f"{ask['id']}  {ask['kind']:<6} {ask['worker']}  {head.splitlines()[0][:60]}{mark}")
+    return 0
+
+
+def cmd_answer(args):
+    code, ask = answer(args.id, args.by, args.choice, args.shown)
+    if ask is not None:
+        print(json.dumps(ask, ensure_ascii=False))
+    if code == EXIT_TAKEN:
+        print("ほかの人がもう答えています", file=sys.stderr)
+    elif code == EXIT_GONE:
+        print("依頼が無いか、カードを出したあとに変わりました", file=sys.stderr)
+    return code
+
+
+def cmd_close(args):
+    if args.worker:
+        closed = [a["id"] for a in all_asks(include_answered=True) if a.get("worker") == args.worker]
+    elif args.id:
+        closed = [args.id]
+    else:
+        raise AskError("<id> か --worker を渡してください")
+    for ask_id in closed:
+        remove(path_of(ask_id))
+        print(ask_id)
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="asks.py")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("decide")
+    d.add_argument("--question", required=True)
+    d.add_argument("--option", action="append", required=True)
+    d.add_argument("--recommended", type=int)
+    n = sub.add_parser("next")
+    n.add_argument("--suggest", action="append", required=True)
+    for p in (d, n):
+        p.add_argument("--case")
+        p.add_argument("--level", default="B")
+    ls = sub.add_parser("list")
+    ls.add_argument("--json", action="store_true")
+    ls.add_argument("--all", action="store_true")
+    a = sub.add_parser("answer")
+    a.add_argument("id")
+    a.add_argument("--by", required=True, choices=("panel", "orchestrator"))
+    a.add_argument("--choice", required=True)
+    a.add_argument("--shown")
+    c = sub.add_parser("claim")
+    c.add_argument("id")
+    cl = sub.add_parser("close")
+    cl.add_argument("id", nargs="?")
+    cl.add_argument("--worker")
+    args = ap.parse_args(argv)
+    try:
+        if args.cmd == "decide":
+            return cmd_decide(args)
+        if args.cmd == "next":
+            return cmd_next(args)
+        if args.cmd == "list":
+            return cmd_list(args)
+        if args.cmd == "answer":
+            return cmd_answer(args)
+        if args.cmd == "claim":
+            args.by, args.choice, args.shown = "orchestrator", "claimed", None
+            return cmd_answer(args)
+        return cmd_close(args)
+    except AskError as e:
+        print(f"asks: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

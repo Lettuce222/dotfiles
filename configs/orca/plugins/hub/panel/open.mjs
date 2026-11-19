@@ -4,6 +4,8 @@
 // Adapted from andoshin11/orca-milestone panel/open.mjs (MIT, see ../LICENSE and ../NOTICE.md).
 
 function targetOf(element) {
+  // A button in a row does its own thing (panel/act.mjs).
+  if (element.closest('button')) return null
   const head = element.closest('[data-open], [data-report]')
   if (!head) return null
   return head.hasAttribute('data-open')

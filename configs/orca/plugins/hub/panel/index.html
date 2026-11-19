@@ -5,5 +5,13 @@
     <link rel="stylesheet" href="style.css" />
     <script type="module" src="main.mjs"></script>
   </head>
-  <body></body>
+  <body>
+    <div id="view"></div>
+    <p id="notice" role="status" hidden></p>
+    <form id="composer" hidden>
+      <p class="to"></p>
+      <textarea maxlength="2000" rows="4" placeholder="worker への指示（承認にはなりません）"></textarea>
+      <div class="actions"><button type="submit">送る</button><button type="button" class="cancel">やめる</button></div>
+    </form>
+  </body>
 </html>

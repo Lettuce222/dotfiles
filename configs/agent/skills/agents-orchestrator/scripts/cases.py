@@ -49,6 +49,9 @@ Usage:
   cases.py resolve <案件> <文字列> [--section Waiting]
       節の中で文字列を含む項目を 1 つ消す（2 つ以上・0 個ならエラー）。Waiting・予定なら
       ` → ` のあとを「TODO」に移す。<案件> はファイル名（.md は省略可）。
+  cases.py log <案件> <1 行>
+      「資料」の節に 1 行足す（節が無ければ作る）。Hub のパネルで答えたことを残すのに使う。
+      改行と制御文字は空白にする。<案件> はファイル名（.md は省略可、パスの区切りは不可）。
 
 sweep の出力（1 行に 1 つ）:
   {"action": "removed", "case", "section", "item", "next"?}   消した項目（next は移したもの）
@@ -463,6 +466,22 @@ def archive(case: Case) -> Path:
         dest = done / f"{case.path.stem}-{dt.datetime.now():%Y%m%d%H%M%S}.md"
     os.replace(case.path, dest)
     return dest
+
+
+def log(d: Path, slug: str, text: str) -> dict:
+    slug = slug.removesuffix(".md")
+    if not slug or "/" in slug or slug.startswith("."):
+        raise SystemExit(f"cases: 案件の名前ではありません: {slug}")
+    path = d / f"{slug}.md"
+    if not path.is_file():
+        raise SystemExit(f"cases: 案件がありません: {path}")
+    line = " ".join("".join(" " if unicodedata.category(c).startswith("C") else c for c in text).split())
+    if not line:
+        raise SystemExit("cases: 足す文がありません")
+    case = parse(path)
+    case.add(REFS, line)
+    write_case(case)
+    return {"action": "logged", "case": slug, "section": REFS, "item": line}
 
 
 def resolve(d: Path, slug: str, needle: str, section: str = WAITING) -> dict:
@@ -1045,6 +1064,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("case")
     r.add_argument("needle")
     r.add_argument("--section", default=WAITING, choices=TASK_SECTIONS)
+    lg = sub.add_parser("log")
+    lg.add_argument("case")
+    lg.add_argument("text")
     args = ap.parse_args(argv)
 
     d = cases_dir()
@@ -1061,6 +1083,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "resolve":
         print(json.dumps(resolve(d, args.case, args.needle, args.section), ensure_ascii=False))
+        return 0
+    if args.cmd == "log":
+        print(json.dumps(log(d, args.case, args.text), ensure_ascii=False))
         return 0
     return 1
 

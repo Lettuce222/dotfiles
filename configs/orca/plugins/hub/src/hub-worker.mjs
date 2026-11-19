@@ -3,13 +3,16 @@
 // DOM, so an update keeps the frame, the scroll position and a row's expansion.
 //
 // Adapted from andoshin11/orca-milestone src/milestone-worker.mjs (MIT, see ../LICENSE and
-// ../NOTICE.md). Left out: Codex progress, the cards and everything that sends to a terminal
-// (next steps, answers to questions and permissions, "allow the rest of this turn", restarting
-// a session). Added: the sessions of `claude agents`, background ones included.
+// ../NOTICE.md). Left out: Codex progress, answers to questions and permissions, "allow the rest
+// of this turn", restarting a session. Added: the sessions of `claude agents`, background ones
+// included, and the cards of the asks workers write (src/asks.mjs), whose answers reach the worker
+// through src/deliver.mjs.
 import { watch } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { ASK_ID, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
+import { answerText, cleanText, createDelivery, resolvePython } from './deliver.mjs'
 import {
   claudePaths,
   findListTranscript,
@@ -38,6 +41,12 @@ const REQUEST_RETRY_MS = 30_000
 const AGENTS_MIN_MS = 5_000
 const REPORT_NAME = 'report.md'
 
+/** 11/19 */
+function dayOf(ms) {
+  const date = new Date(ms)
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
 export function createHubWorker({
   orca,
   home,
@@ -49,8 +58,23 @@ export function createHubWorker({
   readClaude = (claude) => readAgents(claude, runClaude),
   readJob = (id) => readJobState(home, id),
   now = Date.now,
-  watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange)
+  watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange),
+  delivery = null
 }) {
+  const asksDir = asksDirOf(hubRoot)
+  const deliver =
+    delivery ??
+    createDelivery({
+      home,
+      hubRoot,
+      claudeCli,
+      python: resolvePython(home),
+      readSessions: () => readClaude(claudeCli),
+      readJob
+    })
+  let asks = []
+  // Asks being answered: their cards show as sending, and a second press does nothing.
+  const pressed = new Set()
   const paths = claudePaths(home)
   const { tasksRoot } = paths
   // Transcript heads never change once written; null entries are retried on the next refresh.
@@ -249,7 +273,9 @@ export function createHubWorker({
       }
     }
     const lists = await allSessions()
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now() })))
+    asks = await readAsks(asksDir)
+    const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.has(ask.id) }))
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -284,6 +310,55 @@ export function createHubWorker({
     timer = setTimeout(() => void refresh(), DEBOUNCE_MS)
   }
 
+  /**
+   * A pressed card: takes the ask once and hands the chosen answer to the worker. The ask is read
+   * again and must be the one the card showed (same hash), from the worker it names.
+   */
+  async function answerAsk({ id, sha, choice } = {}) {
+    if (!ASK_ID.test(id ?? '') || !SHA256.test(sha ?? '') || !Number.isInteger(choice)) return { ok: false, reason: 'invalid' }
+    if (pressed.has(id)) return { ok: false, reason: 'pressed' }
+    pressed.add(id)
+    schedule()
+    try {
+      const ask = await readAsk(asksDir, id)
+      if (!ask || ask.sha !== sha) return { ok: false, reason: 'stale' }
+      const current = await readClaude(claudeCli)
+      if (!checkAsk(ask, current).ok) return { ok: false, reason: 'unverified' }
+      const text = answerText(ask, choice)
+      if (!text) return { ok: false, reason: 'invalid' }
+      const ready = await deliver.check(ask.sessionId)
+      if (!ready.ok) return { ok: false, reason: ready.reason }
+      const taken = await deliver.take(ask, choice)
+      if (taken !== 'taken') return { ok: false, reason: taken }
+      const sent = await deliver.send(ask.sessionId, text)
+      if (!sent.sent) {
+        await deliver.release(asksDir, ask)
+        return { ok: false, reason: sent.reason }
+      }
+      const label = ask.kind === 'decide' ? ask.options[choice - 1].label : ask.suggestions[choice - 1].label
+      await deliver.log({ ask: ask.id, worker: ask.worker, card: ask.kind, choice, label, shown_sha256: ask.sha })
+      const what = ask.kind === 'decide' ? `「${ask.question.split('\n')[0].slice(0, 60)}」に「${label}」と答えた` : `次の作業「${label}」を頼んだ`
+      const report = ask.report ? ` [report.md](file://${ask.report})` : ''
+      await deliver.logCase(ask.case, `${dayOf(now())} パネルで ${ask.worker} に${what}${report}`)
+      return { ok: true }
+    } finally {
+      pressed.delete(id)
+      schedule()
+    }
+  }
+
+  /** A line a person wrote to a worker from its row. */
+  async function sendToSession({ sessionId, text } = {}) {
+    const body = cleanText(text)
+    if (typeof sessionId !== 'string' || !body) return { ok: false, reason: 'invalid' }
+    const sent = await deliver.send(sessionId, body)
+    if (!sent.sent) return { ok: false, reason: sent.reason }
+    const session = sessions.find((candidate) => candidate.sessionId === sessionId)
+    await deliver.log({ session: sessionId, worker: session?.name ?? null, card: 'free', text: body })
+    schedule()
+    return { ok: true }
+  }
+
   function agentChanged({ paneKey, state, mainAgent }) {
     const key = `${state}\n${mainAgent?.state ?? ''}`
     if (paneStates.get(paneKey) === key) return
@@ -297,11 +372,13 @@ export function createHubWorker({
       watchDir(tasksRoot, (_event, name) => {
         if (name && !String(name).endsWith('.lock')) schedule()
       })
+      await mkdir(asksDir, { recursive: true })
+      watchDir(asksDir, () => schedule())
       setInterval(() => schedule(true), SYNC_MS)
       await refresh(true)
     })()
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport }
+  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession }
 }

@@ -24,7 +24,7 @@ test('registers the commands and events declared in the manifest, and starts not
   })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
-  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open'], 'no handler that sends to a session')
+  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send'], 'no handler that answers a permission or approves')
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
 })
 
@@ -64,9 +64,10 @@ test('withTaskInstructions keeps the command line and leaves existing instructio
   }
 })
 
-// The plugin must stay read-only: it shows progress and never acts on a session. These scan the
-// code for the paths that were left out on purpose, so that a later edit cannot bring one back
-// unnoticed.
+// The plugin acts on a session only by handing a worker text (src/deliver.mjs): it never answers a
+// permission, never writes an approval, never runs gh or git and never reaches the network. These
+// scan the code for the paths that were left out on purpose, so that a later edit cannot bring one
+// back unnoticed.
 function sources() {
   const files = []
   for (const dir of ['', 'src', 'panel']) {
@@ -86,6 +87,9 @@ const FORBIDDEN = [
   [/behavior\s*:/, 'a permission decision'],
   [/--settings/, 'settings on the command line'],
   [/next\.send|sendNext|grant/i, 'the cards that act on a session'],
+  [/['"]gh['"]|\/gh['"]/, 'gh'],
+  [/['"](push|git)['"]/, 'git'],
+  [/approvals\.py|state\/approvals/, 'an approval record'],
   [/node:(https?|net|dgram|tls)\b|\bfetch\(|XMLHttpRequest|WebSocket/, 'the network']
 ]
 
@@ -102,6 +106,9 @@ test('the scanner flags each path that was left out, and not a comment about it'
     "const out = { decision: { behavior: 'allow' } }": 'a permission decision',
     "return `claude --settings '${json}'`": 'settings on the command line',
     "orca.panels.handle('next.send', f)": 'the cards that act on a session',
+    "run('gh', ['pr', 'comment'])": 'gh',
+    "run(git, ['push', 'origin'])": 'git',
+    "join(home, '.claude', 'hooks', 'approvals.py')": 'an approval record',
     "import https from 'node:https'": 'the network',
     'await fetch(url)': 'the network'
   }
@@ -109,7 +116,7 @@ test('the scanner flags each path that was left out, and not a comment about it'
   assert.deepEqual(findForbidden('// no orca terminal send, no --settings, no fetch(url)'), [])
 })
 
-test('no code sends to a terminal, answers a permission, adds settings or reaches the network', () => {
+test('no code drives a terminal through the CLI, answers a permission, approves, adds settings or reaches the network', () => {
   for (const [file, text] of sources()) assert.deepEqual(findForbidden(text), [], file)
 })
 
@@ -127,12 +134,30 @@ test('the claude CLI is only asked to list the sessions, and nothing else runs a
     .filter(([, source]) => /node:child_process/.test(CODE_ONLY(source)))
     .map(([file]) => file)
     .sort()
-  assert.deepEqual(spawning, [join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs')])
+  assert.deepEqual(spawning, [join('src', 'claude-agents.mjs'), join('src', 'deliver.mjs'), join('src', 'orca-cli.mjs')])
 })
 
-test('the manifest asks for no more than the upstream plugin, and the license stays', () => {
+test('what the panel runs to act is the short list of src/deliver.mjs', () => {
+  const text = CODE_ONLY(readFileSync(join(root, 'src', 'deliver.mjs'), 'utf8'))
+  const calls = [...text.matchAll(/\brun\((\w+), \[([^\]]*)\]/g)].map((match) => `${match[1]}: ${match[2]}`)
+  assert.deepEqual(calls, [
+    "claudeCli: 'stop', session.id",
+    "claudeCli: '--bg', '--resume', sessionId, '--permission-mode', 'auto', withPrefix(body)",
+    "python: asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha",
+    "python: casesScript, 'log', caseName, line"
+  ])
+  assert.match(text, /asksScript = join\(home, '\.claude', 'hooks', 'asks\.py'\)/)
+  assert.match(text, /casesScript = join\(home, '\.claude', 'skills', 'agents-orchestrator', 'scripts', 'cases\.py'\)/)
+  // Every other run(...) in the plugin is a read of src/claude-agents.mjs or src/orca-cli.mjs.
+  for (const [file, source] of sources()) {
+    if ([join('src', 'deliver.mjs'), join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs')].includes(file)) continue
+    assert.doesNotMatch(CODE_ONLY(source), /execFile|spawn\(/, file)
+  }
+})
+
+test('the manifest asks for no more than the upstream plugin (terminal:send for the next steps), and the license stays', () => {
   assert.equal(manifest.license, 'MIT')
-  assert.deepEqual(manifest.capabilities.map((c) => c.kind).sort(), ['agent:read', 'workspace:read', 'workspace:write'])
+  assert.deepEqual(manifest.capabilities.map((c) => c.kind).sort(), ['agent:read', 'terminal:send', 'workspace:read', 'workspace:write'])
   assert.match(readFileSync(join(root, 'LICENSE'), 'utf8'), /Copyright \(c\) 2026 andoshin11/)
   assert.match(readFileSync(join(root, 'NOTICE.md'), 'utf8'), /637620c/)
 })

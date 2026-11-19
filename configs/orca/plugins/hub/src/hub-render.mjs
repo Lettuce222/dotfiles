@@ -51,7 +51,8 @@ function renderRow(row) {
   const line = row.step ?? row.detail
   const sub = line ? `<div class="sub">${row.step ? '▶ ' : ''}${escape(clip(line, DETAIL_MAX))}</div>` : ''
   const where = row.where && row.where !== row.name ? `<span class="repo">${escape(row.where)}</span>` : ''
-  const head = `<div class="top">${mark}<span class="name">${escape(row.name)}${where}</span>${kind}${STATE_BADGES[row.state] ?? ''}${of}</div>${sub}${bar}`
+  const say = row.say ? `<button type="button" class="say" data-say="${escape(row.say)}" data-name="${escape(row.name)}" title="指示を書く">✎</button>` : ''
+  const head = `<div class="top">${mark}<span class="name">${escape(row.name)}${where}</span>${kind}${STATE_BADGES[row.state] ?? ''}${of}${say}</div>${sub}${bar}`
   const key = escape(`${row.key}\n${clip(row.goal ?? '', GOAL_MAX)}`)
   const open = target(row)
   const button = open
@@ -70,6 +71,49 @@ function renderGroup(title, rows, className) {
 <ol class="rows">${rows.map(renderRow).join('')}</ol></div>`
 }
 
+// The cards of the asks. Each shows the whole question or prompt, never cut, so a person decides
+// from the card alone; what an option or a step makes the worker do is written under its button.
+const CARD_KINDS = { decide: '判断', next: '次へ' }
+const CHECK_NOTES = {
+  identity: '依頼した worker を確かめられないので、答えのボタンは出しません。窓口で確かめてください。',
+  level: 'レベル B より上の情報を含む依頼です。窓口で確かめてください。'
+}
+
+function answerButton(card, choice, label, recommended) {
+  const disabled = card.pressed ? ' disabled' : ''
+  const mark = recommended ? '<span class="recommended">推奨</span>' : ''
+  return `<button type="button" class="answer" data-answer data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${choice}"${disabled}>${choice}. ${escape(label)}${mark}</button>`
+}
+
+function cardBody(card) {
+  if (card.kind === 'decide') {
+    const options = card.options
+      .map((option, index) => `<li>${card.check.ok ? answerButton(card, index + 1, option.label, card.recommended === index + 1) : `<span class="label">${index + 1}. ${escape(option.label)}</span>`}<p class="desc">${escape(option.description)}</p></li>`)
+      .join('')
+    return `<p class="question">${escape(card.question)}</p><ol class="options">${options}</ol>`
+  }
+  const steps = card.suggestions
+    .map((step, index) => `<li>${card.check.ok ? answerButton(card, index + 1, step.label, false) : `<span class="label">${index + 1}. ${escape(step.label)}</span>`}<p class="desc">${escape(step.prompt)}</p><p class="reason">${escape(step.reason)}</p></li>`)
+    .join('')
+  return `<ol class="options">${steps}</ol>`
+}
+
+function renderCard(card) {
+  const report = card.report ? ` data-report="${escape(card.report)}" role="button" tabindex="0"` : ''
+  const caseName = card.case ? `<span class="case">${escape(card.case)}</span>` : ''
+  const head = `<div class="card-head"${report}><span class="card-kind">${CARD_KINDS[card.kind] ?? ''}</span><span class="name">${escape(card.worker)}</span>${caseName}</div>`
+  const note = card.check.ok ? '' : `<p class="note">${CHECK_NOTES[card.check.reason] ?? ''}</p>`
+  const body = card.check.reason === 'level' ? '' : cardBody(card)
+  const sending = card.pressed ? '<p class="note">送っています…</p>' : ''
+  return `<li class="card ${escape(card.kind)}" data-key="${escape(`card\n${card.id}\n${card.sha}`)}">${head}${note}${body}${sending}</li>`
+}
+
+function renderCards(cards) {
+  if (!cards || cards.length === 0) return ''
+  return `<div class="group cards"><h2><span>カード</span><span class="n">${cards.length}</span></h2>
+<ol class="card-list">${cards.map(renderCard).join('')}</ol></div>`
+}
+
 function renderWatcher(watcher) {
   if (!watcher) return ''
   const detail = watcher.detail ? `: ${escape(clip(watcher.detail, DETAIL_MAX))}` : ''
@@ -78,6 +122,7 @@ function renderWatcher(watcher) {
 
 export function renderHub(model) {
   const groups = [
+    renderCards(model.cards),
     renderGroup('あなたの番', model.attention, 'attention'),
     renderGroup('動いている', model.working, 'working'),
     renderGroup('待っている', model.idle, 'idle'),
