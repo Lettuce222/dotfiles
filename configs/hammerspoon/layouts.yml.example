@@ -26,7 +26,7 @@ layouts:
       mods: alt
       key: "1"
     windows:
-      - app: Ghostty  # または Terminal, iTerm2, Alacritty など
+      - app: Ghostty  # または Terminal, Alacritty など
         position: {x: 0, y: 0, w: 1.0, h: 1.0}
 
   # Alt + 2: ブラウザ全画面
