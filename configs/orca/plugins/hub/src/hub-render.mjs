@@ -68,9 +68,10 @@ function renderRow(row) {
   const said = row.detail && (row.step || row.state !== 'attention') ? `<p class="said">${escape(clip(row.detail, FULL_MAX))}</p>` : ''
   const goal = row.goal ? `<p class="goal">${escape(clip(row.goal, GOAL_MAX))}</p>` : ''
   const tasks = row.tasks.length > 0 ? `<ol>${row.tasks.map(renderTask).join('')}</ol>` : ''
-  if (!where && !said && !goal && !tasks) return `<li class="row ${row.state}${focused}" data-key="${key}">${button}</li>`
+  const ask = row.card ? renderRowCard(row.card, row.name) : ''
+  if (!where && !said && !goal && !tasks) return `<li class="row ${row.state}${focused}" data-key="${key}">${button}${ask}</li>`
   const long = row.tasks.length > ROW_TASKS_SHORT || said.length > LONG_SAID ? ' long' : ''
-  return `<li class="row ${row.state}${focused} has-detail${long}" data-key="${key}">${button}
+  return `<li class="row ${row.state}${focused} has-detail${long}" data-key="${key}">${button}${ask}
 <div class="detail"><div class="inner">${where}${said}${goal}${tasks}</div></div></li>`
 }
 
@@ -113,6 +114,21 @@ function cardBody(card) {
   }
   const steps = card.suggestions.map((step, index) => item(index + 1, step.label, [['reason', step.reason], ['detail', step.prompt]], false)).join('')
   return `<ol class="actions">${steps}</ol>`
+}
+
+/** What another answer button opens: the composer, which sends its text as the answer to this ask. */
+function otherAnswer(card, name) {
+  if (!card.check.ok || card.kind !== 'decide') return ''
+  const disabled = card.pressed ? ' disabled' : ''
+  return `<li><button type="button" class="action other" data-say="${escape(card.sessionId)}" data-name="${escape(name)}" data-ask="${escape(card.id)}" data-sha="${escape(card.sha)}"${disabled}><span class="label">ほかの答えを書く</span><span class="detail">選択肢に無い答えや補足を、そのまま worker に送ります</span></button></li>`
+}
+
+/** The ask inside its worker's row: the question in full and its answers, as orca-milestone's cards. */
+function renderRowCard(card, name) {
+  const note = card.check.ok ? '' : `<p class="note">${CHECK_NOTES[card.check.reason] ?? ''}</p>`
+  const body = card.check.reason === 'level' ? '' : cardBody(card).replace(/<\/ol>$/, `${otherAnswer(card, name)}</ol>`)
+  const sending = card.pressed ? '<p class="note">送っています…</p>' : ''
+  return `<div class="row-card next" data-key="${escape(`card\n${card.id}\n${card.sha}`)}">${note}${body}${sending}</div>`
 }
 
 function renderCard(card) {

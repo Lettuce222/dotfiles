@@ -12,7 +12,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { ASK_ID, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
-import { answerText, cleanText, createDelivery, resolvePython } from './deliver.mjs'
+import { answerText, cleanText, createDelivery, resolvePython, writtenAnswerText } from './deliver.mjs'
 import {
   claudePaths,
   findListTranscript,
@@ -328,11 +328,14 @@ export function createHubWorker({
   }
 
   /**
-   * A pressed card: takes the ask once and hands the chosen answer to the worker. The ask is read
-   * again and must be the one the card showed (same hash), from the worker it names.
+   * A pressed card, or an answer written for it: takes the ask once and hands the answer to the
+   * worker. The ask is read again and must be the one the card showed (same hash), from the worker
+   * it names.
    */
-  async function answerAsk({ id, sha, choice } = {}) {
-    if (!ASK_ID.test(id ?? '') || !SHA256.test(sha ?? '') || !Number.isInteger(choice)) return { ok: false, reason: 'invalid' }
+  async function answerAsk({ id, sha, choice, text } = {}) {
+    const written = text === undefined ? null : cleanText(text)
+    if (!ASK_ID.test(id ?? '') || !SHA256.test(sha ?? '')) return { ok: false, reason: 'invalid' }
+    if (text === undefined ? !Number.isInteger(choice) : !written) return { ok: false, reason: 'invalid' }
     if (pressed.has(id)) return { ok: false, reason: 'pressed' }
     pressed.add(id)
     schedule()
@@ -341,19 +344,20 @@ export function createHubWorker({
       if (!ask || ask.sha !== sha) return { ok: false, reason: 'stale' }
       const current = await readClaude(claudeCli)
       if (!checkAsk(ask, current).ok) return { ok: false, reason: 'unverified' }
-      const text = answerText(ask, choice)
-      if (!text) return { ok: false, reason: 'invalid' }
+      if (written && ask.kind !== 'decide') return { ok: false, reason: 'invalid' }
+      const answer = written ? writtenAnswerText(ask, written) : answerText(ask, choice)
+      if (!answer) return { ok: false, reason: 'invalid' }
       const ready = await deliver.check(ask.sessionId)
       if (!ready.ok) return { ok: false, reason: ready.reason }
-      const taken = await deliver.take(ask, choice)
+      const taken = await deliver.take(ask, written ? 'written' : choice)
       if (taken !== 'taken') return { ok: false, reason: taken }
-      const sent = await deliver.send(ask.sessionId, text)
+      const sent = await deliver.send(ask.sessionId, answer)
       if (!sent.sent) {
         await deliver.release(asksDir, ask)
         return { ok: false, reason: sent.reason }
       }
-      const label = ask.kind === 'decide' ? ask.options[choice - 1].label : ask.suggestions[choice - 1].label
-      await deliver.log({ ask: ask.id, worker: ask.worker, card: ask.kind, choice, label, shown_sha256: ask.sha })
+      const label = written ? '書いた答え' : ask.kind === 'decide' ? ask.options[choice - 1].label : ask.suggestions[choice - 1].label
+      await deliver.log({ ask: ask.id, worker: ask.worker, card: ask.kind, choice: written ? 'written' : choice, label, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
       const what = ask.kind === 'decide' ? `「${ask.question.split('\n')[0].slice(0, 60)}」に「${label}」と答えた` : `次の作業「${label}」を頼んだ`
       const report = ask.report ? ` [report.md](file://${ask.report})` : ''
       await deliver.logCase(ask.case, `${dayOf(now())} パネルで ${ask.worker} に${what}${report}`)

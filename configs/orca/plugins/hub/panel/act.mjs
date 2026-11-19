@@ -26,6 +26,8 @@ export function setUpActions({ view, notice, composer, request }) {
   const textarea = composer.querySelector('textarea')
   const to = composer.querySelector('.to')
   let target = null
+  // The ask a written answer is for, when the composer was opened from a card.
+  let ask = null
 
   function say(text) {
     notice.textContent = text
@@ -45,7 +47,7 @@ export function setUpActions({ view, notice, composer, request }) {
     if (answer) {
       event.stopPropagation()
       // Every button of the card waits for the answer, so a second press sends nothing.
-      for (const button of answer.closest('.card').querySelectorAll('button[data-answer]')) button.disabled = true
+      for (const button of answer.closest('.card, .row-card').querySelectorAll('button[data-answer]')) button.disabled = true
       void call('ask.answer', { id: answer.dataset.id, sha: answer.dataset.sha, choice: Number(answer.dataset.choice) })
       return
     }
@@ -53,7 +55,8 @@ export function setUpActions({ view, notice, composer, request }) {
     if (open) {
       event.stopPropagation()
       target = open.dataset.say
-      to.textContent = `${open.dataset.name} への指示`
+      ask = open.dataset.ask ? { id: open.dataset.ask, sha: open.dataset.sha } : null
+      to.textContent = ask ? `${open.dataset.name} の判断への答え` : `${open.dataset.name} への指示`
       composer.hidden = false
       textarea.focus()
     }
@@ -64,14 +67,18 @@ export function setUpActions({ view, notice, composer, request }) {
     const text = textarea.value.trim()
     if (!target || !text) return
     const sessionId = target
+    const answering = ask
     composer.hidden = true
     textarea.value = ''
     target = null
-    void call('session.send', { sessionId, text })
+    ask = null
+    if (answering) void call('ask.answer', { id: answering.id, sha: answering.sha, text })
+    else void call('session.send', { sessionId, text })
   })
 
   composer.querySelector('.cancel').addEventListener('click', () => {
     composer.hidden = true
     target = null
+    ask = null
   })
 }

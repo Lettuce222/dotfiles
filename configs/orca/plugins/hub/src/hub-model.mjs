@@ -165,18 +165,26 @@ function watcherLine(agents) {
  */
 export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [] } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
+  // A worker's ask shows in its row, which then waits for the user whatever the session says.
+  const cardOf = new Map(cards.map((card) => [card.sessionId, card]))
+  const withCard = (row, sessionId) => {
+    const card = cardOf.get(sessionId)
+    return card ? { ...row, state: 'attention', card } : row
+  }
   const rows = [
     ...agents
       .filter((agent) => agent.name !== WATCHER)
-      .map((agent) => sessionRow(agent, paired.get(agent.sessionId), lists, home, focusedPath)),
+      .map((agent) => withCard(sessionRow(agent, paired.get(agent.sessionId), lists, home, focusedPath), agent.sessionId)),
     ...rest.map((orcaAgent) => workspaceRow(orcaAgent, lists, home, focusedPath))
   ]
+  const listed = new Set(agents.filter((agent) => agent.name !== WATCHER).map((agent) => agent.sessionId))
   const group = (state) => rows.filter((row) => row.state === state)
   // The focused workspace first, then the oldest wait or the newest change.
   const byFocus = (a, b) => Number(b.focused) - Number(a.focused)
   return {
     focused: focusedView(focused, lists, offers, new Set(agents.filter((agent) => agent.kind === 'background').map((agent) => agent.sessionId))),
-    cards: cards.map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
+    // Asks of a session no longer listed (removed without closing them) show on their own.
+    cards: cards.filter((card) => !listed.has(card.sessionId)).map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
     attention: group('attention').toSorted((a, b) => byFocus(a, b) || a.since - b.since),
     working: group('working').toSorted((a, b) => byFocus(a, b) || b.since - a.since),
     idle: group('idle').toSorted((a, b) => byFocus(a, b) || b.since - a.since),

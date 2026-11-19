@@ -66,6 +66,11 @@ export function answerText(ask, choice) {
   return null
 }
 
+/** The text a written answer sends: the question it answers, then what the person wrote. */
+export function writtenAnswerText(ask, text) {
+  return `要判断「${ask.question}」への答え（選択肢ではなく、ユーザーが書いた答え）: ${text}`
+}
+
 /**
  * Why a session cannot take text from the panel now, or null when it can. Only background
  * workers do: the orchestrator and the watcher are spoken to in their own windows.

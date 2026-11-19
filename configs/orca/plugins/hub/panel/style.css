@@ -57,15 +57,15 @@ code { font-size: 12px; }
    was, so the pointer ends up on the row it was heading for. A long list is the exception: the
    pointer may enter it to scroll. The delay on opening lets the pointer cross a row on its way
    elsewhere without moving anything. */
-.row .detail { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; pointer-events: none;
+.row > .detail { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; pointer-events: none;
   transition: grid-template-rows 180ms ease-in-out, opacity 180ms ease-in-out, visibility 180ms; font-size: 12px; }
-.row.long .detail { pointer-events: auto; }
-.row .head:hover + .detail, .row .head:focus-visible + .detail, .row.long .detail:hover { grid-template-rows: 1fr; opacity: 1; visibility: visible;
+.row.long > .detail { pointer-events: auto; }
+.row .head:hover + .detail, .row .head:focus-visible + .detail, .row.long > .detail:hover { grid-template-rows: 1fr; opacity: 1; visibility: visible;
   transition-delay: 150ms; }
-.row .detail .inner { min-height: 0; max-height: 45vh; overflow: hidden auto; overscroll-behavior: contain; }
-.row .detail .goal { margin: 4px 0 4px 14px; }
-.row .detail ol { margin: 0 0 4px 14px; }
-.row .detail li { gap: 6px; }
+.row > .detail .inner { min-height: 0; max-height: 45vh; overflow: hidden auto; overscroll-behavior: contain; }
+.row > .detail .goal { margin: 4px 0 4px 14px; }
+.row > .detail ol { margin: 0 0 4px 14px; }
+.row > .detail li { gap: 6px; }
 .row .top { display: flex; align-items: center; gap: 6px; }
 .row .dot { flex: none; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--orca-muted-foreground); }
 .row.attention .dot, .row .dot.running { background: var(--ms-todo); }
@@ -94,8 +94,8 @@ code { font-size: 12px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 /* A row that needs the user says it in full. */
 .row.attention .sub { display: block; -webkit-line-clamp: none; color: var(--orca-foreground); }
-.row .detail .where, .row .detail .said { margin: 4px 0 4px 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
-.row .detail .said { color: var(--orca-foreground); white-space: normal; }
+.row > .detail .where, .row > .detail .said { margin: 4px 0 4px 14px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
+.row > .detail .said { color: var(--orca-foreground); white-space: normal; }
 .row .head:not([role]) { cursor: default; }
 .group .row .head:hover + .detail, .group .row .head:focus-visible + .detail { transition-delay: 300ms; }
 .watcher { margin: 8px 0 0; font-size: 11px; color: var(--ms-todo); }
@@ -162,6 +162,12 @@ code { font-size: 12px; }
 .action:disabled { opacity: 0.55; cursor: default; }
 .recommended { margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--ms-done); }
 button { font: inherit; color: inherit; }
+/* A worker's ask inside its row, under what the worker said. */
+.row .row-card { margin: 6px 0 8px 14px; }
+.row .row-card .ask { margin: 0 0 8px; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.row .row-card .note { margin: 0 0 6px; font-size: 12px; color: var(--ms-todo); }
+.row .row-card .action .detail { white-space: pre-wrap; overflow-wrap: anywhere; }
+.action.other .label { font-weight: 500; }
 .row .say { flex: none; padding: 0 4px; border: none; background: none; cursor: pointer; color: var(--orca-muted-foreground); }
 .row .say:hover { color: var(--orca-foreground); }
 #notice { flex: none; margin: 8px 0 0; font-size: 12px; color: var(--orca-muted-foreground); }
@@ -174,5 +180,5 @@ button { font: inherit; color: inherit; }
 #composer button { padding: 2px 10px; border: 1px solid var(--orca-border); border-radius: 4px; background: var(--orca-card); cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .action { transition: none; }
-  .bar > div, li, li .mark, li .strike, .row .detail { transition: none; }
+  .bar > div, li, li .mark, li .strike, .row > .detail { transition: none; }
 }
