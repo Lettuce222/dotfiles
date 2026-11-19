@@ -29,8 +29,7 @@ dotfilesに何があり、どこへ置かれ、何をしているかを、全体
 
 ```text
 dotfiles/
-├── install.sh            ビルド済み setup への互換入口
-├── tools/installer/      インストーラー本体（Rust）
+├── install.sh            セットアップの起点。configs/ を $HOME へ symlink し、ツールを入れる
 ├── configs/              設定の本体。アプリごとに 1 フォルダ
 │   ├── agent/            Claude Code と Codex の指示・skill・窓口
 │   ├── claude/           Claude Code 本体の settings.json・statusline
@@ -45,7 +44,7 @@ dotfiles/
 │   ├── karabiner/        キー配置（macOS）
 │   └── orca/             Orca の自前 plugin（タスクの進み具合のパネル）
 ├── docs/                 決まりの文書（このページ、agent-assets.md、configuration.md）
-├── tests/                setup と tmux のリンクのテスト
+├── tests/                install.sh と tmux のリンクのテスト
 └── hooks/pre-commit      gitleaks で秘密情報のコミットを止める
 ```
 
@@ -61,7 +60,7 @@ dotfiles/
 
 ## 置き場所の対応
 
-`./setup`がどこに何を置くか。`~/.config/`や`~/.claude/`の中はsymlinkなので、直すときは必ず左の列を編集する。
+`install.sh`がどこに何を置くか。`~/.config/`や`~/.claude/`の中はsymlinkなので、直すときは必ず左の列を編集する。
 
 | ソース | 置き場所 | 置き方 |
 | --- | --- | --- |
@@ -76,9 +75,9 @@ dotfiles/
 | `configs/claude/settings.json`と`settings.local.json` | `~/.claude/settings.json` | 合成して普通のファイルとして書き出す |
 | `configs/git/ignore.shared` | `configs/git/ignore`の先頭の区切りの中 | 書き出す（`configs/git/ignore`はgitignore済み） |
 
-`./setup`の動き方は3つ。
+`install.sh`の動き方は3つ。
 
-- 引数なし: 工程ごとの進捗を出し、fish、ログインシェル、symlink、mise、textlint、選んだagentのCLI、macOSではHomebrew・アプリ・キーリピートまで準備する。
+- 引数なし: fish、ログインシェル、symlink、mise、textlint、選んだagentのCLI、macOSではHomebrew・アプリ・キーリピートまで。
 - `--links-only`: symlinkと設定の生成だけ。ネットワークに出ず、symlinkでない本物のファイルは置き換えない。エージェントが反映に使う。
 - `--dry-run`: `--links-only`の予定だけを出す。
 
@@ -113,8 +112,7 @@ dotfiles/
 
 | ファイル | 役割 |
 | --- | --- |
-| `install.sh` | 旧コマンド用の互換入口。ビルド済みの `./setup` を呼ぶ |
-| `tools/installer/` | Rust 製の `setup` コマンド。工程実行、端末の進捗、失敗時の引き継ぎを担当する |
+| `install.sh` | セットアップの起点。Phase 1（sh）でHomebrew・fish・symlink・設定の生成、Phase 2（fish）でフォント・mise・textlint・アプリ（Slack、Ghostty、Raycastなど）・macOSのキーリピート |
 | `AGENTS.md` | このリポジトリの共通ルール。Claude Code と Codex の両方への対応、編集、Git、反映手順 |
 | `CLAUDE.md` | Claude Code が共通ルールを読み込むための入口 |
 | `README.md` | 新しいMacでのセットアップ手順と、含まれる設定の一覧 |
@@ -185,7 +183,7 @@ Claude Code本体の設定。skillやhookの本体は`configs/agent/`に置く�
 
 | ファイル | 役割 |
 | --- | --- |
-| `configs/claude/settings.json` | 共通の設定。`./setup`が`settings.local.json`と合成して`~/.claude/settings.json`に書き出す。主な中身は次の一覧 |
+| `configs/claude/settings.json` | 共通の設定。`install.sh`が`settings.local.json`と合成して`~/.claude/settings.json`に書き出す。主な中身は次の一覧 |
 | `configs/claude/statusline.sh` | ステータスラインにモデル、コンテキストの使用率のバー、トークン数、費用を出す |
 | `configs/claude/file-suggestion.sh` | `@`のファイル候補を`fd`と`fzf`で出す |
 
@@ -271,7 +269,7 @@ AstroNvim v5のテンプレートから作った設定。`~/.config/nvim`へsyml
 | ファイル | 役割 |
 | --- | --- |
 | `configs/git/config` | 名前とnoreplyのメール、コミットとtagにSSH署名、pagerは`delta`、`merge.conflictStyle=zdiff3` |
-| `configs/git/ignore.shared` | 全リポジトリで無視するもの（`.claude/settings.local.json`、`.claude/worktrees/`）。`./setup`が`configs/git/ignore`に書き出す |
+| `configs/git/ignore.shared` | 全リポジトリで無視するもの（`.claude/settings.local.json`、`.claude/worktrees/`）。`install.sh`が`configs/git/ignore`に書き出す |
 
 署名の鍵のパスなどマシン固有のgitの設定は、追跡しない`~/.gitconfig`に書く。
 
@@ -306,7 +304,7 @@ AstroNvim v5のテンプレートから作った設定。`~/.config/nvim`へsyml
 | ファイル | 役割 |
 | --- | --- |
 | `configs/textlint/.textlintrc.json` | AIの書く日本語向けのルール2つ（`preset-ai-writing`、`preset-ai-words-ja`） |
-| `configs/textlint/package.json`、`configs/textlint/package-lock.json` | npm依存。`./setup`が`npm ci`で入れる。入っていないマシンではhookは何もしない |
+| `configs/textlint/package.json`、`configs/textlint/package-lock.json` | npm依存。`install.sh`が`npm ci`で入れる。入っていないマシンではhookは何もしない |
 
 ### `configs/hammerspoon/`
 
@@ -353,7 +351,7 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 | ファイル | 確かめるもの |
 | --- | --- |
-| `tests/test_install_links_only.py` | `./setup` の初回選択、進捗、`--links-only`、`--dry-run`。一時 `HOME` と偽のパッケージマネージャーで検証する |
+| `tests/test_install_links_only.py` | `install.sh --links-only`と`--dry-run`。一時ディレクトリを`HOME`にし、brewなどは偽物に差し替える |
 | `tests/test_open_link.py` | `open-link.sh`がリンクの種類ごとに正しいもので開くこと |
 | `tests/test_overview.py` | 追跡しているファイルがすべてこのページに載っていること、このページに載っているパスが実在すること |
 
@@ -361,7 +359,7 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 | ファイル | 役割 |
 | --- | --- |
-| `hooks/pre-commit` | gitleaksで、ステージした変更に秘密情報が無いか確かめる。`./setup`は有効にしないので、使うにはgitのhookとして手で配線する |
+| `hooks/pre-commit` | gitleaksで、ステージした変更に秘密情報が無いか確かめる。`install.sh`は有効にしないので、使うにはgitのhookとして手で配線する |
 
 ## 変更の追い方
 
@@ -380,7 +378,7 @@ git diff --stat reviewed..origin/main
 git tag -f reviewed origin/main
 ```
 
-コミットのscopeでも絞れる。`feat(agent)`・`fix(agent)`は窓口・worker・hook、`feat(tmux)`はtmuxのリンクや表示、`feat(install)`は`./setup`、`fix(mise)`はツールの一覧。
+コミットのscopeでも絞れる。`feat(agent)`・`fix(agent)`は窓口・worker・hook、`feat(tmux)`はtmuxのリンクや表示、`feat(install)`は`install.sh`、`fix(mise)`はツールの一覧。
 
 ここ3週間ほどの大きな流れは次のとおり。
 

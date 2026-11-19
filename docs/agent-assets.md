@@ -1,7 +1,7 @@
 # AI agent assets
 
 Claude Code と Codex の共通の指示とスキルは `configs/agent/` に置く。
-`./setup` はマシンで選んだ CLI に合わせて配置する。選択方法は [設定ガイド](configuration.md#メインの-coding-agent-cli) を参照。
+`install.sh` はマシンで選んだ CLI に合わせて配置する。選択方法は [設定ガイド](configuration.md#メインの-coding-agent-cli) を参照。
 
 ## 配置
 
@@ -19,7 +19,7 @@ Codex の `orchestrator` は別の tmux セッション `orchestrator-codex` に
 定期見張り、承認用 hooks は下記の Claude 構成の機能。Codex では内蔵のサブエージェントと権限設定を使う。
 「その他」を選んだ CLI は、専用の引数や hooks を付けずに別の tmux セッションで開き、案件ボードを表示する。
 
-`settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`./setup`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
+`settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`install.sh`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
 
 ## Skill
 
@@ -51,7 +51,7 @@ hook scriptの配置（`configs/agent/hooks/`）と発火設定（`configs/claud
 `textlint-markdown.sh`はClaude Codeの`PostToolUse`（`Write|Edit`）で、書き込まれた`*.md`をtextlintにかける。指摘があればexit 2でagentへ返し、書き直させる。
 
 - ルール設定とnpm依存: `configs/textlint/`（`~/.config/textlint`へsymlink）
-- npm依存のinstall: `./setup`（`mise exec -- npm ci`）
+- npm依存のinstall: `install.sh`の`install_textlint`（`npm ci`）
 - 未installの機械ではhookは何もしない
 
 `textlint-mcp.sh`はClaude Codeの`PreToolUse`（全MCP tool）で、tool inputのうち本文らしいkey（`body`、`description`、`comment`、`text`など）の日本語をtextlintにかける。指摘があればexit 2で送信を止める。特定のserviceやtool名には依存させない。コードが入る`content`は対象外にする。`AGENTS.md`の「まず.mdに下書きする」ルールを機械的に担保するためのhook。

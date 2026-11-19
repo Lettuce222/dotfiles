@@ -21,16 +21,16 @@ Codex、その他から選び、原本に保存する。Enter のみ、または
 
 選択を固定するには、原本に `claude`、`codex`、または PATH 上の単一のコマンド名
 （例 `aider`）を1行で書く。環境変数
-`DOTFILES_AGENT` はその実行時だけ優先する（例: `env DOTFILES_AGENT=codex ./setup --links-only`）。
-すでに CLI が入っていれば `./setup --links-only` で反映できる。
-CLI の導入も必要なら `./setup` を実行する。
+`DOTFILES_AGENT` はその実行時だけ優先する（例: `env DOTFILES_AGENT=codex ./install.sh --links-only`）。
+すでに CLI が入っていれば `./install.sh --links-only` で反映できる。
+CLI の導入も必要なら `./install.sh` を実行する。
 
 fish では `agent --which` で確認し、`agent` で起動する。CLI 固有の引数は
 `agent` にそのまま渡せる。`cw <ghqのリポジトリ名>` は見つけたディレクトリを
 `--add-dir` で追加する。Codex の `--add-dir` は追加の書き込み範囲も指定する。
 `orchestrator` は選択中の CLI と案件ボードを tmux で開く。
-「その他」のコマンドは別途インストールして PATH に追加する。`agent` と
-`orchestrator` から起動できる。追加のリポジトリが必要な場合はそのリポジトリで `agent` を起動する。
+「その他」のコマンドは `install.sh` では導入しないので、別途インストールして PATH に追加する。
+`agent` と `orchestrator` から起動できる。追加のリポジトリが必要な場合はそのリポジトリで `agent` を起動する。
 
 Claude を選ぶと Claude の設定とスキルを反映する。Codex を選ぶと
 `${CODEX_HOME:-~/.codex}/AGENTS.md` と `~/.agents/skills/` に共通資産を配置する。
@@ -41,11 +41,11 @@ Claude を選ぶと Claude の設定とスキルを反映する。Codex を選�
 
 Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`だけで、`~/.claude/settings.local.json`は読まない。`claude plugin enable`、`/config`、`/model`も`~/.claude/settings.json`へ書き込む。symlinkにすると、その書き込みが追跡しているファイルに入ってしまう。
 
-そこで`./setup`は、追跡している`configs/claude/settings.json`とgitignore済みの`configs/claude/settings.local.json`を合成し、`~/.claude/settings.json`を通常のファイルとして書き出す。合成ではobjectをkeyごとにまとめ、配列は重複を除いて連結し、それ以外の値はlocalを優先する。
+そこで`install.sh`は、追跡している`configs/claude/settings.json`とgitignore済みの`configs/claude/settings.local.json`を合成し、`~/.claude/settings.json`を通常のファイルとして書き出す。合成ではobjectをkeyごとにまとめ、配列は重複を除いて連結し、それ以外の値はlocalを優先する。
 
-- 設定を変えたら、`configs/claude/`のどちらかを編集し、`./setup`を再実行する。
+- 設定を変えたら、`configs/claude/`のどちらかを編集し、`./install.sh`を再実行する。
 - 共通の設定は`settings.json`に、マシン固有の設定（plugin、marketplace、hookなど）は`settings.local.json`に書く。
-- `./setup`は前回書き出した内容を`~/.claude/settings.json.generated`に残す。`claude plugin enable`などで`~/.claude/settings.json`が変わっていたら、上書きする前に`settings.json.bak.*/settings.json`へ退避して警告する。必要な変更は`settings.local.json`へ移す。
+- `install.sh`は前回書き出した内容を`~/.claude/settings.json.generated`に残す。`claude plugin enable`などで`~/.claude/settings.json`が変わっていたら、上書きする前に`settings.json.bak.<日時>`へ退避して警告する。必要な変更は`settings.local.json`へ移す。
 
 新しいlocal設定パターンを追加するときは`.gitignore`も更新する。
 
@@ -58,10 +58,10 @@ Claude Codeがuser scopeで読む設定ファイルは`~/.claude/settings.json`�
 
 `~/.config/git`はディレクトリごと`configs/git`へのsymlinkなので、gitがglobalのignoreとして読む`~/.config/git/ignore`は`configs/git/ignore`になる。このファイルには、ほかのツールが行を書き足す。Claude Codeは、作業用のフォルダ`.claude/.cc-writes/`がgitで無視されていないと、`git config --global core.excludesfile`が指すファイル（設定が無ければ`~/.config/git/ignore`）の末尾に`**/.claude/.cc-writes/`を書き足す。
 
-gitが読むglobalのignoreは1つだけなので、`configs/git/ignore`はgitignoreし、この機械だけのファイルにする。dotfilesで管理するruleは`configs/git/ignore.shared`に書く。`./setup`（`--links-only`も）は、`ignore.shared`の中身を`configs/git/ignore`の先頭の区切り（`# >>> dotfiles`から`# <<< dotfiles`まで）に書き、区切りの外の行はそのまま残す。
+gitが読むglobalのignoreは1つだけなので、`configs/git/ignore`はgitignoreし、この機械だけのファイルにする。dotfilesで管理するruleは`configs/git/ignore.shared`に書く。`install.sh`（`--links-only`も）は、`ignore.shared`の中身を`configs/git/ignore`の先頭の区切り（`# >>> dotfiles`から`# <<< dotfiles`まで）に書き、区切りの外の行はそのまま残す。
 
-- ruleを足すときは`configs/git/ignore.shared`を編集し、`./setup --links-only`を実行する。
-- `configs/git/ignore`の区切りの中は、次の`./setup`で書き直される。この機械だけのruleは区切りの外に書く。
+- ruleを足すときは`configs/git/ignore.shared`を編集し、`./install.sh --links-only`を実行する。
+- `configs/git/ignore`の区切りの中は、次の`install.sh`で書き直される。この機械だけのruleは区切りの外に書く。
 - `core.excludesFile`は設定しない。設定すると、Claude Codeはそのファイルへ書き足す。
 
 ## miseの設定
@@ -76,15 +76,12 @@ gitが読むglobalのignoreは1つだけなので、`configs/git/ignore`はgitig
 
 ## リンクと設定だけを反映する
 
-`./setup --links-only`は、symlinkの配置と`configs/git/ignore`の生成を行う。Claudeを選んだときは`~/.claude/settings.json`も生成する。ネットワークアクセスやパスワードを必要としない。`./setup --dry-run`は同じ判定をして、予定だけを出す。
+`./install.sh --links-only`は、symlinkの配置と`configs/git/ignore`の生成を行う。Claudeを選んだときは`~/.claude/settings.json`も生成する。ネットワークアクセスやパスワードを必要としない。`./install.sh --dry-run`は同じ判定をして、予定だけを出す。
 
-- 対話端末では全工程を通常の端末の中に並べ、実行中の行のバーと直近のログを更新する。完了した行はスクロール履歴に残る。選択やパスワード入力が必要なコマンドも同じ端末で実行する。
-- `./setup --plain` は生ログと工程番号を表示する。非対話実行や小さい端末もこの形式になる。失敗した場合は終了コードとローカルの詳細ログの保存先を表示する。
-- 対話端末で通常のインストールが失敗すると、選択中の Claude Code または Codex が修正を一度だけ開始する。ログはパスで渡し、エージェントはリポジトリ内の修正と検証を行う。インストーラーは失敗時の終了コードを返す。`--no-repair`、`--links-only`、非対話実行ではエージェントを起動しない。
 - `--dry-run` は選択を尋ねず、未設定のときは既定の選択で計画を表示する。
 - 何度実行しても同じ結果になる。リンク先がすでに正しいものは触らない。
 - 通常は別の場所を指すsymlinkを張り替え、symlinkでない既存のファイルやディレクトリは`skip:`で知らせる。旧CLI選択ファイルは上記の手順で移行する。
-- `~/.claude/settings.json`は、合成の結果と違い、かつ前回の生成（`settings.json.generated`）から変わっていないときだけ書き換え、変わるJSONのpathを`+`（追加）、`-`（削除）、`~`（値の変更）で1行ずつ出す。`claude plugin enable`などで変わっていたら上書きせず、`skip:`の行と差分を出す。退避して作り直すには引数なしの`./setup`を使う。
+- `~/.claude/settings.json`は、合成の結果と違い、かつ前回の生成（`settings.json.generated`）から変わっていないときだけ書き換え、変わるJSONのpathを`+`（追加）、`-`（削除）、`~`（値の変更）で1行ずつ出す。`claude plugin enable`などで変わっていたら上書きせず、`skip:`の行と差分を出す。退避して作り直すには引数なしの`./install.sh`を使う。
 - 最後に、変えたこと（`link`、`relink`、`mkdir`、`chmod +x`、`write`、`rewrite`など）を1行ずつ出す。何も変わらなければ`変更なし`と出す。
 - worktreeからの実行は、引数なしのときと同じく断る。
 - Claudeの`~/.claude/hooks`が壊れたsymlinkなら、`hooks.bak.*/link`に退避してhooksを配置し直す。
@@ -100,9 +97,9 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
 ## 新しいアプリ設定
 
 1. `configs/{app}/`に設定を置く。
-2. `./setup`のsymlink loopが対象を拾うことを確認する。
+2. `install.sh`のsymlink loopが対象を拾うことを確認する。
 3. `claude`、`agent`、`hammerspoon`は特殊扱いなので専用処理を確認する。
-4. `./setup`を再実行し、冪等性とlink先を検証する。
+4. `install.sh`を再実行し、冪等性とlink先を検証する。
 
 ## OS固有処理
 

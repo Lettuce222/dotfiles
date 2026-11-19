@@ -9,7 +9,7 @@ function agent --description 'このマシンのメインの coding agent CLI �
     if not command -q $provider
         switch $provider
             case claude codex
-                printf 'agent: %s が PATH にありません。./setup で導入できます。\n' $provider >&2
+                printf 'agent: %s が PATH にありません。./install.sh で導入できます。\n' $provider >&2
             case '*'
                 printf 'agent: %s が PATH にありません。CLI を導入して PATH に追加してください。\n' $provider >&2
         end

@@ -16,7 +16,7 @@ OVERVIEW = ROOT / "docs" / "overview.md"
 
 # リポジトリのパスとみなすコード片。プレースホルダ（<app> など）や glob は除く。
 PATH_PATTERN = re.compile(
-    r"`((?:configs|docs|tests|hooks|tools)/[^`<>*\s]*|install\.sh|README\.md|AGENTS\.md|CLAUDE\.md|\.gitignore)`"
+    r"`((?:configs|docs|tests|hooks)/[^`<>*\s]*|install\.sh|README\.md|AGENTS\.md|CLAUDE\.md|\.gitignore)`"
 )
 
 

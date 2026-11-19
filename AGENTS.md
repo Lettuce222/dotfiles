@@ -1,6 +1,6 @@
 # dotfiles
 
-macOS と Ubuntu に対応する個人用 dotfiles。`./setup` が `configs/*` をユーザーディレクトリにシンボリックリンクで配置する。
+macOS と Ubuntu に対応する個人用 dotfiles。`install.sh` が `configs/*` をユーザーディレクトリにシンボリックリンクで配置する。
 
 ## 編集時の契約
 
@@ -13,9 +13,9 @@ macOS と Ubuntu に対応する個人用 dotfiles。`./setup` が `configs/*` �
 
 - 変更は Claude Code と Codex の両方で使えることを確認する。起動・設定配置・共通ワークフローを変えたら、`claude` と `codex` の両方の選択経路をテストする。
 - 共通資産は両方から使える形で保つ。CLI 固有の引数、設定形式や hooks は対応する経路に置き、どちらの起動やセットアップにも影響する変更は両方で検証する。
-- macOS と Ubuntu の両方を維持する。OS 固有処理は `./setup` で分岐し、symlink や mise の共通処理は共有する。インストールは冪等に保つ。
+- macOS と Ubuntu の両方を維持する。OS 固有処理は `install.sh` で分岐し、symlink や mise の共通処理は共有する。インストールは冪等に保つ。
 
 ## Git ワークフロー
 
 - PR を作らず、`main` へ直接 push する。Conventional Commits 形式でコミットし、push の前に `origin/main` に rebase する。force push はしない。
-- コミット前に設定を現在のマシンへ反映して検証する。リンクと設定だけの反映には `./setup --links-only` を使える。反映できなかった場合は、必要な手順を報告する。
+- コミット前に設定を現在のマシンへ反映して検証する。リンクと設定だけの反映には `./install.sh --links-only` を使える。反映できなかった場合は、必要な手順を報告する。
