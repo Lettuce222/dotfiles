@@ -359,6 +359,33 @@ function renderOrchestratorQuestion(offer) {
   return `<div class="next orchestrator-question" data-key="${escape(`orchestrator\n${offer.id}`)}"><h2>窓口の問い<span>ターミナルで押すのと同じです</span></h2>${body}${submit}${other}</div>`
 }
 
+/**
+ * The orchestrator's question written for the panel (panel-mode): the question, its whole body as
+ * one text, and the real answers. Pressing writes the answer, which the orchestrator reads itself.
+ */
+function renderOrchestratorAsk(card) {
+  const key = escape(`orchestrator-ask\n${card.id}\n${card.sha}`)
+  const badge = card.approval ? '<span class="q-header">承認の問い</span>' : ''
+  const body = card.body ? `<pre class="preview body">${visible(card.body)}</pre>` : ''
+  const head = `<h2>窓口の問い<span>パネルで答えると、窓口が受け取ります</span></h2>${badge}<p class="ask full">${visible(card.question)}</p>${body}`
+  if (card.pressed !== null && card.pressed !== undefined) {
+    return `<div class="next orchestrator-question sending" data-key="${key}">${head}<div class="action sent"><span class="label">${escape(card.pressed)}</span><span class="detail">窓口に届けています…</span></div></div>`
+  }
+  if (!card.check.ok) {
+    return `<div class="next orchestrator-question" data-key="${key}">${head}<p class="note">${CHECK_NOTES[card.check.reason] ?? ''}</p></div>`
+  }
+  const options = card.options
+    .map((option, index) => {
+      const mark = card.recommended === index + 1 ? '<span class="recommended">推奨</span>' : ''
+      const description = option.description ? `<span class="detail full">${visible(option.description)}</span>` : ''
+      return `<li><button type="button" class="action full" data-answer data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${index + 1}"><span class="label">${visible(option.label)}${mark}</span>${description}</button></li>`
+    })
+    .join('')
+  const other = `<li><button type="button" class="action other" data-say="${escape(card.sessionId)}" data-name="窓口" data-ask="${escape(card.id)}" data-sha="${escape(card.sha)}"><span class="label">ほかの答えを書く</span><span class="detail">選択肢に無い答えや補足を、そのまま窓口に渡します</span></button></li>`
+  const failure = card.failure ? `<p class="status">${FAILURES[card.failure] ?? FAILURES.failed}</p>` : ''
+  return `<div class="next orchestrator-question" data-key="${key}">${head}<ol class="actions">${options}${other}</ol>${failure}</div>`
+}
+
 function renderFocused(focused) {
   if (!focused || focused.kind === 'no-workspace') return ''
   const agent = AGENT_LABELS[focused.agent] ?? ''
@@ -377,6 +404,7 @@ function renderWatcher(watcher) {
 
 export function renderHub(model) {
   const groups = [
+    ...(model.orchestratorAsks ?? []).map(renderOrchestratorAsk),
     renderOrchestratorQuestion(model.orchestratorQuestion),
     renderFocused(model.focused),
     renderCards(model.cards),

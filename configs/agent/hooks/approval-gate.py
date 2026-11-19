@@ -17,6 +17,11 @@ through once the user approved it there (approvals.py).
   approval-gate.py pre          (PreToolUse)
     - a session other than the orchestrator that would write approval records
       (`approvals.py add`, the approvals directory) -> deny
+    - a session other than the orchestrator that would answer an ask
+      (`asks.py answer` or `claim`, an `*.answer.json` file of the asks
+      directory) -> deny. The Hub panel writes answers from Orca, outside any
+      Claude Code session, and an answer to the orchestrator's question is
+      what it turns into an approval.
     - a one-shot record for this session matches the call -> allow, consume
       it. This covers calls that get no dialog but would be refused, such as
       auto mode classifier blocks. gh writes and MCP calls with prose are left
@@ -39,6 +44,7 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the hooks directory
 import approvals  # noqa: E402
 
 RECORD_WRITE = re.compile(r"approvals\.py\b(?:(?![;&|\n]).)*\badd\b|state/approvals\b")
+ANSWER_WRITE = re.compile(r"asks\.py\b(?:(?![;&|\n]).)*\b(?:answer|claim)\b|\.answer\.json\b")
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHOWN_LIMIT = 300
 
@@ -87,6 +93,15 @@ def writes_records(tool_name, tool_input):
         target = Path(path).expanduser().resolve()
         root = approvals.approvals_dir().expanduser().resolve()
         return target == root or root in target.parents
+    return False
+
+
+def writes_answers(tool_name, tool_input):
+    if tool_name == "Bash":
+        return bool(ANSWER_WRITE.search(tool_input.get("command") or ""))
+    if tool_name in EDIT_TOOLS:
+        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        return path.endswith(".answer.json")
     return False
 
 
@@ -145,6 +160,17 @@ def on_pre(data):
                 "permissionDecision": "deny",
                 "permissionDecisionReason": "承認の記録を書けるのは窓口（orchestrator）だけです。"
                 "承認が要る操作は「要判断」として窓口に報告し、窓口からの承認を待ってください。",
+            },
+        )
+        return 0
+
+    if writes_answers(tool_name, tool_input) and not approvals.is_orchestrator(approvals.session_entry(session_id)):
+        emit(
+            "PreToolUse",
+            {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "依頼に答えられるのは、人（Hub パネル）と窓口（orchestrator）だけです。"
+                "答えが要るときは、窓口に報告して待ってください。",
             },
         )
         return 0

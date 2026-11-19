@@ -22,12 +22,25 @@ CLI:
   asks.py next --suggest '<label>|<prompt>|<reason>' ... [--case SLUG] [--level B]
       Up to 3 next steps a finished worker suggests; the prompt is what the panel
       sends to the worker when one is pressed.
+  asks.py question --question <text> --option '<label>|<description>' ... [--body <file>]
+                   [--approval] [--recommended N] [--case SLUG]
+      The orchestrator's own question to the user, shown only in the Hub panel (panel-mode):
+      the question, the whole body read from <file> as one text (a draft to send, a command to
+      run; never split into pages), and the options, which are only the real answers.
+      --approval marks a question whose answer the orchestrator turns into an approval record.
+  asks.py verify <id>
+      The answer the panel gave to an orchestrator's question, as JSON, only when the answer file
+      was written by the panel (`--by panel`) for the ask as it is now (same hash). Exit 0 with
+      {"id", "choice", "label", "description", "text", "approval"}; 4 otherwise, with the reason.
   asks.py list [--json] [--all]
       Open asks (with --all, answered ones too).
-  asks.py answer <id> --by panel|orchestrator --choice <text> [--shown <sha256>]
+  asks.py answer <id> --by panel|orchestrator --choice <text> [--shown <sha256>] [--text <written answer>]
       Take the ask. --shown is the sha256 of the ask file as the card showed it;
       a changed file is refused. Exit 0 when taken, 3 when someone answered
       first, 4 when the ask is gone or changed. Prints the ask as JSON.
+      For an orchestrator's question, `--by panel` is written only from the Hub panel: the
+      parent process must be Orca's plugin host (Orca Helper) whose parent is Orca itself, with
+      no Claude Code session around it. Agents run under a shell or Orca's terminal daemon.
   asks.py claim <id>
       The orchestrator takes the ask to ask the user in its own window.
   asks.py close <id> | close --worker NAME
@@ -64,6 +77,9 @@ LIMITS = {
     "suggest_reason": 80,
 }
 EXIT_TAKEN = 3
+ORCA_HELPER = "/Applications/Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper"
+ORCA_MAIN = "/Applications/Orca.app/Contents/MacOS/Orca"
+BODY_MAX = 50000
 EXIT_GONE = 4
 
 
@@ -105,6 +121,40 @@ def caller():
     if entry["name"] == orchestrator_name() or entry["name"] in NOT_WORKERS:
         raise AskError("窓口と見張りは依頼を書きません")
     return entry
+
+
+def orchestrator_caller():
+    """The orchestrator session that runs this command."""
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    entry = next((a for a in agents() if isinstance(a, dict) and a.get("sessionId") == session_id), None) if session_id else None
+    if not entry or entry.get("name") != orchestrator_name():
+        raise AskError("窓口の問いを書けるのは窓口（orchestrator）だけです")
+    return entry
+
+
+def process(pid):
+    """(parent pid, executable path) of a process, or (None, None)."""
+    try:
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, timeout=5, check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    ppid, _, path = out.partition(" ")
+    try:
+        return int(ppid), path.strip()
+    except ValueError:
+        return None, None
+
+
+def from_panel(read=process, env=None):
+    """Whether this runs from the Hub panel: Orca's plugin host, a child of Orca, no Claude session."""
+    env = os.environ if env is None else env
+    if env.get("CLAUDE_CODE_SESSION_ID"):
+        return False
+    ppid, path = read(os.getppid())
+    if path != ORCA_HELPER or ppid is None:
+        return False
+    _, grand = read(ppid)
+    return grand == ORCA_MAIN
 
 
 def check_text(text, limit, what, multiline=False):
@@ -212,11 +262,11 @@ def remove(path):
             pass
 
 
-def save(ask, directory=None):
+def save(ask, directory=None, replace=True):
     d = directory or asks_dir()
     d.mkdir(parents=True, exist_ok=True)
     # A new ask replaces what the same session asked before and nobody answered.
-    for old in all_asks(d):
+    for old in all_asks(d) if replace else []:
         if old.get("session_id") == ask["session_id"]:
             remove(path_of(old["id"], d))
     path = path_of(ask["id"], d)
@@ -230,14 +280,22 @@ def sha_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def answer(ask_id, by, choice, shown=None, directory=None):
+def answer(ask_id, by, choice, shown=None, directory=None, text=None, panel_check=from_panel):
     """Take an ask. Returns (exit code, ask or None)."""
     path = path_of(ask_id, directory)
     if not path.is_file():
         return EXIT_GONE, None
     if shown and sha_file(path) != shown:
         return EXIT_GONE, None
+    current = load(path) or {}
+    if current.get("kind") == "question" and by == "panel":
+        if not shown:
+            raise AskError("窓口の問いには、カードに出した中身の hash（--shown）が要ります")
+        if not panel_check():
+            raise AskError("窓口の問いにパネルとして答えられるのは、Orca の Hub パネルだけです")
     record = {"by": by, "at": time.time(), "choice": choice, "shown_sha256": shown}
+    if text is not None:
+        record["text"] = check_text(text, 2000, "書いた答え", multiline=True)
     try:
         fd = os.open(answer_path(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
@@ -270,6 +328,70 @@ def cmd_next(args):
     return 0
 
 
+def read_body(file):
+    if file is None:
+        return None
+    try:
+        body = open(os.path.expanduser(file), encoding="utf-8").read()
+    except OSError as e:
+        raise AskError(f"本文のファイルを読めません: {file}: {e.strerror}")
+    if not body.strip() or len(body) > BODY_MAX:
+        raise AskError(f"本文は空でなく {BODY_MAX} 文字までです: {file}")
+    return body
+
+
+def cmd_question(args):
+    options = [parse_option(o) for o in args.option]
+    if not 2 <= len(options) <= 9:
+        raise AskError("選択肢は 2〜9 個にしてください")
+    if args.recommended is not None and not 1 <= args.recommended <= len(options):
+        raise AskError("--recommended は選択肢の番号（1 から）です")
+    ask = new_ask(
+        "question", orchestrator_caller(), args.case, "B",
+        question=check_text(args.question, LIMITS["question"] * 4, "問い", multiline=True),
+        body=read_body(args.body), body_file=os.path.abspath(os.path.expanduser(args.body)) if args.body else None,
+        options=options, recommended=args.recommended, approval=bool(args.approval),
+    )
+    # The orchestrator may wait on several questions at once.
+    print(save(ask, replace=False))
+    return 0
+
+
+def verify(ask_id, directory=None):
+    """(exit code, answer or reason) for an orchestrator's question answered in the panel."""
+    path = path_of(ask_id, directory)
+    ask = load(path) if path.is_file() else None
+    if not ask or ask.get("kind") != "question":
+        return EXIT_GONE, "窓口の問いが見つかりません"
+    record = load(answer_path(path))
+    if not record:
+        return EXIT_GONE, "まだ答えがありません"
+    if record.get("by") != "panel":
+        return EXIT_GONE, "パネルの答えではありません"
+    if record.get("shown_sha256") != sha_file(path):
+        return EXIT_GONE, "パネルに出したあとに問いが変わりました"
+    out = {"id": ask_id, "approval": bool(ask.get("approval")), "choice": None, "label": None, "description": None, "text": record.get("text")}
+    if record.get("text") is None:
+        try:
+            index = int(record.get("choice"))
+            picked = ask["options"][index - 1]
+        except (TypeError, ValueError, IndexError):
+            return EXIT_GONE, "答えの選択肢が問いにありません"
+        if index < 1:
+            return EXIT_GONE, "答えの選択肢が問いにありません"
+        out.update(choice=index, label=picked["label"], description=picked["description"])
+    return 0, out
+
+
+def cmd_verify(args):
+    code, out = verify(args.id)
+    if code == 0:
+        print(json.dumps(out, ensure_ascii=False))
+    else:
+        print(f"asks: {out}", file=sys.stderr)
+    return code
+
+
 def cmd_list(args):
     items = all_asks(include_answered=args.all)
     if args.json:
@@ -283,7 +405,7 @@ def cmd_list(args):
 
 
 def cmd_answer(args):
-    code, ask = answer(args.id, args.by, args.choice, args.shown)
+    code, ask = answer(args.id, args.by, args.choice, args.shown, text=args.text)
     if ask is not None:
         print(json.dumps(ask, ensure_ascii=False))
     if code == EXIT_TAKEN:
@@ -326,6 +448,16 @@ def main(argv=None):
     a.add_argument("--by", required=True, choices=("panel", "orchestrator"))
     a.add_argument("--choice", required=True)
     a.add_argument("--shown")
+    a.add_argument("--text")
+    q = sub.add_parser("question")
+    q.add_argument("--question", required=True)
+    q.add_argument("--option", action="append", required=True)
+    q.add_argument("--body")
+    q.add_argument("--approval", action="store_true")
+    q.add_argument("--recommended", type=int)
+    q.add_argument("--case")
+    v = sub.add_parser("verify")
+    v.add_argument("id")
     c = sub.add_parser("claim")
     c.add_argument("id")
     cl = sub.add_parser("close")
@@ -337,12 +469,16 @@ def main(argv=None):
             return cmd_decide(args)
         if args.cmd == "next":
             return cmd_next(args)
+        if args.cmd == "question":
+            return cmd_question(args)
+        if args.cmd == "verify":
+            return cmd_verify(args)
         if args.cmd == "list":
             return cmd_list(args)
         if args.cmd == "answer":
             return cmd_answer(args)
         if args.cmd == "claim":
-            args.by, args.choice, args.shown = "orchestrator", "claimed", None
+            args.by, args.choice, args.shown, args.text = "orchestrator", "claimed", None, None
             return cmd_answer(args)
         return cmd_close(args)
     except AskError as e:

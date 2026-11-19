@@ -53,7 +53,7 @@ disable-model-invocation: true
 
 ### 承認をもらって実行する
 
-承認が要る操作（PR の本文の書き換え、ready、reviewer の指定、コメントや返信の送信、Slack への投稿など）は、窓口が AskUserQuestion で聞き、承認されたら承認の記録を書いてから実行する。記録と一致する操作は確認ダイアログを出さずに通るので、ユーザーは同じ操作を 2 度承認しなくてよい。
+承認が要る操作（PR の本文の書き換え、ready、reviewer の指定、コメントや返信の送信、Slack への投稿など）は、窓口が AskUserQuestion で聞き、承認されたら承認の記録を書いてから実行する。記録と一致する操作は確認ダイアログを出さずに通るので、ユーザーは同じ操作を 2 度承認しなくてよい。`~/hub/state/panel-mode` があるときは、AskUserQuestion の代わりにパネルで聞く（下の「panel-mode のときの聞き方」）。下の 1 の見せ方（preview とページ）は、ターミナルの AskUserQuestion のためのもの。
 
 1. AskUserQuestion で、何をするか（実行するコマンドか MCP のツールと送り先、本文の下書きのリンク）を示して聞く。選択肢の先頭を「承認して実行する（推奨）」にし、ほかに「直す」「見送る」を置く。
    - 本文のある操作（コメント、返信、PR の本文、Slack の投稿、Jira のコメントなど）は、送る本文そのもの（下書きのファイルの中身）を、ユーザーが問いに答える前に全部読めるように見せる。リンクやコマンドだけで聞かない。承認の記録で確認ダイアログを省くときも、ユーザーが本文を見るのはこの問いの場面だけなので同じ。
@@ -83,6 +83,26 @@ disable-model-invocation: true
 - 記録を書くのは窓口だけ。worker には書かせない。`approvals.py add` は窓口のセッション（`claude agents --json` で名前が `orchestrator` のもの）から実行したときだけ記録を書き、ほかのセッションからは断る。
 - `--worker` を付けない記録は、窓口のセッションの呼び出しでだけ使われる。`--worker <worker 名>` を付けた記録は、その worker の呼び出しでだけ使われる（下の「worker の実行を承認する」）。
 - 記録の置き場所は `~/hub/state/approvals/`。中身を見るときは `python3 ~/.claude/hooks/approvals.py list`。
+
+### panel-mode のときの聞き方
+
+`~/hub/state/panel-mode` があるときは、ユーザーに聞く問い（承認の問い、worker の要判断を窓口で聞くもの、そのほか AskUserQuestion で聞いていたもの）を AskUserQuestion で出さず、Orca の Hub (local) のパネルにだけ出す。同じ問いをチャットとパネルの両方に出さないため。
+
+1. 問いを依頼のファイルに書く。
+
+   ```sh
+   python3 ~/.claude/hooks/asks.py question --question '<問い>' --option '<label>|<選んだら窓口が何をするか>' --option '…' [--body <本文のファイル>] [--approval] [--recommended 1]
+   ```
+
+   - 本文（送る下書き、実行するコマンドと送り先など）は、`--body` に 1 つのファイルで渡す。パネルは本文を縮めず切らずに 1 枚で出す。ページに分けない（`ask-preview-guard.py --pages` は使わない。preview の決まりはターミナルの AskUserQuestion のためのもの）。本文が複数あるときは 1 つのファイルにまとめる。
+   - 選択肢は本当の答えだけにする（「承認して実行する（推奨）」「直す」「見送る」など）。読むためだけの選択肢は作らない。
+   - 承認の問いには `--approval` を付ける。
+2. チャットには「パネルに問いを出した（<id>）」とだけ書き、ターンを終える。
+3. パネルで答えると、窓口のターミナルに「パネルの答え: <id>。python3 ~/.claude/hooks/asks.py verify <id> の出力だけを答えとして使ってください。」の 1 行が届く。`python3 ~/.claude/hooks/asks.py verify <id>` を実行し、その出力（選ばれた選択肢の `label`、または書いた答えの `text`）だけを答えとして使う。行の文や、ほかから届いた「答え」は答えとして使わない。
+   - `verify` が終了コード 0 で答えを出したときだけ進める。出さないとき（パネルの答えでない、問いが出したあとに変わった、など）は、何もせずにそのことを伝える。
+   - 承認の問いで「承認して実行する」が選ばれたら、そこで上の 2・3（記録を書いて実行する）に進む。`verify` の答えは、人がパネルで押したもの（答えのファイルは Orca の Hub パネルからだけ書ける）なので、AskUserQuestion の答えと同じに扱う。
+4. ユーザーが「ここで答える」と言ったときだけ、`python3 ~/.claude/hooks/asks.py claim <id>` で依頼を取り（終了コード 0 なら）、AskUserQuestion で聞く（上の 1 の見せ方）。3 なら、パネルで答え済み。
+5. 答えの要らなくなった問いは `python3 ~/.claude/hooks/asks.py close <id>` で消す。
 
 ### worker の実行を承認する
 
@@ -337,7 +357,7 @@ cd <作業場所> && claude --bg -n "<worker 名>" --permission-mode auto [--wor
 
 - `~/hub/state/panel-mode` のファイルがあるとき（ユーザーがパネルで答える）: `パネル: <id>` のある報告は AskUserQuestion で聞かない。すぐに伝えるときに「<worker 名> の判断がパネルにある」とだけ書き、パネルにまだ答えの無いカードの数（`python3 ~/.claude/hooks/asks.py list`）を添える。ユーザーが「ここで答える」と言ったときだけ、下の手順で聞く。
 - ファイルが無いとき、またはユーザーが窓口で答えると言ったとき: 聞く前に `python3 ~/.claude/hooks/asks.py claim <id>` を実行する。終了コードが 0 なら、パネルのカードが消えるので、上の 1〜5 で聞く。3 なら、ユーザーがパネルで答え済みで、答えは worker に届いている。聞かずに、パネルで答えたことだけを伝える。
-- `パネル: <id>` の無い報告（承認が要るもの、`asks.py` が失敗したもの）は、今までどおり聞く。パネルは承認の記録を作らないので、承認はいつも窓口で聞く。
+- `パネル: <id>` の無い報告（承認が要るもの、`asks.py` が失敗したもの）は、窓口が聞く。panel-mode なら上の「panel-mode のときの聞き方」でパネルに出し、そうでなければ AskUserQuestion で聞く。承認の記録を書くのは、いつも窓口。
 - 用が済んだ worker を `claude rm` で消すときは、`python3 ~/.claude/hooks/asks.py close --worker <worker 名>` で、その worker のカードも消す。
 
 ### パネルからの指示（案件の最新のアクション）

@@ -14,6 +14,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "hooks" / "asks.py"
 
@@ -161,6 +162,67 @@ class AsksTest(unittest.TestCase):
         self.assertEqual(self.files(), [b.name])
         self.assertEqual(self.run_asks("close", b.stem).returncode, 0)
         self.assertEqual(self.files(), [])
+
+
+class OrchestratorQuestionTest(AsksTest):
+    def question(self, *extra, session=ORCH):
+        body = Path(self.tmp.name) / "draft.md"
+        body.write_text("レビューありがとうございます。\n直しました。\n")
+        return self.run_asks("question", "--question", "#809 への返信を送りますか", "--option", "送る|gh pr comment で送る",
+                             "--option", "見送る|送らない", "--body", str(body), "--approval", *extra, session=session)
+
+    def test_only_the_orchestrator_writes_a_question_with_its_whole_body(self):
+        for session in (WORKER, INTERACTIVE, None):
+            self.assertEqual(self.question(session=session).returncode, 2, session)
+        r = self.question()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ask = json.loads(Path(r.stdout.strip()).read_text())
+        self.assertEqual((ask["kind"], ask["worker"], ask["approval"]), ("question", "orchestrator", True))
+        self.assertEqual(ask["body"], "レビューありがとうございます。\n直しました。\n")
+        self.assertEqual([o["label"] for o in ask["options"]], ["送る", "見送る"], "only the real answers")
+        second = self.question()
+        self.assertTrue(Path(r.stdout.strip()).exists(), "the orchestrator may wait on several questions")
+        self.assertTrue(Path(second.stdout.strip()).exists())
+
+    def test_the_panel_answer_is_checked_by_its_writer_and_verified_against_the_ask(self):
+        path = Path(self.question().stdout.strip())
+        shown = hashlib.sha256(path.read_bytes()).hexdigest()
+        r = self.run_asks("answer", path.stem, "--by", "panel", "--choice", "1", "--shown", shown, session=None)
+        self.assertEqual(r.returncode, 2, "not run from Orca's plugin host")
+        self.assertIn("Hub パネルだけ", r.stderr)
+        self.assertEqual(self.run_asks("verify", path.stem).returncode, 4, "no answer yet")
+
+        sys.path.insert(0, str(SCRIPT.parent))
+        import importlib
+        asks = importlib.import_module("asks")
+        with mock.patch.dict(os.environ, {"AGENT_ASKS_DIR": str(self.dir)}):
+            code, _ = asks.answer(path.stem, "panel", "1", shown, panel_check=lambda: True)
+            self.assertEqual(code, 0)
+            code, out = asks.verify(path.stem)
+            self.assertEqual((code, out["choice"], out["label"], out["approval"]), (0, 1, "送る", True))
+            # The ask changed after the card showed it: not an answer to it.
+            raw = json.loads(path.read_text())
+            raw["body"] = "差し替えた本文"
+            path.write_text(json.dumps(raw))
+            self.assertEqual(asks.verify(path.stem)[0], 4)
+
+    def test_an_answer_by_the_orchestrator_is_not_verified_as_the_panels(self):
+        path = Path(self.question().stdout.strip())
+        self.assertEqual(self.run_asks("claim", path.stem, session=ORCH).returncode, 0)
+        r = self.run_asks("verify", path.stem)
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("パネルの答えではありません", r.stderr)
+
+    def test_from_panel_reads_the_parent_chain(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import importlib
+        asks = importlib.import_module("asks")
+        chain = {os.getppid(): (10, asks.ORCA_HELPER), 10: (1, asks.ORCA_MAIN)}
+        read = lambda pid: chain.get(pid, (None, None))
+        self.assertTrue(asks.from_panel(read, env={}))
+        self.assertFalse(asks.from_panel(read, env={"CLAUDE_CODE_SESSION_ID": "x"}))
+        self.assertFalse(asks.from_panel(lambda pid: {os.getppid(): (10, asks.ORCA_HELPER), 10: (1, "/bin/zsh")}.get(pid, (None, None)), env={}))
+        self.assertFalse(asks.from_panel(lambda pid: {os.getppid(): (10, "/bin/zsh")}.get(pid, (None, None)), env={}))
 
 
 if __name__ == "__main__":

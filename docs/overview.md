@@ -156,10 +156,10 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/hooks/textlint-mcp.sh` | MCPのtoolを呼ぶ前 | 送る本文の日本語をtextlintにかけ、指摘があれば止める |
 | `configs/agent/hooks/external-post-guard.py` | MCPのtoolと、ghの書き込みの前 | リンクになっていないチケットID・PR番号、曜日のない日付を止める。通れば、承認の記録があれば通し、無ければ送り先と本文を見せて確認を出す |
 | `configs/agent/hooks/approvals.py` | 窓口がユーザーの承認の直後に呼ぶ | 承認した操作を1回だけ通す記録を`~/hub/state/approvals/`に書く（30分で切れる）。workerに向けた記録は`--worker <worker名>`で書く（古い`--thread`も受け付ける） |
-| `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。承認の記録と一致すれば通す |
+| `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。承認の記録と一致すれば通す。窓口以外が承認の記録や依頼の答えを書くのを止める |
 | `configs/agent/hooks/tmux-socket-guard.py` | Bashの実行前 | いつも使っているtmuxサーバーを止めるコマンドを止める |
 | `configs/agent/hooks/agent-ui-guard.py` | Bashの実行前 | 人が押すボタンやほかのセッションへの入力に届くコマンド（読むだけでないOrcaのCLI、osascriptのUI操作、cliclick、いつものtmuxサーバーへのsend-keys）を確認に回す。承認の記録があれば通す |
-| `configs/agent/hooks/asks.py` | workerが止まるときに呼ぶ | workerの問い（`decide`）と次の作業の候補（`next`）を`~/hub/state/asks/`に依頼のファイルとして書く。OrcaのHub (local)がカードにし、先に答えた1つだけが通る（`answer`・`claim`）。承認ではない |
+| `configs/agent/hooks/asks.py` | workerが止まるときに呼ぶ | workerの問い（`decide`）と次の作業の候補（`next`）を`~/hub/state/asks/`に依頼のファイルとして書く。OrcaのHub (local)がカードにし、先に答えた1つだけが通る（`answer`・`claim`）。panel-modeの窓口は自分の問いも`question`で書き、パネルの答えを`verify`で読む（パネルとして答えられるのはOrcaのplugin hostから動いたときだけ） |
 | `configs/agent/hooks/ask-preview-guard.py` | AskUserQuestionの前 | 全部は表示されないpreview（2000文字超え、端末に収まらない行数）と、上の返事を参照する問いを止める。`--check <file>`で下書きを確かめ、`--pages <file>`で本文をpreviewのページに分ける |
 
 #### テスト（`configs/agent/tests/`）

@@ -146,8 +146,8 @@ export function createDelivery({ home, hubRoot, claudeCli, python, readSessions,
   }
 
   /** Takes an ask through asks.py, so the panel and the orchestrator never both answer it. */
-  async function take(ask, choice) {
-    const taken = await run(python, [asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha])
+  async function take(ask, choice, text = null) {
+    const taken = await run(python, [asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha, ...(text ? ['--text', text] : [])])
     if (taken.code === 0) return 'taken'
     return taken.code === EXIT_TAKEN ? 'answered' : 'stale'
   }

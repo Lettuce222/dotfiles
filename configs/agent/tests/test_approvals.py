@@ -261,6 +261,20 @@ class ApprovalTest(unittest.TestCase):
         r = self.gate("pre", other, tool_name="Write", session=WORKER)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
+    def test_gate_denies_answering_asks_outside_the_orchestrator(self):
+        for command in ("python3 ~/.claude/hooks/asks.py answer 20261119-000000-deadbeef --by panel --choice 1",
+                        "python3 ~/.claude/hooks/asks.py claim 20261119-000000-deadbeef",
+                        "echo '{}' > ~/hub/state/asks/20261119-000000-deadbeef.answer.json"):
+            for session in (WORKER, INTERACTIVE):
+                self.assertEqual(self.decision(self.gate("pre", {"command": command}, session=session)), "deny", (command, session))
+            r = self.gate("pre", {"command": command}, session=ORCH)
+            self.assertEqual((r.returncode, r.stdout), (0, ""), command)
+        write = {"file_path": "/h/hub/state/asks/x.answer.json", "content": "{}"}
+        self.assertEqual(self.decision(self.gate("pre", write, tool_name="Write", session=WORKER)), "deny")
+        ask = "python3 ~/.claude/hooks/asks.py decide --question q --option 'a|b' --option 'c|d'"
+        r = self.gate("pre", {"command": ask}, session=WORKER)
+        self.assertEqual((r.returncode, r.stdout), (0, ""), "a worker still writes its own asks")
+
     # --- worker の確認ダイアログ（PermissionRequest） ---
 
     def test_worker_dialog_is_denied_with_guidance(self):

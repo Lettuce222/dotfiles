@@ -45,6 +45,13 @@ export function orchestratorLine(body) {
   return line.length > LINE_MAX ? null : line
 }
 
+/** The line that tells the orchestrator an ask has an answer; it carries no answer itself. */
+export function signalLine(askId) {
+  return /^\d{8}-\d{6}-[0-9a-f]{8}$/.test(askId)
+    ? `パネルの答え: ${askId}。python3 ~/.claude/hooks/asks.py verify ${askId} の出力だけを答えとして使ってください。`
+    : null
+}
+
 /** The orchestrator's terminal and agent, or why there is none to type into. */
 export async function locateOrchestrator({ run, readSessions, hubRoot }) {
   const sessions = (await readSessions()).filter((s) => s.name === ORCHESTRATOR && s.kind === 'interactive' && s.alive)
@@ -158,10 +165,13 @@ export function createOrchestratorChannel({ run, readSessions, hubRoot, readPend
     }
   }
 
-  /** Types a line into the orchestrator. Resolves { sent, reason }. */
-  function send(body) {
+  /**
+   * Types a line into the orchestrator. Resolves { sent, reason }. With `signal`, the line goes
+   * without the panel's prefix: it only names an answer the orchestrator reads with `asks.py verify`.
+   */
+  function send(body, { signal = false } = {}) {
     return enqueue(async () => {
-      const line = orchestratorLine(body)
+      const line = signal ? signalLine(body) : orchestratorLine(body)
       if (!line) return { sent: false, reason: 'invalid' }
       const found = await ready()
       if (!found.ok) return { sent: false, reason: found.reason }

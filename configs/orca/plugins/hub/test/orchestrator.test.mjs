@@ -150,3 +150,66 @@ test('several questions or answers are ticked, then sent from the review page', 
   assert.equal(questionKeys(two, { answers: [[0], [0, 1]] }), null, 'one answer for a single-select question')
   assert.equal(questionKeys(two, { index: 0 }), null)
 })
+
+test("the orchestrator's question for the panel shows in full, and an answer is written, then signalled", async () => {
+  const { parseAsk, sha256 } = await import('../src/asks.mjs')
+  const { createHubWorker } = await import('../src/hub-worker.mjs')
+  const { signalLine } = await import('../src/orchestrator.mjs')
+  const { mkdir, writeFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { makeHome } = await import('./helpers.mjs')
+  const raw = { id: '20261119-180000-abcdef12', kind: 'question', created_at: 1, worker: 'orchestrator', session_id: 'sess-orch', question: '#809 への返信を送りますか', body: '本文 1 行目\n‮2 行目', options: [{ label: '送る', description: 'gh で送る' }, { label: '見送る', description: '' }], recommended: 1, approval: true }
+  assert.equal(parseAsk({ ...raw, worker: 'impl-x' }), null, 'only the orchestrator asks it')
+  const card = { ...parseAsk(raw), sha: 'a'.repeat(64), check: { ok: true, reason: null }, pressed: null, failure: null }
+  const html = renderHub(buildHubModel([], [], [], { orchestratorAsks: [card] }))
+  assert.ok(html.includes('<span class="q-header">承認の問い</span>'))
+  assert.ok(html.includes('<pre class="preview body">本文 1 行目\n<span class="hidden-char">⟨U+202E⟩</span>2 行目</pre>'), 'the body whole, one text')
+  assert.ok(html.includes(`data-answer data-id="${raw.id}" data-sha="${'a'.repeat(64)}" data-choice="1"`))
+  assert.ok(html.includes(`data-ask="${raw.id}"`), 'a written answer too')
+  assert.match(signalLine(raw.id), /^パネルの答え: 20261119-180000-abcdef12。python3 ~\/\.claude\/hooks\/asks\.py verify 20261119-180000-abcdef12 の出力だけを/)
+  assert.equal(signalLine('x; rm -rf'), null)
+
+  const home = await makeHome()
+  const hubRoot = join(home, 'hub')
+  const dir = join(hubRoot, 'state', 'asks')
+  await mkdir(dir, { recursive: true })
+  const bytes = JSON.stringify(raw)
+  await writeFile(join(dir, `${raw.id}.json`), bytes)
+  const calls = []
+  const delivery = {
+    check: async () => ({ ok: true }),
+    take: async (ask, choice, text) => {
+      calls.push(['take', choice, text])
+      return 'taken'
+    },
+    send: async () => assert.fail('no resume for the orchestrator'),
+    release: async () => calls.push(['release']),
+    log: async () => {},
+    logCase: async () => {}
+  }
+  const terminals = [TERM]
+  const sent = []
+  const runCli = async (_cli, args) => {
+    if (args[0] === 'terminal' && args[1] === 'list') return { result: { terminals } }
+    if (args[0] === 'worktree') return { result: { worktrees: [{ path: hubRoot, agents: [{ paneKey: 't1:l1', state: 'done', hasLivePty: true }] }] } }
+    if (args[0] === 'terminal' && args[1] === 'send') {
+      sent.push(args[5])
+      return { result: { send: { accepted: true } } }
+    }
+    return { result: {} }
+  }
+  for (const t of terminals) t.worktreePath = hubRoot
+  const orchestratorSession = { ...ORCH, cwd: hubRoot }
+  const logs = []
+  const hub = createHubWorker({
+    orca: { log: (line) => logs.push(line), host: { call: async () => ({ workspaces: [] }) }, panels: { post: () => {} } },
+    home, hubRoot, cli: 'orca', runCli, readOrca: async () => ({ active: null, agents: [], offers: [] }),
+    readClaude: async () => [orchestratorSession], watchDir: () => {}, delivery, readCases: async () => []
+  })
+  const sha = sha256(Buffer.from(bytes))
+  assert.deepEqual(await hub.answerAsk({ id: raw.id, sha, choice: 1 }), { ok: true })
+  assert.deepEqual(calls, [['take', 1, null]])
+  assert.deepEqual(sent.filter((line) => line !== '\u0013'), [signalLine(raw.id)], 'the line carries no answer')
+  assert.ok(logs.some((line) => line.includes(`answered the orchestrator's question ${raw.id} (option 1)`)))
+  for (const t of terminals) t.worktreePath = HUB
+})

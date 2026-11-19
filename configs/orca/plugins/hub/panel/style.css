@@ -225,6 +225,7 @@ button { font: inherit; color: inherit; }
 /* The orchestrator's question, in full. */
 .orchestrator-question { padding: 10px 12px; margin-bottom: 12px; border: 1px solid color-mix(in oklch, var(--ms-todo) 55%, transparent);
   border-radius: 10px; background: var(--orca-card); }
+.orchestrator-question .preview.body { max-height: 50vh; overflow: auto; margin: 0 0 8px; }
 .orchestrator-question .ask.full { white-space: pre-wrap; overflow-wrap: anywhere; }
 .orchestrator-question .q-header { display: inline-block; margin-bottom: 4px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700;
   color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }

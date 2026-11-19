@@ -55,7 +55,10 @@ export function parseAsk(raw) {
   if (!raw || typeof raw !== 'object' || !ASK_ID.test(raw.id ?? '')) return null
   const worker = text(raw.worker, 100)
   const sessionId = text(raw.session_id, 100)
-  if (!worker || !sessionId || NOT_WORKERS.has(worker)) return null
+  if (!worker || !sessionId) return null
+  // The orchestrator's own question (panel-mode): only the orchestrator writes it.
+  if (raw.kind === 'question') return parseQuestion(raw, worker, sessionId)
+  if (NOT_WORKERS.has(worker)) return null
   const base = {
     id: raw.id,
     kind: raw.kind,
@@ -84,6 +87,32 @@ export function parseAsk(raw) {
 
 export function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+const QUESTION_MAX = 4000
+const BODY_MAX = 50000
+
+function parseQuestion(raw, worker, sessionId) {
+  if (worker !== 'orchestrator') return null
+  const question = typeof raw.question === 'string' && raw.question.trim() && raw.question.length <= QUESTION_MAX ? raw.question : null
+  const options = Array.isArray(raw.options) ? raw.options : []
+  const valid = options.length >= 2 && options.length <= 9 && options.every((o) => typeof o?.label === 'string' && o.label.trim() && typeof o.description === 'string')
+  const body = raw.body === null || raw.body === undefined ? null : typeof raw.body === 'string' && raw.body.length <= BODY_MAX ? raw.body : undefined
+  if (!question || !valid || body === undefined) return null
+  return {
+    id: raw.id,
+    kind: 'question',
+    worker,
+    sessionId,
+    question,
+    body,
+    options: options.map((o) => ({ label: o.label, description: o.description })),
+    recommended: Number.isInteger(raw.recommended) && raw.recommended >= 1 && raw.recommended <= options.length ? raw.recommended : null,
+    approval: raw.approval === true,
+    case: null,
+    level: 'B',
+    createdAt: Number.isFinite(raw.created_at) ? raw.created_at * 1000 : 0
+  }
 }
 
 /** One ask file, with the hash of its bytes; null when it is gone, answered or not an ask. */
@@ -128,6 +157,9 @@ export async function readAsks(dir) {
 export function checkAsk(ask, sessions) {
   if (!SHOWABLE.has(ask.level)) return { ok: false, reason: 'level' }
   const session = sessions.find((candidate) => candidate.sessionId === ask.sessionId)
+  if (ask.kind === 'question') {
+    return session?.name === 'orchestrator' ? { ok: true, reason: null } : { ok: false, reason: 'identity' }
+  }
   if (!session || session.name !== ask.worker || session.kind !== 'background') return { ok: false, reason: 'identity' }
   return { ok: true, reason: null }
 }

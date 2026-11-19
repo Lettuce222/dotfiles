@@ -340,8 +340,10 @@ export function createHubWorker({
       }
     }
     asks = await readAsks(asksDir)
-    const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null }))
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
+    const shownAsk = (ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null })
+    const cards = asks.filter((ask) => ask.kind !== 'question').map(shownAsk)
+    const orchestratorAsks = asks.filter((ask) => ask.kind === 'question').map(shownAsk)
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -399,6 +401,7 @@ export function createHubWorker({
       if (!ask || ask.sha !== sha) return fail('stale')
       const current = await readClaude(claudeCli)
       if (!checkAsk(ask, current).ok) return fail('unverified')
+      if (ask.kind === 'question') return await answerQuestion(ask, choice, written, fail)
       if (written && ask.kind !== 'decide') return fail('invalid')
       const answer = written ? writtenAnswerText(ask, written) : answerText(ask, choice)
       if (!answer) return fail('invalid')
@@ -427,11 +430,35 @@ export function createHubWorker({
     }
   }
 
+  /**
+   * The orchestrator's question: the panel writes the answer file (asks.py checks that it runs from
+   * Orca), then tells the orchestrator with a line that carries no answer. The orchestrator reads the
+   * answer with `asks.py verify`, which checks the file against the question as it is now.
+   */
+  async function answerQuestion(ask, choice, written, fail) {
+    const label = written ? `書いた答え: ${written}` : ask.options[choice - 1]?.label
+    if (!label) return fail('invalid')
+    pressed.set(ask.id, label)
+    schedule()
+    const taken = await deliver.take(ask, written ? 'written' : choice, written)
+    if (taken !== 'taken') return fail(taken)
+    const sent = await orchestrator.send(ask.id, { signal: true })
+    if (!sent.sent) {
+      await deliver.release(asksDir, ask)
+      return fail(sent.reason)
+    }
+    orca.log(`hub: answered the orchestrator's question ${ask.id} (${written ? 'written' : `option ${choice}`})`)
+    await deliver.log({ ask: ask.id, worker: ask.worker, card: 'question', approval: ask.approval, choice: written ? 'written' : choice, label, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
+    return { ok: true }
+  }
+
   /** Sends a pressed card of an Orca agent (src/next-actions.mjs); the panel shows what went wrong. */
   async function sendNext(request) {
     try {
       const isOrchestrator = orchestratorQuestion && request?.offer === orchestratorQuestion.id
       const result = isOrchestrator ? await orchestrator.answer(request) : await sendOffer(request)
+      // Every press is logged with how it went, so a card that did nothing can be traced.
+      orca.log(`hub: card ${request?.offer} (${isOrchestrator ? "the orchestrator's question" : 'an agent'}): ${result.sent ? 'sent' : `not sent, ${result.reason}`}`)
       if (result.sent) schedule(true)
       return result
     } catch (error) {

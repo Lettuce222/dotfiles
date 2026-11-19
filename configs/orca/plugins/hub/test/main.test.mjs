@@ -164,7 +164,7 @@ test('what the panel runs to act is the short list of src/deliver.mjs', () => {
   assert.deepEqual(calls, [
     "claudeCli: 'stop', session.id",
     "claudeCli: '--bg', '--resume', sessionId, '-n', session.name, '--permission-mode', 'auto', withPrefix(body)",
-    "python: asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha",
+    "python: asksScript, 'answer', ask.id, '--by', 'panel', '--choice', String(choice), '--shown', ask.sha, ...(text ? ['--text', text",
     "python: casesScript, 'log', caseName, line"
   ])
   assert.match(text, /asksScript = join\(home, '\.claude', 'hooks', 'asks\.py'\)/)
