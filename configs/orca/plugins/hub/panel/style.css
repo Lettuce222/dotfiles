@@ -168,6 +168,12 @@ button { font: inherit; color: inherit; }
 .row .row-card .note { margin: 0 0 6px; font-size: 12px; color: var(--ms-todo); }
 .row .row-card .action .detail { white-space: pre-wrap; overflow-wrap: anywhere; }
 .action.other .label { font-weight: 500; }
+/* Pressed: only the chosen answer stays, as being delivered. */
+.row-card.sending .actions li:not(:has(.chosen)) { display: none; }
+.row-card .action.sent { cursor: default; background: color-mix(in oklch, var(--ms-bar) 22%, var(--orca-card));
+  border-color: color-mix(in oklch, var(--ms-bar) 55%, transparent); }
+.row .answer-elsewhere { margin: 2px 0 6px 14px; font-size: 11px; color: var(--orca-muted-foreground); }
+.row-card .status { margin: 6px 0 0; font-size: 12px; color: var(--ms-todo); }
 .row .say { flex: none; padding: 0 4px; border: none; background: none; cursor: pointer; color: var(--orca-muted-foreground); }
 .row .say:hover { color: var(--orca-foreground); }
 #notice { flex: none; margin: 8px 0 0; font-size: 12px; color: var(--orca-muted-foreground); }

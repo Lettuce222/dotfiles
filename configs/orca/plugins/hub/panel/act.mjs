@@ -46,8 +46,11 @@ export function setUpActions({ view, notice, composer, request }) {
     const answer = event.target.closest('button[data-answer]')
     if (answer) {
       event.stopPropagation()
-      // Every button of the card waits for the answer, so a second press sends nothing.
-      for (const button of answer.closest('.card, .row-card').querySelectorAll('button[data-answer]')) button.disabled = true
+      // The options give way to the pressed one at once; the worker's next body says how it went.
+      const card = answer.closest('.card, .row-card')
+      card.classList.add('sending')
+      answer.classList.add('chosen')
+      for (const button of card.querySelectorAll('button')) button.disabled = true
       void call('ask.answer', { id: answer.dataset.id, sha: answer.dataset.sha, choice: Number(answer.dataset.choice) })
       return
     }

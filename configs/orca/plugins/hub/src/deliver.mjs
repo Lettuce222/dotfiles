@@ -20,6 +20,9 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩]/
 const NOT_WORKERS = new Set(['orchestrator', 'chore-hub-watch'])
 const STOP_WAIT_MS = 15_000
 const STOP_POLL_MS = 500
+// A worker often still finishes its turn (the report it just sent) when the answer is pressed.
+const BUSY_WAIT_MS = 180_000
+const BUSY_POLL_MS = 2_000
 const EXIT_TAKEN = 3
 
 /** python3 for the hooks' scripts. Orca's PATH may lack the folders a shell adds. */
@@ -78,7 +81,8 @@ export function writtenAnswerText(ask, text) {
 export function refusal(session, job) {
   if (!session) return 'gone'
   if (session.kind !== 'background' || !session.name || NOT_WORKERS.has(session.name)) return 'not-worker'
-  if (session.status === 'busy' || session.state === 'working') return 'busy'
+  // `status` says whether the session is in a turn now; `state` can still say working after it.
+  if (session.status === 'busy') return 'busy'
   if (job && job.inFlight > 0) return 'busy'
   if (session.alive && !session.id) return 'busy'
   return null
@@ -121,9 +125,20 @@ export function createDelivery({ home, hubRoot, claudeCli, python, readSessions,
     return false
   }
 
+  /** Waits while the worker is in a turn, so a press right after its report still reaches it. */
+  async function settled(sessionId) {
+    const until = now() + BUSY_WAIT_MS
+    let result = await check(sessionId)
+    while (result.reason === 'busy' && now() < until) {
+      await sleep(BUSY_POLL_MS)
+      result = await check(sessionId)
+    }
+    return result
+  }
+
   /** Hands a worker the text: resumes it in the background with the text as its next prompt. */
   async function send(sessionId, body) {
-    const { ok, reason, session } = await check(sessionId)
+    const { ok, reason, session } = await settled(sessionId)
     if (!ok) return { sent: false, reason }
     if (!(await stopIfRunning(session))) return { sent: false, reason: 'stop-failed' }
     const resumed = await run(claudeCli, ['--bg', '--resume', sessionId, '--permission-mode', 'auto', withPrefix(body)], { cwd: session.cwd ?? undefined })

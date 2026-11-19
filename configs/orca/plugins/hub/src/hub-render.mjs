@@ -68,7 +68,7 @@ function renderRow(row) {
   const said = row.detail && (row.step || row.state !== 'attention') ? `<p class="said">${escape(clip(row.detail, FULL_MAX))}</p>` : ''
   const goal = row.goal ? `<p class="goal">${escape(clip(row.goal, GOAL_MAX))}</p>` : ''
   const tasks = row.tasks.length > 0 ? `<ol>${row.tasks.map(renderTask).join('')}</ol>` : ''
-  const ask = row.card ? renderRowCard(row.card, row.name) : ''
+  const ask = row.card ? renderRowCard(row.card, row.name) : row.state === 'attention' ? renderNoAsk(row) : ''
   if (!where && !said && !goal && !tasks) return `<li class="row ${row.state}${focused}" data-key="${key}">${button}${ask}</li>`
   const long = row.tasks.length > ROW_TASKS_SHORT || said.length > LONG_SAID ? ' long' : ''
   return `<li class="row ${row.state}${focused} has-detail${long}" data-key="${key}">${button}${ask}
@@ -124,11 +124,44 @@ function otherAnswer(card, name) {
 }
 
 /** The ask inside its worker's row: the question in full and its answers, as orca-milestone's cards. */
+// Why an answer did not reach the worker, said in its row.
+const FAILURES = {
+  busy: 'worker が作業を終えないので、届けられませんでした。もう一度押してください。',
+  stale: 'この依頼は、カードを出したあとに変わりました。出し直した選択肢を見てください。',
+  answered: 'ほかの場所（窓口）でもう答えています。',
+  unverified: '依頼した worker を確かめられないので、届けませんでした。',
+  gone: '届け先の worker が見つかりません。',
+  'not-worker': '届け先が worker ではありません。',
+  'stop-failed': 'worker を止められず、届けられませんでした。',
+  'resume-failed': 'worker を続けられず、届けられませんでした。',
+  invalid: '届けられない答えです。',
+  failed: '届けるときに失敗しました。'
+}
+
+/**
+ * A row that needs the user but has no ask: a worker stopped under the older rules, or waiting for
+ * an approval, which the orchestrator asks. The panel offers no options it does not have; a worker
+ * can be written to, and where to answer otherwise is said.
+ */
+function renderNoAsk(row) {
+  if (row.say) {
+    return `<div class="row-card next"><ol class="actions"><li><button type="button" class="action other" data-say="${escape(row.say)}" data-name="${escape(row.name)}"><span class="label">指示を書く</span><span class="detail">この判断の選択肢はパネルに出ていません（承認が要るものは窓口で聞きます）。書いた文を、そのまま worker に届けます</span></button></li></ol></div>`
+  }
+  const where = row.open ? 'そのワークスペースのターミナルで答えてください' : 'そのセッションの画面で答えてください'
+  return `<p class="hint answer-elsewhere">${where}</p>`
+}
+
 function renderRowCard(card, name) {
+  const key = escape(`card\n${card.id}\n${card.sha}`)
+  // Pressed: the options give way to the answer, until it reaches the worker or fails.
+  if (card.pressed !== null && card.pressed !== undefined) {
+    const answer = card.pressed ? `<span class="label">${escape(card.pressed)}</span>` : ''
+    return `<div class="row-card next sending" data-key="${key}"><p class="ask">${escape(card.question ?? '')}</p><div class="action sent">${answer}<span class="detail">届けています…（worker が今の作業を終えるのを待ってから届けます）</span></div></div>`
+  }
   const note = card.check.ok ? '' : `<p class="note">${CHECK_NOTES[card.check.reason] ?? ''}</p>`
   const body = card.check.reason === 'level' ? '' : cardBody(card).replace(/<\/ol>$/, `${otherAnswer(card, name)}</ol>`)
-  const sending = card.pressed ? '<p class="note">送っています…</p>' : ''
-  return `<div class="row-card next" data-key="${escape(`card\n${card.id}\n${card.sha}`)}">${note}${body}${sending}</div>`
+  const failure = card.failure ? `<p class="status">${FAILURES[card.failure] ?? FAILURES.failed}</p>` : ''
+  return `<div class="row-card next" data-key="${key}">${note}${body}${failure}</div>`
 }
 
 function renderCard(card) {

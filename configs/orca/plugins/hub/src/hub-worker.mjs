@@ -76,8 +76,10 @@ export function createHubWorker({
       readJob
     })
   let asks = []
-  // Asks being answered: their cards show as sending, and a second press does nothing.
-  const pressed = new Set()
+  // Asks being answered, with the answer pressed: their cards show it as being delivered, and a
+  // second press does nothing. Asks whose answer could not be delivered, with why, until pressed again.
+  const pressed = new Map()
+  const failures = new Map()
   const paths = claudePaths(home)
   const { tasksRoot } = paths
   // Transcript heads never change once written; null entries are retried on the next refresh.
@@ -291,7 +293,7 @@ export function createHubWorker({
     }
     const lists = await allSessions()
     asks = await readAsks(asksDir)
-    const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.has(ask.id) }))
+    const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null }))
     publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers })))
   }
 
@@ -337,31 +339,41 @@ export function createHubWorker({
     if (!ASK_ID.test(id ?? '') || !SHA256.test(sha ?? '')) return { ok: false, reason: 'invalid' }
     if (text === undefined ? !Number.isInteger(choice) : !written) return { ok: false, reason: 'invalid' }
     if (pressed.has(id)) return { ok: false, reason: 'pressed' }
-    pressed.add(id)
+    pressed.set(id, written ?? '')
+    failures.delete(id)
     schedule()
+    const fail = (reason, detail = '') => {
+      failures.set(id, reason)
+      orca.log(`hub: the answer to ${id} was not delivered: ${reason}${detail ? ` (${detail})` : ''}`)
+      return { ok: false, reason }
+    }
     try {
       const ask = await readAsk(asksDir, id)
-      if (!ask || ask.sha !== sha) return { ok: false, reason: 'stale' }
+      if (!ask || ask.sha !== sha) return fail('stale')
       const current = await readClaude(claudeCli)
-      if (!checkAsk(ask, current).ok) return { ok: false, reason: 'unverified' }
-      if (written && ask.kind !== 'decide') return { ok: false, reason: 'invalid' }
+      if (!checkAsk(ask, current).ok) return fail('unverified')
+      if (written && ask.kind !== 'decide') return fail('invalid')
       const answer = written ? writtenAnswerText(ask, written) : answerText(ask, choice)
-      if (!answer) return { ok: false, reason: 'invalid' }
-      const ready = await deliver.check(ask.sessionId)
-      if (!ready.ok) return { ok: false, reason: ready.reason }
+      if (!answer) return fail('invalid')
+      const label = written ? `書いた答え: ${written}` : ask.kind === 'decide' ? ask.options[choice - 1].label : ask.suggestions[choice - 1].label
+      pressed.set(id, label)
+      schedule()
+      // Taken first, so the orchestrator stops asking it while the worker finishes its turn.
       const taken = await deliver.take(ask, written ? 'written' : choice)
-      if (taken !== 'taken') return { ok: false, reason: taken }
+      if (taken !== 'taken') return fail(taken)
       const sent = await deliver.send(ask.sessionId, answer)
       if (!sent.sent) {
         await deliver.release(asksDir, ask)
-        return { ok: false, reason: sent.reason }
+        return fail(sent.reason, sent.detail)
       }
-      const label = written ? '書いた答え' : ask.kind === 'decide' ? ask.options[choice - 1].label : ask.suggestions[choice - 1].label
+      orca.log(`hub: delivered the answer to ${id} to ${ask.worker}`)
       await deliver.log({ ask: ask.id, worker: ask.worker, card: ask.kind, choice: written ? 'written' : choice, label, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
       const what = ask.kind === 'decide' ? `「${ask.question.split('\n')[0].slice(0, 60)}」に「${label}」と答えた` : `次の作業「${label}」を頼んだ`
       const report = ask.report ? ` [report.md](file://${ask.report})` : ''
       await deliver.logCase(ask.case, `${dayOf(now())} パネルで ${ask.worker} に${what}${report}`)
       return { ok: true }
+    } catch (error) {
+      return fail('failed', error.message)
     } finally {
       pressed.delete(id)
       schedule()
@@ -385,7 +397,10 @@ export function createHubWorker({
     const body = cleanText(text)
     if (typeof sessionId !== 'string' || !body) return { ok: false, reason: 'invalid' }
     const sent = await deliver.send(sessionId, body)
-    if (!sent.sent) return { ok: false, reason: sent.reason }
+    if (!sent.sent) {
+      orca.log(`hub: the line to ${sessionId} was not delivered: ${sent.reason}`)
+      return { ok: false, reason: sent.reason }
+    }
     const session = sessions.find((candidate) => candidate.sessionId === sessionId)
     await deliver.log({ session: sessionId, worker: session?.name ?? null, card: 'free', text: body })
     schedule()
