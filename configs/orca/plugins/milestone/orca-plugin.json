@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
+  "id": "milestone-local",
+  "publisher": "lettuce222",
+  "name": "Milestone (local)",
+  "version": "0.1.0",
+  "description": "Read-only panel that shows the Claude Code tasks of the focused workspace as milestones. Adapted from andoshin11/orca-milestone.",
+  "license": "MIT",
+  "engines": { "orca": ">=1.4.248" },
+  "pluginApi": 1,
+  "main": "main.mjs",
+  "contributes": {
+    "panels": [{ "id": "milestones", "title": "Milestones", "icon": "flag", "entry": "panel/index.html" }],
+    "commands": [{ "id": "milestone.refresh", "title": "Milestone: Refresh" }],
+    "events": [{ "on": "agent.status.changed" }, { "on": "workspace.changed" }],
+    "hooks": [{ "event": "agent.launch.before" }]
+  },
+  "capabilities": [{ "kind": "workspace:read" }, { "kind": "agent:read" }, { "kind": "workspace:write" }]
+}

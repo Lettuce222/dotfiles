@@ -20,6 +20,7 @@ dotfilesに何があり、どこへ置かれ、何をしているかを、全体
    - [`configs/textlint/`](#configstextlint): AIが書く日本語のlint
    - [`configs/hammerspoon/`](#configshammerspoon): ウィンドウの配置
    - [`configs/karabiner/`](#configskarabiner): キーの割り当て
+   - [`configs/orca/`](#configsorca): Orcaの自前plugin
    - [`docs/`](#docs)、[`tests/`](#tests)、[`hooks/`](#hooks)
 5. [変更の追い方](#変更の追い方)
 6. [このページを保つ](#このページを保つ)
@@ -41,7 +42,8 @@ dotfiles/
 │   ├── mise/             CLI ツールの一覧（fzf、rg、gh、tmux、python …）
 │   ├── textlint/         agent の hook が使う textlint のルールと npm 依存
 │   ├── hammerspoon/      ウィンドウ配置（macOS）
-│   └── karabiner/        キー配置（macOS）
+│   ├── karabiner/        キー配置（macOS）
+│   └── orca/             Orca の自前 plugin（タスクの進み具合のパネル）
 ├── docs/                 決まりの文書（このページ、agent-assets.md、configuration.md）
 ├── tests/                setup と tmux のリンクのテスト
 └── hooks/pre-commit      gitleaks で秘密情報のコミットを止める
@@ -53,7 +55,7 @@ dotfiles/
 | --- | --- | --- |
 | 基本 | `mise`、`fish`、`git`、`gh` | ツールを入れ、シェルとGitの動きを決める |
 | 画面 | `ghostty`、`tmux`、`nvim`、`lazygit`、`hammerspoon`、`karabiner` | ターミナル、エディタ、ウィンドウ、キー |
-| AIエージェント | `agent`、`claude`、`textlint` | Claude CodeとCodexの指示、案件ボード、Claudeの文面確認・worker |
+| AIエージェント | `agent`、`claude`、`textlint`、`orca` | Claude CodeとCodexの指示、案件ボード、Claudeの文面確認・worker |
 
 最近の変更の大半はAIエージェントの層に入っている（2026年10月20日以降のコミットで変わったファイルの数は、`configs/agent`と`configs/tmux`がそれぞれ100前後、`docs/agent-assets.md`が47、ほかは1桁から十数）。`configs/tmux`の多くは、のちに消した前の窓口（hub）の分。
 
@@ -328,6 +330,14 @@ macOSのキー配置。`~/.config/karabiner`へsymlink。
 | --- | --- |
 | `configs/karabiner/karabiner.json` | 有効な設定。Caps LockをControlに、OptionとCommandの単体押しで英数・かな、GhosttyでCtrl-Space（tmuxのprefix）を押すとIMEをオフ、Emacs風のキー、ChromeのCtrl-Tabを拡張機能へ |
 | `configs/karabiner/assets/complex_modifications/` | Karabinerの画面から読み込むルールの元（Emacs風のキー、日本語環境向け、ChromeのCtrl-Tab、全角スペースを半角に） |
+
+### `configs/orca/`
+
+Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.config/orca`へsymlinkするが、Orcaはこのフォルダを読まない。pluginは`orca plugin dev load ~/.config/orca/plugins/milestone`で開発フォルダーとして読み込む（カタログを使わないので自動更新は無い）。
+
+| ファイル | 役割 |
+| --- | --- |
+| `configs/orca/plugins/milestone/` | Milestone (local)。Orcaのターミナルで起動したClaude Codeにゴール付きのタスクを書かせ、フォーカス中のワークスペースのゴールとマイルストーンを右サイドバーに出す。見るだけで、セッションへの送信も許可の返答もしない。[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone)（MIT）から表示の部分だけを持ってきた。出典と除いた部分は`NOTICE.md`、テストは`node --test test/` |
 
 ### `docs/`
 
