@@ -229,8 +229,8 @@ set -l fn $argv[2]
 set -l mode $argv[3]
 set -l provider $argv[4]
 set -l session orchestrator
-if test "$provider" = codex
-    set session orchestrator-codex
+if test "$provider" != claude
+    set session orchestrator-$provider
 end
 function tmux --inherit-variable sock; command tmux -f /dev/null -L $sock $argv; end
 source (dirname "$fn")/agent.fish
@@ -263,7 +263,7 @@ class LayoutTest(unittest.TestCase):
                 shutil.copy(ROOT / "configs/agent" / filename, assets)
             bin_dir = Path(home) / "bin"
             bin_dir.mkdir()
-            for cli in ("claude", "codex"):
+            for cli in ("claude", "codex", "aider"):
                 executable = bin_dir / cli
                 executable.write_text("#!/bin/sh\nexec sleep 600\n")
                 executable.chmod(0o755)
@@ -307,6 +307,12 @@ class LayoutTest(unittest.TestCase):
         panes = self.run_layout("old", "codex")
         self.assert_two_panes(panes)
         self.assertIn("codex", panes[0]["cmd"])
+        self.assertIn("--no-workers", panes[1]["cmd"])
+
+    def test_custom_cli_launches_as_is_with_case_board(self):
+        panes = self.run_layout("new", "aider")
+        self.assert_two_panes(panes)
+        self.assertIn("command aider", panes[0]["cmd"])
         self.assertIn("--no-workers", panes[1]["cmd"])
 
     def test_old_session_drops_agents_pane(self):

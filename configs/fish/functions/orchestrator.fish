@@ -17,9 +17,9 @@ function orchestrator --description 'メインの agent を窓口にして案件
     test -f "$env_file"; and set prefix source (string escape -- "$env_file")\;
 
     set -l board_args board
-    if test "$provider" = codex
-        # Claude の窓口が動いていても、Codex は別セッションで開く。
-        set session orchestrator-codex
+    if test "$provider" != claude
+        # CLI ごとにセッションを分け、Claude 専用の worker 欄を省く。
+        set session orchestrator-(string replace -a -- . _ "$provider")
         set -a board_args --no-workers
     end
 
@@ -33,6 +33,8 @@ function orchestrator --description 'メインの agent を窓口にして案件
                 set -l prompt (string collect < "$assets/codex-orchestrator.md")
                 or return
                 set launch codex (string escape -- "$prompt")
+            case '*'
+                set launch command (string escape -- "$provider")
         end
         set -l left fish -c (string join ' ' -- $prefix $launch)
 

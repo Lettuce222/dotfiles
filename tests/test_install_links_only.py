@@ -1,28 +1,43 @@
-"""install.sh --links-only / --dry-run のテスト。
+"""Rust の setup の対話、進捗、--links-only / --dry-run のテスト。
 
 実行: python3 -m unittest tests/test_install_links_only.py
 
-一時ディレクトリに install.sh と小さな configs を置き、別の一時ディレクトリを HOME にして実行する。
+テスト用の configs と HOME を一時ディレクトリに用意して実行する。
 brew・fish・chsh などは PATH の先頭に置いた偽物に差し替え、呼ばれたら記録する。
 """
 
+import fcntl
 import json
 import os
+import pty
+import select
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
+import time
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
-INSTALL_SH = Path(__file__).resolve().parents[1] / "install.sh"
-INSTALLERS = ["brew", "fish", "chsh", "sudo", "curl", "mise", "npm", "defaults"]
+ROOT = Path(__file__).resolve().parents[1]
+INSTALLERS = ["brew", "fish", "chsh", "sudo", "curl", "mise", "npm", "defaults", "claude"]
+
+@lru_cache(maxsize=1)
+def installer_binary():
+    if supplied := os.environ.get("DOTFILES_TEST_SETUP"):
+        return Path(supplied)
+    manifest = ROOT / "tools" / "installer" / "Cargo.toml"
+    subprocess.run(["cargo", "build", "--locked", "--manifest-path", str(manifest)], check=True)
+    return manifest.parent / "target" / "debug" / "setup"
 
 
 class InstallTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="install-links-only-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="install-links-only-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp)
         self.repo = self.tmp / "dotfiles"
         self.home = self.tmp / "home"
@@ -42,11 +57,11 @@ class InstallTestCase(unittest.TestCase):
         (configs / "agent" / "skills" / "demo").mkdir(parents=True)
         (configs / "agent" / "skills" / "agents-worker").mkdir()
         (configs / "agent" / "AGENTS.md").write_text("# agents\n")
-        shutil.copy(INSTALL_SH.parent / "configs" / "agent" / "select-cli.sh", configs / "agent")
+        shutil.copy(ROOT / "configs" / "agent" / "select-cli.sh", configs / "agent")
         (configs / "agent" / "hooks").mkdir()
         (configs / "agent" / "hooks" / "guard.py").write_text("print()\n")
         (configs / "hammerspoon").mkdir()
-        shutil.copy(INSTALL_SH, repo / "install.sh")
+        (configs / "textlint").mkdir()
 
     def make_stubs(self):
         self.bin = self.tmp / "bin"
@@ -56,7 +71,8 @@ class InstallTestCase(unittest.TestCase):
             stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{self.log}"\n')
             stub.chmod(0o755)
 
-    def run_install(self, *args, repo=None, check=True, platform="Darwin", agent=None, codex_home=None):
+    def run_install(self, *args, repo=None, check=True, platform="Darwin", agent=None, codex_home=None,
+                    tty_input=None, rich=False):
         repo = repo or self.repo
         env = {
             "HOME": str(self.home),
@@ -71,9 +87,43 @@ class InstallTestCase(unittest.TestCase):
             env["DOTFILES_AGENT"] = agent
         if codex_home is not None:
             env["CODEX_HOME"] = str(codex_home)
-        r = subprocess.run(
-            ["sh", str(repo / "install.sh"), *args], env=env, capture_output=True, text=True, check=False
-        )
+        command = [str(installer_binary()), "--repo", str(repo), *args]
+        if tty_input is None:
+            r = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+        else:
+            master, slave = pty.openpty()
+            try:
+                if rich:
+                    env["TERM"] = "xterm-256color"
+                    env["NO_COLOR"] = "1"
+                    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 100, 0, 0))
+                stdout = slave if rich else subprocess.PIPE
+                with subprocess.Popen(command, env=env, stdin=slave, stderr=slave, stdout=stdout) as child:
+                    os.write(master, tty_input.encode())
+                    chunks = []
+                    try:
+                        # An animated UI can write more than a PTY buffer before it exits.
+                        if rich:
+                            deadline = time.monotonic() + 10
+                            while child.poll() is None:
+                                if time.monotonic() >= deadline:
+                                    raise subprocess.TimeoutExpired(command, 10)
+                                if select.select([master], [], [], 0.1)[0]:
+                                    chunks.append(os.read(master, 4096))
+                        out, _ = child.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait()
+                        raise
+                    # macOS は最後の slave を閉じると未読の出力を捨てる。
+                    while select.select([master], [], [], 0)[0]:
+                        chunks.append(os.read(master, 4096))
+                    tty_out = b"".join(chunks).decode()
+                    r = subprocess.CompletedProcess(command, child.returncode,
+                                                    tty_out if rich else out.decode(), "" if rich else tty_out)
+            finally:
+                os.close(master)
+                os.close(slave)
         if check:
             self.assertEqual(r.returncode, 0, r.stderr)
         return r
@@ -197,7 +247,7 @@ class InstallLinksOnlyTest(InstallTestCase):
 
         self.assertEqual(dest.read_text(), edited)
         self.assertEqual(list((self.home / ".claude").glob("settings.json.bak.*")), [])
-        self.assertIn(f"skip: {dest} was changed outside install.sh", r.stdout)
+        self.assertIn(f"skip: {dest} was changed outside setup", r.stdout)
         self.assertIn("    - enabledPlugins", r.stdout)
 
     def test_does_not_link_backups(self):
@@ -236,17 +286,17 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertEqual(list(self.home.iterdir()), [])
         self.assertEqual(self.installer_calls(), "")
 
-    def test_full_install_still_runs_the_installers(self):
+    def test_full_install_reports_each_stage_and_completion(self):
         r = self.run_install()
-        self.assertIn("Phase 2", r.stdout)
-        self.assertIn("fish -c", self.installer_calls())
+        self.assertRegex(r.stdout, r"\[01/10\] .*CLI")
+        self.assertIn("[06/10] mise", r.stdout)
+        self.assertIn("[10/10] macOS", r.stdout)
+        self.assertIn("セットアップ完了 · CLI: claude", r.stdout)
+        self.assertIn("mise install", self.installer_calls())
+        self.assertIn("mise exec -- npm ci", self.installer_calls())
         self.assertEqual(self.link(".config/foo"), str(self.repo / "configs" / "foo"))
 
-    @unittest.skipUnless(shutil.which("fish"), "fish が要る")
     def test_full_linux_setup_installs_codex_without_macos_tools(self):
-        fish = shlex.quote(shutil.which("fish"))
-        (self.bin / "fish").write_text(f'#!/bin/sh\nexec {fish} --no-config "$@"\n')
-        (self.repo / "configs" / "textlint").mkdir()
         curl = self.bin / "curl"
         curl.write_text(
             '#!/bin/sh\n'
@@ -255,7 +305,7 @@ class InstallLinksOnlyTest(InstallTestCase):
             'printf "%s\\n" \'mkdir -p "$HOME/.local/bin"\' \'ln -s /usr/bin/true "$HOME/.local/bin/codex"\'\n'
         )
 
-        self.run_install(platform="Linux")
+        self.run_install(platform="Linux", agent="codex")
 
         self.assertTrue((self.home / ".local/bin/codex").is_file())
         self.assertFalse((self.home / ".claude").exists())
@@ -265,8 +315,9 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertNotIn("defaults ", calls)
 
     def test_linux_links_codex_assets_without_touching_claude(self):
-        self.run_install("--links-only", platform="Linux")
         assets = self.repo / "configs" / "agent"
+        (assets / "cli.local").write_text("codex\n")
+        self.run_install("--links-only", platform="Linux")
         self.assertEqual(self.link(".config/dotfiles-agent-cli"), str(assets / "cli.local"))
         self.assertEqual((assets / "cli.local").read_text(), "codex\n")
         self.assertEqual(self.link(".config/dotfiles-agent"), str(assets))
@@ -275,6 +326,112 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertFalse((self.home / ".agents/skills/agents-worker").exists())
         self.assertFalse((self.home / ".claude").exists())
         self.assertEqual(self.run_install("--links-only", platform="Linux").stdout, "変更なし\n")
+
+    def test_first_interactive_setup_uses_claude_on_enter(self):
+        r = self.run_install("--links-only", tty_input="\n")
+        self.assertIn("Claude Code (default)", r.stderr)
+        self.assertIn("Codex", r.stderr)
+        self.assertIn("その他", r.stderr)
+        self.assertIn("[02/02]", r.stdout)
+        self.assertEqual((self.repo / "configs/agent/cli.local").read_text(), "claude\n")
+        self.assertTrue((self.home / ".claude/CLAUDE.md").is_file())
+
+    def test_empty_file_prompts_for_codex_and_existing_choice_is_reused(self):
+        choice = self.repo / "configs/agent/cli.local"
+        choice.write_text("\n")
+        r = self.run_install("--links-only", tty_input="9\n2\n")
+        self.assertIn("1、2、3 のいずれか", r.stderr)
+        self.assertIn("選択 [1]", r.stderr)
+        self.assertTrue((self.home / ".codex/AGENTS.md").is_file())
+        self.assertEqual(choice.read_text(), "codex\n")
+        r = self.run_install("--links-only", tty_input="")
+        self.assertNotIn("選択 [1]", r.stderr)
+        self.assertEqual(choice.read_text(), "codex\n")
+
+    def test_interactive_setup_accepts_a_custom_command_without_executing_it(self):
+        r = self.run_install(platform="Linux", tty_input="3\naider;false\naider-chat\n")
+        self.assertIn("use a single command name", r.stderr)
+        self.assertIn("[06/07] coding agent CLI を準備 · aider-chat", r.stdout)
+        self.assertIn("スキップ", r.stdout)
+        self.assertIn("セットアップ完了 · CLI: aider-chat", r.stdout)
+        self.assertEqual((self.repo / "configs/agent/cli.local").read_text(), "aider-chat\n")
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertFalse((self.home / ".codex").exists())
+        self.assertNotIn("curl", self.installer_calls())
+
+    def test_noninteractive_setup_defaults_to_claude_on_linux(self):
+        r = self.run_install("--links-only", platform="Linux")
+        self.assertNotIn("選択 [1]", r.stderr)
+        self.assertEqual((self.repo / "configs/agent/cli.local").read_text(), "claude\n")
+
+    def test_interactive_dry_run_never_prompts(self):
+        r = self.run_install("--dry-run", tty_input="")
+        self.assertNotIn("選択 [1]", r.stderr)
+        self.assertFalse((self.repo / "configs/agent/cli.local").exists())
+
+    def test_abandoned_selection_does_not_write_files(self):
+        r = self.run_install("--links-only", check=False, tty_input="\x04")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("選択を中止", r.stderr)
+        self.assertFalse((self.repo / "configs/agent/cli.local").exists())
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_failed_install_reports_stage_and_does_not_print_success(self):
+        (self.bin / "mise").write_text("#!/bin/sh\nprintf 'build failed\\n' >&2\nexit 42\n")
+        r = self.run_install(platform="Linux", check=False)
+        self.assertEqual(r.returncode, 42)
+        self.assertIn("[05/07] mise", r.stdout)
+        self.assertIn("[FAIL] mise", r.stderr)
+        self.assertIn("build failed", r.stderr)
+        self.assertNotIn("[06/07]", r.stdout)
+        self.assertNotIn("セットアップ完了", r.stdout)
+        self.assertNotIn("claude --print", self.installer_calls())
+
+    def test_tty_failure_starts_coding_agent_once_per_run_with_log_path(self):
+        (self.bin / "mise").write_text("#!/bin/sh\nprintf 'fixture build failed\\n' >&2\nexit 42\n")
+        for agent, expected in [
+            ("claude", ["--print", "--permission-mode", "acceptEdits"]),
+            ("codex", ["exec", "--sandbox", "workspace-write"]),
+        ]:
+            with self.subTest(agent=agent):
+                record = self.tmp / "agent-args"
+                executable = self.bin / agent
+                executable.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" >> {shlex.quote(str(record))}\n")
+                executable.chmod(0o755)
+                r = self.run_install(platform="Linux", agent=agent, tty_input="", check=False)
+                self.assertEqual(r.returncode, 42)
+                self.assertIn(f"{agent} に修正を引き継ぎます", r.stderr)
+                observed = record.read_text()
+                self.assertEqual(observed.splitlines()[:4], [str(self.repo.resolve()), *expected])
+                self.assertEqual(observed.count("今から原因を調べ"), 1)
+                log_path = Path(next(line.split("詳細ログ: ", 1)[1].strip() for line in r.stderr.splitlines() if "詳細ログ: " in line))
+                self.assertIn(str(log_path), observed)
+                self.assertNotIn("fixture build failed", observed)
+                self.assertIn("fixture build failed", log_path.read_text())
+                record.unlink()
+
+    def test_no_repair_keeps_failure_in_terminal(self):
+        (self.bin / "mise").write_text("#!/bin/sh\nexit 42\n")
+        r = self.run_install("--no-repair", platform="Linux", agent="claude", tty_input="", check=False)
+        self.assertEqual(r.returncode, 42)
+        self.assertNotIn("修正を引き継ぎます", r.stderr)
+        self.assertNotIn("claude --print", self.installer_calls())
+
+    def test_terminal_progress_keeps_scrollback_without_alternate_screen(self):
+        (self.bin / "mise").write_text("#!/bin/sh\nprintf 'mise tmux [1/2] download\\n'\nsleep 0.3\n")
+        r = self.run_install(platform="Linux", agent="claude", tty_input="", rich=True)
+        self.assertIn("○  textlint の依存", r.stdout)
+        self.assertIn("✓  textlint の依存", r.stdout)
+        self.assertIn("mise tmux [1/2] download", r.stdout)
+        self.assertIn("setup  ·  dotfiles", r.stdout)
+        self.assertIn("━━━━━━──────", r.stdout)
+        self.assertNotIn("\x1b[?1049", r.stdout)
+        self.assertIn("セットアップ完了", r.stdout)
+
+    def test_rich_first_run_allows_arrow_keys(self):
+        r = self.run_install("--links-only", tty_input="\x1b[B\n", rich=True)
+        self.assertIn("↑↓ 選択", r.stdout)
+        self.assertEqual((self.repo / "configs/agent/cli.local").read_text(), "codex\n")
 
     def test_machine_setting_and_env_override(self):
         choice = self.home / ".config" / "dotfiles-agent-cli"
@@ -317,12 +474,13 @@ class InstallLinksOnlyTest(InstallTestCase):
         self.assertTrue((self.home / ".codex/AGENTS.md").is_file())
 
     def test_rejects_invalid_agent_before_writing(self):
-        r = self.run_install("--links-only", agent="other", check=False)
+        r = self.run_install("--links-only", agent="other --flag", check=False)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("expected claude or codex", r.stderr)
+        self.assertIn("use a single command name", r.stderr)
         self.assertEqual(list(self.home.iterdir()), [])
 
     def test_existing_codex_instructions_and_skills_survive_full_install(self):
+        (self.bin / "codex").symlink_to("/usr/bin/true")
         codex_home = self.home / "codex-profile"
         codex_home.mkdir()
         (codex_home / "AGENTS.md").write_text("mine\n")
@@ -429,7 +587,7 @@ class GitIgnoreTest(InstallTestCase):
 
 class RepositoryLayoutTest(unittest.TestCase):
     def test_global_gitignore_is_not_tracked(self):
-        root = INSTALL_SH.parent
+        root = ROOT
         self.assertTrue((root / "configs" / "git" / "ignore.shared").is_file())
         r = subprocess.run(
             ["git", "-C", str(root), "check-ignore", "-q", "--no-index", "configs/git/ignore"], check=False
@@ -437,7 +595,7 @@ class RepositoryLayoutTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "configs/git/ignore must be gitignored")
 
     def test_backups_next_to_config_files_are_not_tracked(self):
-        root = INSTALL_SH.parent
+        root = ROOT
         r = subprocess.run(
             [
                 "git", "-C", str(root), "check-ignore", "-q", "--no-index",
@@ -448,8 +606,8 @@ class RepositoryLayoutTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "*.bak.<timestamp> must be gitignored")
 
     def test_hook_scripts_are_executable_in_git(self):
-        # install.sh chmod +x every hook; a 100644 hook leaves a mode change in the checkout.
-        root = INSTALL_SH.parent
+        # The installer activates hooks; they should already be executable in the checkout.
+        root = ROOT
         r = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-s", "--", "configs/agent/hooks"],
             capture_output=True, text=True, check=True,

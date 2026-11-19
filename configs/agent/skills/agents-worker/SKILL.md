@@ -80,7 +80,7 @@ worker では確認ダイアログを出さない。ダイアログが出る場�
 - 自分の作業ブランチ（PR の無いもの、自分の draft PR のもの）への push は、聞かずにしてよい。force push はしない。
 - PR の head が `worktree-<名前>` でなく直接 push できないときは、作業ブランチのコミットで PR の head を fast-forward で進めてよい。直前に `git fetch` し、`git merge-base --is-ancestor origin/<PR の head> <コミット>` が成功したときだけ `git push origin <コミット>:<PR の head>` を実行する。fast-forward にならないときは、「要判断」を報告して止まる。
 - main に直接 push する決まりのリポジトリ（dotfiles など。リポジトリの `CLAUDE.md` を見る）では、push の前に `git fetch` して `origin/main` に rebase し、`git merge-base --is-ancestor origin/main HEAD` で `origin/main` の上に乗っていることを確かめてから、`git push origin HEAD:main` で push する。
-- worktree の外（main checkout、`~/.claude`、`~/hub` の自分の作業場所の外）は変えない。main checkout の pull は窓口がする。外で要る手順（`./install.sh --links-only`、ファイルの削除、アプリの再起動など）は、完了の報告に書く。
+- worktree の外（main checkout、`~/.claude`、`~/hub` の自分の作業場所の外）は変えない。main checkout の pull は窓口がする。外で要る手順（`./setup --links-only`、ファイルの削除、アプリの再起動など）は、完了の報告に書く。
 
 ## 外に出す文面
 
@@ -133,7 +133,7 @@ worker は 1 つのゴールで終わる。窓口は、用が済んだ worker �
   ```
 
   - 1 行目は「完了」「要判断」「送信の確認待ち」「ブロック」のどれかで始め、何の報告かを言い切る。
-  - 2 行目は「あなたの番:」で始め、ユーザーが次にやることを 1 つ書く（「窓口で問いに答える」「窓口で送信を確かめる」「`./install.sh --links-only` を実行する」「無し」など）。
+  - 2 行目は「あなたの番:」で始め、ユーザーが次にやることを 1 つ書く（「窓口で問いに答える」「窓口で送信を確かめる」「`./setup --links-only` を実行する」「無し」など）。
   - 3 行目は「資料:」で始め、PR、Slack のスレッド、チケット、成果物のファイル（`report.md` を含む）のリンクを ` / ` で並べる。中身は写さない。
   - 「決めたこと:」の項目は、何を選んだかと理由を短く書く（`- 設定は configs/x に置いた: ほかの設定と揃えるため`）。`report.md` の「決めたこと」と同じものにする。
 - 「要判断」のときは、3 行のあとに問いと選択肢を続ける。

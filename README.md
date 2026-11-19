@@ -22,12 +22,22 @@ gh auth login
 # dotfilesリポジトリの取得
 ghq get Lettuce222/dotfiles
 
-# install.shの実行
-cd "$(ghq root)/github.com/Lettuce222/dotfiles" && ./install.sh
+# リポジトリに移動
+cd "$(ghq root)/github.com/Lettuce222/dotfiles"
 ```
 
-Ubuntuではこのリポジトリを取得して `./install.sh` を実行します。
-メインの coding agent CLI は macOS では Claude Code、Ubuntu では Codex が既定です。
+macOS・Ubuntu ともに Rust 1.65 以上で、このマシン用のインストーラーをビルドします。
+リポジトリを更新したときも、同じ手順でビルドし直せます。
+
+```sh
+cargo build --locked --release --manifest-path tools/installer/Cargo.toml
+cp tools/installer/target/release/setup ./setup
+./setup
+```
+
+`./setup` は、通常の端末に工程とプログレスバーを表示します。
+生ログ表示は `./setup --plain`、失敗時のエージェント起動を止めるには `./setup --no-repair` を使えます。
+初回は Claude Code（既定）、Codex、または別のコマンドを選べます。
 fish で `agent` を実行すると起動し、`agent --which` で選択を確認できます。
 マシンごとの切り替えは [設定ガイド](docs/configuration.md#メインの-coding-agent-cli) を参照してください。
 

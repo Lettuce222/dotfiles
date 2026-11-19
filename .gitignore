@@ -24,7 +24,7 @@ configs/agent/cli.local
 configs/mise/config.toml
 
 # git - configs/git/ignore is the global gitignore that tools append to
-# (Claude Code adds **/.claude/.cc-writes/); install.sh writes the tracked
+# (Claude Code adds **/.claude/.cc-writes/); ./setup writes the tracked
 # rules from configs/git/ignore.shared into a marked block at its top
 configs/git/ignore
 
@@ -34,11 +34,15 @@ configs/hammerspoon/layouts.yml
 # Karabiner - automatic backups
 configs/karabiner/automatic_backups/
 
-# textlint - npm packages (installed by install.sh)
+# textlint - npm packages (installed by ./setup)
 configs/textlint/node_modules/
 
 # Python bytecode (tests under configs/)
 __pycache__/
+
+# Rust installer build outputs
+/setup
+tools/*/target/
 
 # Backup files (*.bak.<timestamp>: backups that tools write next to the file
 # they rewrite, e.g. configs/claude/settings.local.json.bak.20261110142011)
