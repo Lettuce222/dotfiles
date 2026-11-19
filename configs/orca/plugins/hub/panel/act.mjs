@@ -20,6 +20,9 @@ const MESSAGES = {
   refused: '窓口のターミナルが受け取りませんでした。'
 }
 
+// Every card that holds answer buttons: a worker's ask (alone or in its row) and the orchestrator's question.
+export const ANSWER_CARDS = '.card, .row-card, .orchestrator-question'
+
 export function messageOf(result) {
   if (result?.ok) return MESSAGES.ok
   return MESSAGES[result?.reason] ?? `送れませんでした（${result?.reason ?? '不明'}）。`
@@ -86,12 +89,15 @@ export function setUpActions({ view, notice, composer, request }) {
     const answer = event.target.closest('button[data-answer]')
     if (answer) {
       event.stopPropagation()
-      // The options give way to the pressed one at once; the worker's next body says how it went.
-      const card = answer.closest('.card, .row-card')
-      card.classList.add('sending')
-      answer.classList.add('chosen')
-      for (const button of card.querySelectorAll('button')) button.disabled = true
+      // The answer goes first: how the card looks must never keep it from being sent.
       void call('ask.answer', { id: answer.dataset.id, sha: answer.dataset.sha, choice: Number(answer.dataset.choice) })
+      // The options give way to the pressed one at once; the worker's next body says how it went.
+      const card = answer.closest(ANSWER_CARDS)
+      answer.classList.add('chosen')
+      if (card) {
+        card.classList.add('sending')
+        for (const button of card.querySelectorAll('button')) button.disabled = true
+      }
       return
     }
     const open = event.target.closest('button[data-say]')
