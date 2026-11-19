@@ -133,7 +133,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
-| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`） |
+| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`）、資料に1行足す（`log`） |
 | `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。ゴールを通しで進め、取り消せる判断は推奨で決めて「決めたこと」にまとめること、報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの決まり（署名を外さず、止まったら報告する）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
 | `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを、急ぎかどうかを付けて窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
@@ -159,6 +159,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。承認の記録と一致すれば通す |
 | `configs/agent/hooks/tmux-socket-guard.py` | Bashの実行前 | いつも使っているtmuxサーバーを止めるコマンドを止める |
 | `configs/agent/hooks/agent-ui-guard.py` | Bashの実行前 | 人が押すボタンやほかのセッションへの入力に届くコマンド（読むだけでないOrcaのCLI、osascriptのUI操作、cliclick、いつものtmuxサーバーへのsend-keys）を確認に回す。承認の記録があれば通す |
+| `configs/agent/hooks/asks.py` | workerが止まるときに呼ぶ | workerの問い（`decide`）と次の作業の候補（`next`）を`~/hub/state/asks/`に依頼のファイルとして書く。OrcaのHub (local)がカードにし、先に答えた1つだけが通る（`answer`・`claim`）。承認ではない |
 | `configs/agent/hooks/ask-preview-guard.py` | AskUserQuestionの前 | 全部は表示されないpreview（2000文字超え、端末に収まらない行数）と、上の返事を参照する問いを止める。`--check <file>`で下書きを確かめ、`--pages <file>`で本文をpreviewのページに分ける |
 
 #### テスト（`configs/agent/tests/`）
@@ -173,6 +174,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/tests/test_agent_ui_guard.py` | `agent-ui-guard.py`と、`approval-gate.py`がその呼び出しの記録を使わないこと |
 | `configs/agent/tests/test_ask_preview_guard.py` | `ask-preview-guard.py` |
 | `configs/agent/tests/test_cases.py` | `cases.py` |
+| `configs/agent/tests/test_asks.py` | `asks.py` |
 | `configs/agent/tests/test_agents_watch.py` | `watch.py` |
 | `configs/agent/tests/test_md_to_gdocs.py` | `md_to_gdocs.py` |
 | `configs/agent/tests/test_orchestrator.py` | `orchestrator`のペインの構成、workerがAskUserQuestionを使わないこと、workerのコミットの決まり、`agents-thread`が`agents-worker`に回すこと |
@@ -337,7 +339,7 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 | ファイル | 役割 |
 | --- | --- |
-| `configs/orca/plugins/hub/` | Hub (local)。このマシンの全部のClaude Codeのセッション（`claude --bg`のworkerと、Orcaのワークスペースを含む）のゴールと進み具合を、「あなたの番」「動いている」「待っている」「済んだ」に分けて右サイドバーに出す。`claude agents --json --all`、`~/.claude/jobs/<id>/state.json`、`~/.claude/tasks/`、`orca worktree ps`を読むだけで、セッションへの送信も許可の返答もしない（段1）。Milestone (local)のコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
+| `configs/orca/plugins/hub/` | Hub (local)。上に、開いているワークスペースのゴールとマイルストーンと、そのエージェントへのカード（次の作業・質問・許可。orca-milestoneと同じ）を出す。許可のカードはターミナルの確認のメニューに1かEscを送るだけで、外に出る呼び出しには「許可」を出さない。その下に、このマシンの全部のClaude Codeのセッション（`claude --bg`のworkerと、Orcaのワークスペースを含む）を「あなたの番」「動いている」「待っている」「済んだ」に分けて出す。workerには行の✎から指示を送れ（`claude --bg --resume`）、`asks.py`の依頼はカードになる。承認の記録は書かない。orca-milestoneのコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
 | `configs/orca/plugins/milestone/` | Milestone (local)。Orcaのターミナルで起動したClaude Codeにゴール付きのタスクを書かせ、フォーカス中のワークスペースのゴールとマイルストーンを右サイドバーに出す。見るだけで、セッションへの送信も許可の返答もしない。[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone)（MIT）から表示の部分だけを持ってきた。出典と除いた部分は`NOTICE.md`、テストは`node --test test/` |
 
 ### `docs/`

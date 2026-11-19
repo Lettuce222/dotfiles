@@ -111,6 +111,35 @@ function workspaceRow(orcaAgent, lists, home, focusedPath) {
   }
 }
 
+const FOCUSED_SESSIONS_MAX = 3
+
+/**
+ * The focused workspace as orca-milestone shows it at the top: its agent's state, the goal and tasks
+ * of its newest lists, and what its agent offers to choose from.
+ * Adapted from andoshin11/orca-milestone src/model.mjs (MIT, see ../LICENSE and ../NOTICE.md).
+ */
+function focusedView(workspace, lists, offers) {
+  if (!workspace) return { kind: 'no-workspace' }
+  const mine = lists
+    .filter((list) => list.cwd && isInside(list.cwd, workspace.path) && list.tasks.length > 0)
+    .slice(0, FOCUSED_SESSIONS_MAX)
+    .map((list) => ({ listId: list.listId, ...progress(list) }))
+  const states = workspace.agentStates ?? []
+  return {
+    kind: mine.length > 0 ? 'sessions' : 'no-tasks',
+    workspace: workspace.displayName,
+    agent: states.includes('working')
+      ? 'working'
+      : states.includes('blocked') || states.includes('waiting')
+        ? 'waiting'
+        : states.length > 0
+          ? workspace.background ? 'background' : 'idle'
+          : 'none',
+    sessions: mine,
+    next: offers.find((offer) => offer.path === workspace.path) ?? null
+  }
+}
+
 function watcherLine(agents) {
   const watcher = agents
     .filter((agent) => agent.name === WATCHER && agent.kind === 'background')
@@ -127,10 +156,12 @@ function watcherLine(agents) {
  * @param agents     [{ sessionId, id, name, kind, cwd, state, status, waitingFor, alive, startedAt, job, report }]
  * @param lists      [{ listId, cwd, goal, tasks, updatedAt }] of the running sessions that keep tasks
  * @param orcaAgents [{ workspace, repo, path, focused, state, background, since }] of `orca worktree ps`
- * @param options    { home, focusedPath, now, cards }; cards are the open asks (src/asks.mjs) with
- *   `check` (checkAsk) and `pressed`, oldest first
+ * @param options    { home, focusedPath, now, cards, focused, offers }; cards are the open asks
+ *   (src/asks.mjs) with `check` (checkAsk) and `pressed`, oldest first; focused is the focused
+ *   workspace ({ path, displayName, agentStates, background }) and offers what Orca's agents offer
+ *   (src/next-actions.mjs)
  */
-export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [] } = {}) {
+export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [] } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
   const rows = [
     ...agents
@@ -142,6 +173,7 @@ export function buildHubModel(agents, lists, orcaAgents = [], { home = null, foc
   // The focused workspace first, then the oldest wait or the newest change.
   const byFocus = (a, b) => Number(b.focused) - Number(a.focused)
   return {
+    focused: focusedView(focused, lists, offers),
     cards: cards.map((card) => ({ ...card, where: shortPath(card.cwd, home) })),
     attention: group('attention').toSorted((a, b) => byFocus(a, b) || a.since - b.since),
     working: group('working').toSorted((a, b) => byFocus(a, b) || b.since - a.since),

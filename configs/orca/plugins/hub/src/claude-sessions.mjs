@@ -2,7 +2,7 @@
 // transcripts (~/.claude/projects/<project>/<session-id>.jsonl) they belong to.
 //
 // Adapted from andoshin11/orca-milestone src/claude-sessions.mjs (MIT, see ../LICENSE and
-// ../NOTICE.md). Left out: reading a pending AskUserQuestion or permission call for the cards.
+// ../NOTICE.md).
 //
 // A plain session names its list by its session id. A session that leads an agent team
 // (`claude --teammate-mode`, which Orca's Agent Teams launch uses) names it after the team,
@@ -400,6 +400,28 @@ async function readTail(path) {
   }
 }
 
+/** The last tool call that matches, from the lines of a transcript, while it has no result yet. */
+function pendingToolUse(text, matches) {
+  const answered = new Set()
+  for (const line of text.split('\n').toReversed()) {
+    if (!line.includes('tool_')) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      // The tail can begin in the middle of a line.
+      continue
+    }
+    const content = Array.isArray(entry.message?.content) ? entry.message.content : []
+    for (const part of content.toReversed()) {
+      if (part?.type === 'tool_result') answered.add(part.tool_use_id)
+      // With the folder the shell was in, which a command that does not change it runs in.
+      if (part?.type === 'tool_use' && matches(part)) return answered.has(part.id) ? null : { ...part, cwd: typeof entry.cwd === 'string' ? entry.cwd : undefined }
+    }
+  }
+  return null
+}
+
 /**
  * Whether the last turn in a transcript is over: Claude Code writes `turn_duration` when a turn ends,
  * and a prompt or a tool result after it starts another; the summary of a compaction does not. Orca
@@ -423,6 +445,18 @@ export function turnEnded(text) {
     if (entry.type === 'user' || entry.type === 'assistant') return null
   }
   return null
+}
+
+/** The AskUserQuestion call without a result. Only the last counts: an earlier one was abandoned. */
+export function pendingQuestion(text) {
+  const part = pendingToolUse(text, (candidate) => candidate.name === 'AskUserQuestion')
+  return part ? { toolUseId: part.id, questions: part.input?.questions ?? [] } : null
+}
+
+/** The last tool call in a transcript, when it has no result yet: the one waiting for permission. */
+export function pendingCall(text) {
+  const part = pendingToolUse(text, () => true)
+  return part ? { toolUseId: part.id, name: part.name, input: part.input ?? {}, ...(part.cwd ? { cwd: part.cwd } : {}) } : null
 }
 
 /**

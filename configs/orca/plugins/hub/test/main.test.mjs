@@ -24,7 +24,7 @@ test('registers the commands and events declared in the manifest, and starts not
   })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
-  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send'], 'no handler that answers a permission or approves')
+  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send'], 'no handler that writes an approval')
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
 })
 
@@ -35,7 +35,7 @@ test('a Claude launch gets the task tools and the instructions, and nothing else
   assert.ok(decided.command.startsWith("claude --append-system-prompt 'The user follows"))
   assert.ok(decided.command.includes('metadata: {"goal":'))
   assert.ok(!decided.command.includes('--settings'), 'no settings: the user hooks decide every permission')
-  assert.ok(!decided.command.includes('info string is next'), 'no buttons that type into the session')
+  assert.ok(decided.command.includes('info string is next'), 'the next steps become buttons in the panel')
   assert.ok(!decided.command.includes('\n'), 'typed into a terminal, where a newline is Enter')
   assert.equal(decided.command.match(/'/g).length, 2, 'the instructions hold no quote of their own')
 })
@@ -64,10 +64,11 @@ test('withTaskInstructions keeps the command line and leaves existing instructio
   }
 })
 
-// The plugin acts on a session only by handing a worker text (src/deliver.mjs): it never answers a
-// permission, never writes an approval, never runs gh or git and never reaches the network. These
-// scan the code for the paths that were left out on purpose, so that a later edit cannot bring one
-// back unnoticed.
+// The plugin acts on a session only by handing a worker text (src/deliver.mjs) and by typing a
+// pressed card into an Orca terminal the way a person would (src/next-actions.mjs). It never answers
+// a permission through a hook, never allows the rest of a turn, never writes an approval, never runs
+// gh or git and never reaches the network. These scan the code for the paths that were left out on
+// purpose, so that a later edit cannot bring one back unnoticed.
 function sources() {
   const files = []
   for (const dir of ['', 'src', 'panel']) {
@@ -81,12 +82,11 @@ function sources() {
 const CODE_ONLY = (text) => text.replace(/^\s*(\/\/|\*|\/\*).*$/gm, '')
 
 const FORBIDDEN = [
-  [/['"]send['"]/, 'orca terminal send'],
   [/['"]create['"]/, 'orca terminal create'],
   [/PermissionRequest/, 'a permission decision'],
   [/behavior\s*:/, 'a permission decision'],
   [/--settings/, 'settings on the command line'],
-  [/next\.send|sendNext|grant/i, 'the cards that act on a session'],
+  [/grant|allow-rest/i, 'allowing the rest of a turn'],
   [/['"]gh['"]|\/gh['"]/, 'gh'],
   [/['"](push|git)['"]/, 'git'],
   [/approvals\.py|state\/approvals/, 'an approval record'],
@@ -101,11 +101,10 @@ function findForbidden(text) {
 
 test('the scanner flags each path that was left out, and not a comment about it', () => {
   const samples = {
-    "run(['terminal', 'send', '--text', x])": 'orca terminal send',
     "run(['terminal', 'create', '--command', c])": 'orca terminal create',
     "const out = { decision: { behavior: 'allow' } }": 'a permission decision',
     "return `claude --settings '${json}'`": 'settings on the command line',
-    "orca.panels.handle('next.send', f)": 'the cards that act on a session',
+    "await grantRest(found.sessionId)": 'allowing the rest of a turn',
     "run('gh', ['pr', 'comment'])": 'gh',
     "run(git, ['push', 'origin'])": 'git',
     "join(home, '.claude', 'hooks', 'approvals.py')": 'an approval record',
@@ -116,8 +115,23 @@ test('the scanner flags each path that was left out, and not a comment about it'
   assert.deepEqual(findForbidden('// no orca terminal send, no --settings, no fetch(url)'), [])
 })
 
-test('no code drives a terminal through the CLI, answers a permission, approves, adds settings or reaches the network', () => {
-  for (const [file, text] of sources()) assert.deepEqual(findForbidden(text), [], file)
+test('no code answers a permission through a hook, approves, adds settings or reaches the network', () => {
+  for (const [file, text] of sources()) {
+    // src/risk.mjs names gh and git to tell what a waiting command does; it runs nothing (see the
+    // test of which files spawn).
+    const found = findForbidden(text).filter((what) => !(file === join('src', 'risk.mjs') && ['gh', 'git'].includes(what)))
+    assert.deepEqual(found, [], file)
+  }
+})
+
+test('only src/next-actions.mjs types into an Orca terminal, and only 1, Esc, an answer or a prompt', () => {
+  const typing = sources()
+    .filter(([, source]) => /['"]send['"]/.test(CODE_ONLY(source)))
+    .map(([file]) => file)
+  assert.deepEqual(typing, [join('src', 'next-actions.mjs')])
+  const text = CODE_ONLY(readFileSync(join(root, 'src', 'next-actions.mjs'), 'utf8'))
+  assert.match(text, /const ALLOW_ONCE_KEY = '1'/)
+  assert.doesNotMatch(text, /['"]2['"]|['"]3['"]/, 'never the options that allow for good or switch modes')
 })
 
 test('the Orca CLI is only asked to read', () => {
@@ -155,9 +169,9 @@ test('what the panel runs to act is the short list of src/deliver.mjs', () => {
   }
 })
 
-test('the manifest asks for no more than the upstream plugin (terminal:send for the next steps), and the license stays', () => {
+test('the manifest asks for no more than the upstream plugin, and the license stays', () => {
   assert.equal(manifest.license, 'MIT')
-  assert.deepEqual(manifest.capabilities.map((c) => c.kind).sort(), ['agent:read', 'terminal:send', 'workspace:read', 'workspace:write'])
+  assert.deepEqual(manifest.capabilities.map((c) => c.kind).sort(), ['agent:read', 'workspace:read', 'workspace:write'])
   assert.match(readFileSync(join(root, 'LICENSE'), 'utf8'), /Copyright \(c\) 2026 andoshin11/)
   assert.match(readFileSync(join(root, 'NOTICE.md'), 'utf8'), /637620c/)
 })

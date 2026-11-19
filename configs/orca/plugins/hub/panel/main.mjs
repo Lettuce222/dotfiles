@@ -4,11 +4,11 @@
 // stopped as idle, which would end its watch on the task lists.
 //
 // Adapted from andoshin11/orca-milestone panel/main.mjs (MIT, see ../LICENSE and ../NOTICE.md).
-// Left out: the cards of orca-milestone (panel/next.mjs), which answered permission prompts.
 // Added: a row of a hub worker opens its report, and the cards of the asks workers write
 // (panel/act.mjs).
 import { setUpActions } from './act.mjs'
 import { scrollExpandedRows } from './expand.mjs'
+import { sendOnPress } from './next.mjs'
 import { openOnPress } from './open.mjs'
 import { patchChildren } from './patch.mjs'
 
@@ -21,11 +21,14 @@ let loaded = false
 
 const { plugin } = window.orca
 const view = document.getElementById('view')
+// Declared before the first body arrives, since each one restores what the user picked in a form.
+const presses = sendOnPress(view, (request) => plugin.request('next.send', request))
 
 plugin.on('view.changed', ({ html }) => {
   pushes += 1
   loaded = true
   patchChildren(view, html)
+  presses.restore()
 })
 
 async function load() {
@@ -33,7 +36,10 @@ async function load() {
   try {
     const { html } = await plugin.request('view.get')
     // A post that arrived while this was on its way is newer.
-    if (pushes === seen) patchChildren(view, html)
+    if (pushes === seen) {
+      patchChildren(view, html)
+      presses.restore()
+    }
     loaded = true
   } catch (error) {
     console.warn(`hub: view.get failed: ${error.code ?? error.message}`)

@@ -1,8 +1,9 @@
 // Renders the Hub model to the HTML of the panel's body. It carries no clock, so the same model gives
 // the same bytes and the worker posts only real changes. The styles are in panel/style.css.
 //
-// The row and task markup is adapted from andoshin11/orca-milestone src/render.mjs (MIT, see
-// ../LICENSE and ../NOTICE.md).
+// The focused workspace, its cards and the row and task markup are adapted from
+// andoshin11/orca-milestone src/render.mjs (MIT, see ../LICENSE and ../NOTICE.md). Left out: the
+// restart card and the list of what "the rest of this turn" allowed.
 
 const GOAL_MAX = 160
 const DETAIL_MAX = 160
@@ -114,6 +115,76 @@ function renderCards(cards) {
 <ol class="card-list">${cards.map(renderCard).join('')}</ol></div>`
 }
 
+const PROMPT_LINES_MAX = 300
+const RISK_LABELS = { read: '読むだけ', write: '書き換える', outside: '外に出る' }
+const AGENT_LABELS = { working: '作業中', waiting: '入力待ち', idle: '待機中', background: '待機中（裏で実行中）', none: '' }
+
+function renderSession(session) {
+  const percent = session.total === 0 ? 0 : Math.round((session.done / session.total) * 100)
+  const goal = session.goal ? `<p class="goal">${escape(clip(session.goal, GOAL_MAX))}</p>` : ''
+  // The key tells the panel this is another list, which it shows at once instead of animating.
+  const key = escape(`${session.listId}\n${clip(session.goal ?? '', GOAL_MAX)}`)
+  return `<section data-key="${key}">${goal}<div class="count"><span>マイルストーン</span><strong>${session.done} / ${session.total}</strong></div>
+<div class="bar"><div style="width:${percent}%"></div></div>
+<ol>${session.tasks.map(renderTask).join('')}</ol></section>`
+}
+
+function offerCard(offerId, index, label, lines, extra = '') {
+  const body = lines.filter(([, text]) => text).map(([kind, text]) => `<span class="${kind}">${escape(text)}</span>`).join('')
+  return `<li><button type="button" class="action" data-next="${escape(offerId)}" data-index="${index}"${extra}><span class="label">${escape(label)}</span>${body}</button></li>`
+}
+
+function renderForm(offer) {
+  const questions = offer.questions.map((question, position) => {
+    const options = question.options.map((option, index) =>
+      `<li><button type="button" class="action option" data-form="${escape(offer.id)}" data-question="${position}" data-option="${index}" data-multi="${question.multiSelect ? '1' : '0'}"><span class="label">${escape(option.label)}</span>${option.detail ? `<span class="detail">${escape(option.detail)}</span>` : ''}</button></li>`
+    )
+    const hint = question.multiSelect ? '<p class="hint">複数選択できます</p>' : ''
+    return `<div class="question"><p class="ask">${escape(question.question)}</p>${hint}<ol class="actions">${options.join('')}</ol></div>`
+  })
+  return `${questions.join('')}<button type="button" class="submit" data-submit="${escape(offer.id)}" data-count="${offer.questions.length}" disabled>回答を送信</button>`
+}
+
+/** What the focused agent offers: its next steps, its question or a tool waiting for permission. */
+function renderNext(offer) {
+  if (!offer) return ''
+  let heading
+  let body
+  if (offer.kind === 'form') {
+    heading = '<h2>質問に答える</h2>'
+    body = renderForm(offer)
+  } else if (offer.kind === 'question') {
+    heading = '<h2>質問に答える</h2>'
+    const cards = offer.suggestions.map((s, index) => offerCard(offer.id, index, s.label, [['detail', s.detail]]))
+    body = `<p class="ask">${escape(offer.question)}</p><ol class="actions">${cards.join('')}</ol>`
+  } else if (offer.kind === 'permission') {
+    const risk = offer.dangerous ? '<span class="danger">危険なコマンド</span>' : RISK_LABELS[offer.risk] ? `<span class="risk ${escape(offer.risk)}">${RISK_LABELS[offer.risk]}</span>` : ''
+    heading = `<h2>許可の確認${risk}</h2>`
+    const cards = offer.suggestions.map((s, index) =>
+      offerCard(offer.id, index, s.label, [['detail', s.detail]], s.action === 'allow' && offer.dangerous ? ' data-dangerous="1"' : '')
+    )
+    const where = offer.where ? `<p class="where">場所: ${escape(offer.where)}</p>` : ''
+    const only = offer.terminalOnly ? '<p class="hint">外に出る操作です。許可は、ターミナルの確認で中身を全部読んでから押してください。</p>' : ''
+    body = `<p class="ask">${escape(offer.question)}</p>${where}${only}<ol class="actions">${cards.join('')}</ol>`
+  } else {
+    heading = '<h2>次の作業<span>選ばなくても構いません</span></h2>'
+    const cards = offer.suggestions.map((s, index) => offerCard(offer.id, index, s.label, [['reason', s.reason], ['prompt', clip(s.prompt, PROMPT_LINES_MAX)]]))
+    body = `<ol class="actions">${cards.join('')}</ol>`
+  }
+  // Another offer is another set of cards: it replaces the old one without a transition.
+  return `<div class="next ${escape(offer.kind)}" data-key="${escape(`next\n${offer.id}`)}">${heading}${body}</div>`
+}
+
+function renderFocused(focused) {
+  if (!focused || focused.kind === 'no-workspace') return ''
+  const agent = AGENT_LABELS[focused.agent] ?? ''
+  const header = `<header><h1>${escape(focused.workspace)}</h1><span class="agent ${escape(focused.agent)}">${agent}</span></header>`
+  const body = focused.kind === 'no-tasks'
+    ? '<p class="empty">このワークスペースのエージェントはまだタスクを作っていません。</p>'
+    : focused.sessions.map(renderSession).join('')
+  return `<div class="focused">${header}${body}${renderNext(focused.next)}</div>`
+}
+
 function renderWatcher(watcher) {
   if (!watcher) return ''
   const detail = watcher.detail ? `: ${escape(clip(watcher.detail, DETAIL_MAX))}` : ''
@@ -122,6 +193,7 @@ function renderWatcher(watcher) {
 
 export function renderHub(model) {
   const groups = [
+    renderFocused(model.focused),
     renderCards(model.cards),
     renderGroup('あなたの番', model.attention, 'attention'),
     renderGroup('動いている', model.working, 'working'),

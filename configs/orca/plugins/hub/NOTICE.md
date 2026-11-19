@@ -1,6 +1,6 @@
 # Hub (local)
 
-Orca の右サイドバーに、このマシンの全部の Claude Code のセッション（`claude --bg` の worker、窓口などの対話のセッション、Orca のワークスペースのエージェント）を、ゴールと進み具合とともに出す plugin。今は見るだけで、セッションには何も送らない（段 1）。
+Orca の右サイドバーに、開いているワークスペースのゴールとタスク（orca-milestone と同じ見た目）と、このマシンの全部の Claude Code のセッション（`claude --bg` の worker、窓口などの対話のセッション、Orca のワークスペースのエージェント）の一覧を出す plugin。開いているワークスペースのエージェントには、orca-milestone と同じカード（次の作業・質問・許可）で答えられる。worker には、行の ✎ から指示を送れる（`claude --bg --resume`）。
 
 ## 出典
 
@@ -10,21 +10,25 @@ Orca の右サイドバーに、このマシンの全部の Claude Code のセ�
 
 | ファイル | 元 | 手を入れたところ |
 | --- | --- | --- |
-| `main.mjs` | `main.mjs` | `next.send` の受け口を外し、`report.open` の受け口と `claude` の CLI を足した |
-| `src/launch-hook.mjs` | `src/launch-hook.mjs` | Milestone (local) と同じ（タスクの指示と `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` だけ） |
-| `src/claude-sessions.mjs` | `src/claude-sessions.mjs` | Milestone (local) と同じ |
-| `src/orca-cli.mjs` | `src/orca-cli.mjs` | Milestone (local) と同じ |
+| `main.mjs` | `main.mjs` | `report.open`・`ask.answer`・`session.send` の受け口と `claude` の CLI を足した |
+| `src/launch-hook.mjs` | `src/launch-hook.mjs` | タスクの指示と `next` のブロックの指示（「電話のボタン」を「サイドバーのボタン」に直した）。Codex の MCP は外した |
+| `src/claude-sessions.mjs` | `src/claude-sessions.mjs` | そのまま |
+| `src/orca-cli.mjs` | `src/orca-cli.mjs` | CLI の場所の探し方を Orca 1.4.262 の Helper に合わせた |
+| `src/next-actions.mjs` | `src/next-actions.mjs` | 「このターンの残りも許可」、再開のカード、Codex の許可のメニューを外した。外に出る呼び出し（gh の書き込み、MCP の書き込み）には「許可」のカードを出さない。preview の付いた質問（窓口の承認の問い）にはカードを出さない |
+| `src/risk.mjs`・`src/dangerous.mjs` | 同じ名前 | そのまま |
+| `panel/next.mjs` | `panel/next.mjs` | そのまま |
 | `src/hub-worker.mjs` | `src/milestone-worker.mjs` | `claude agents --json --all` とジョブの状態（`~/.claude/jobs/<id>/state.json`）を読み、全部のセッションを 1 つの一覧にする。hub の worker の `report.md` を開く |
-| `src/hub-render.mjs` | `src/render.mjs` | 行とタスクの書き方を写し、「あなたの番」「動いている」「待っている」「済んだ」の節にした |
-| `panel/` | `panel/` | `next.mjs` とカードのスタイルを外した。行から `report.md` を開けるようにした |
-| `test/` | `test/` | 残したコードのテストを持ってきた。`main.test.mjs` は書き直し、`hub.test.mjs` を足した |
+| `src/hub-render.mjs` | `src/render.mjs` | 開いているワークスペースとカードはそのまま、ほかは「あなたの番」「動いている」「待っている」「済んだ」の節にした |
+| `src/hub-model.mjs` | `src/model.mjs` | 開いているワークスペースの組み立てを写し、全部のセッションの一覧を足した |
+| `panel/` | `panel/` | 行から `report.md` を開けるようにし、worker のカードと指示の入力欄（`act.mjs`）を足した。中身を `#view` に描くようにした |
+| `test/` | `test/` | 残したコードのテストを持ってきた（jsdom に頼るものは除いた）。`main.test.mjs` は書き直し、`hub.test.mjs` を足した |
 
-新しく書いたもの: `src/claude-agents.mjs`（`claude agents` とジョブの状態を読む）、`src/hub-model.mjs`（一覧の組み立て）。
+新しく書いたもの: `src/claude-agents.mjs`（`claude agents` とジョブの状態を読む）、`src/asks.mjs`（worker が `asks.py` で書く依頼を読む）、`src/deliver.mjs`（worker に `claude --bg --resume` で文を届ける）、`panel/act.mjs`。
 
 ## 持ってこなかったもの
 
-- `src/permission-hook.mjs`、`src/turn-grant.mjs`、`src/dangerous.mjs`、`src/risk.mjs`: 許可をまとめて返す仕組み。許可は `~/.claude/settings.json` の hook とユーザーだけが決める。
-- `src/next-actions.mjs`、`panel/next.mjs`、`src/restart.mjs`: `orca terminal send` でセッションに打ち込む仕組み。段 2 で、窓口と同じ安全の仕組みを通す形で作り直す予定。
+- `src/permission-hook.mjs`、`src/turn-grant.mjs`: 「このターンの残りも許可」。PermissionRequest の hook で許可を返すので、hook が確認を求めた呼び出し（外に出す文面など）を、人が読まずに通してしまう。許可のカードは、ターミナルの確認のメニューに 1 か Esc を送るものだけにした（人がそのメニューで押すのと同じ）。
+- `src/restart.mjs`: 古い指示のセッションを起動し直すカード。要らない。
 - `src/progress-server.mjs`、`src/codex-progress.mjs`: Codex 用。
 - iPhone・Apple Watch の連携（[agent-status-panel](https://github.com/andoshin11/agent-status-panel)）は元から別のリポジトリで、使わない。
 

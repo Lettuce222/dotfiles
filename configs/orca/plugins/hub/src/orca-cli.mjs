@@ -1,13 +1,14 @@
 // Asks the Orca CLI which workspace is focused and what every agent is doing. The host
 // API's workspace.readContext gives only a branch and a display name, which several repositories
-// can share, and it says nothing about other workspaces, so both come from here. Only read
-// commands are run (`worktree ps`, `terminal list`); nothing is sent to a terminal.
+// can share, and it says nothing about other workspaces, so both come from here, with what each
+// agent offers to choose from (src/next-actions.mjs). Only read commands are run here (`worktree ps`,
+// `terminal list`); sending a pressed card is src/next-actions.mjs.
 //
 // Adapted from andoshin11/orca-milestone src/orca-cli.mjs (MIT, see ../LICENSE and ../NOTICE.md).
-// Left out: the offers (next steps, questions, permissions) read for the cards.
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { offersOf } from './next-actions.mjs'
 
 /**
  * The CLI bundled with the Orca app that runs this worker, else `orca` on PATH. The worker runs one
@@ -113,16 +114,18 @@ export async function settleAgents(worktrees, readTurnEnded) {
 }
 
 /**
- * The focused workspace ({ path, displayName, agentStates, background }, or null) and the main
- * agents of every workspace that is not archived.
- * @param readers `readTurnEnded`, see settleAgents, and `readTerminals`, see joinTeams
+ * The focused workspace ({ path, displayName, agentStates, background }, or null), the main agents of
+ * every workspace that is not archived, and what each agent offers to choose from: its proposed next
+ * steps, its question or the tool waiting for permission.
+ * @param readers how to read a pending question or call and a pane's screen, see offersOf,
+ *   `readTurnEnded`, see settleAgents, and `readTerminals`, see joinTeams
  */
 export async function readWorkspaces(cli, run = runOrca, readers = {}) {
   const response = await run(cli, ['worktree', 'ps', '--limit', '1000', '--json'])
   if (!response?.ok) {
     throw new Error(response?.error?.message ?? 'orca worktree ps failed')
   }
-  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [] } = readers
+  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [], ...offerReaders } = readers
   let listed = response.result.worktrees.filter((worktree) => !worktree.isArchived)
   if (mayHoldTeam(listed)) listed = joinTeams(listed, await readTerminals().catch(() => []))
   const worktrees = await settleAgents(listed, readTurnEnded)
@@ -146,6 +149,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
         background: agent.background === true,
         since: agent.stateStartedAt ?? null
       }))
-    )
+    ),
+    offers: await offersOf(worktrees, offerReaders)
   }
 }

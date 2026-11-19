@@ -39,12 +39,6 @@
     "hooks": [
       {
         "event": "agent.launch.before"
-      },
-      {
-        "event": "terminal.send"
-      },
-      {
-        "event": "agent.prompt.before"
       }
     ]
   },
@@ -57,9 +51,6 @@
     },
     {
       "kind": "workspace:write"
-    },
-    {
-      "kind": "terminal:send"
     }
   ]
 }

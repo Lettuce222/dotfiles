@@ -25,8 +25,11 @@ import {
   readTaskList,
   readTranscriptHead,
   createPendingReader,
+  pendingCall,
+  pendingQuestion,
   turnEnded
 } from './claude-sessions.mjs'
+import { createNextSender, readPaneScreen } from './next-actions.mjs'
 import { buildHubModel, isInside } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { renderHub, renderLoading } from './hub-render.mjs'
@@ -90,10 +93,20 @@ export function createHubWorker({
   let agents = []
   let sessions = []
   let sessionsAt = 0
+  let offers = []
+  const runArgs = (args, timeout) => runCli(cli, args, timeout)
+  // A question or a call waiting for permission is read from the transcript of Claude's session.
   const readers = {
+    readQuestion: createPendingReader(home, pendingQuestion),
+    readCall: createPendingReader(home, pendingCall),
+    readPane: (paneKey) => readPaneScreen(runArgs, paneKey),
     // Orca calls an agent working while its background shells run, even after its turn.
     readTurnEnded: createPendingReader(home, turnEnded)
   }
+  const sendOffer = createNextSender({
+    readOffers: async () => (await readOrca(cli, runCli, readers)).offers ?? [],
+    run: runArgs
+  })
   let lastHtml = null
   let started = null
   let timer = null
@@ -261,7 +274,9 @@ export function createHubWorker({
   async function refreshOnce(askOrca) {
     if (askOrca || !workspace) {
       try {
-        ;({ active: workspace, agents } = await readOrca(cli, runCli, readers))
+        let found
+        ;({ active: workspace, agents, offers: found } = await readOrca(cli, runCli, readers))
+        offers = found ?? []
       } catch (error) {
         orca.log(`hub: could not read the workspaces: ${error.message}`)
       }
@@ -277,7 +292,7 @@ export function createHubWorker({
     const lists = await allSessions()
     asks = await readAsks(asksDir)
     const cards = asks.map((ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.has(ask.id) }))
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards })))
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, focused: workspace, offers })))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -349,6 +364,18 @@ export function createHubWorker({
     }
   }
 
+  /** Sends a pressed card of an Orca agent (src/next-actions.mjs); the panel shows what went wrong. */
+  async function sendNext(request) {
+    try {
+      const result = await sendOffer(request)
+      if (result.sent) schedule(true)
+      return result
+    } catch (error) {
+      orca.log(`hub: could not send the card: ${error.message}`)
+      return { sent: false, reason: 'failed' }
+    }
+  }
+
   /** A line a person wrote to a worker from its row. */
   async function sendToSession({ sessionId, text } = {}) {
     const body = cleanText(text)
@@ -382,5 +409,5 @@ export function createHubWorker({
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession }
+  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext }
 }
