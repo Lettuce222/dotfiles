@@ -45,7 +45,6 @@ import importlib.util
 import json
 import os
 import re
-import signal
 import sys
 from pathlib import Path
 
@@ -58,8 +57,6 @@ import asks  # noqa: E402
 RECORD_WRITE = re.compile(r"approvals\.py\b(?:(?![;&|\n]).)*\badd\b|state/approvals\b")
 ANSWER_WRITE = re.compile(r"asks\.py\b(?:(?![;&|\n]).)*\b(?:answer|claim)\b|\.answer\.json\b")
 PANEL_ANSWER = re.compile(r"asks\.py\b(?:(?![;&|\n]).)*\banswer\b(?:(?![;&|\n]).)*--by(?:=|\s+)['\"]?panel\b|\.answer\.json\b")
-PERMISSION_WAIT = 120
-PERMISSION_WAIT_RANGE = (1, 540)
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHOWN_LIMIT = 300
 
@@ -155,61 +152,6 @@ def emit(event, body):
     json.dump({"hookSpecificOutput": {"hookEventName": event, **body}}, sys.stdout, ensure_ascii=False)
 
 
-def permission_wait():
-    try:
-        seconds = float(os.environ.get("AGENT_PERMISSION_WAIT") or PERMISSION_WAIT)
-    except ValueError:
-        seconds = PERMISSION_WAIT
-    low, high = PERMISSION_WAIT_RANGE
-    return min(max(seconds, low), high)
-
-
-def denied_in_panel(reason):
-    lines = [
-        "Hub パネルでユーザーがこの操作を拒否しました。",
-        "別の手で回り込まずに、必要なら窓口でユーザーに聞いてください。",
-    ]
-    if reason:
-        lines.append(f"拒否の理由: {reason}")
-    return "\n".join(lines)
-
-
-class Stopped(Exception):
-    pass
-
-
-def ask_panel(data, entry):
-    """The panel's decision on the orchestrator's dialog, or None to leave it to the terminal."""
-    wait = permission_wait()
-    try:
-        written = asks.new_permission(
-            entry, data.get("tool_name") or "", data.get("tool_input") or {}, wait,
-            agent_type=data.get("agent_type"), permission_mode=data.get("permission_mode"),
-        )
-    except (OSError, asks.AskError):
-        return None
-    if not written:
-        return None
-    path, sha = written
-
-    def stop(signum, frame):
-        raise Stopped()
-
-    previous = signal.signal(signal.SIGTERM, stop)
-    try:
-        got = asks.wait_permission(path, sha, wait)
-    except (Stopped, KeyboardInterrupt, OSError):
-        got = None
-    finally:
-        asks.remove(path)
-        signal.signal(signal.SIGTERM, previous)
-    if not got or got["choice"] not in ("allow", "deny"):
-        return None
-    if got["choice"] == "allow":
-        return {"behavior": "allow"}
-    return {"behavior": "deny", "message": denied_in_panel(got.get("text"))}
-
-
 def on_permission(data, panel=False):
     tool_name = data.get("tool_name") or ""
     tool_input = data.get("tool_input") or {}
@@ -225,7 +167,7 @@ def on_permission(data, panel=False):
         )
         return 0
     if panel and approvals.is_orchestrator(entry):
-        decision = ask_panel(data, entry)
+        decision = asks.panel_decision(entry, data)
         if decision:
             emit("PermissionRequest", {"decision": decision})
     return 0

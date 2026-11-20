@@ -111,7 +111,11 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 
 ### 窓口の確認ダイアログをパネルで答える
 
-窓口の確認ダイアログ（auto modeが決められなかったBashなど）を、OrcaのHub (local)のパネルでも答えられるようにする。`approval-gate.py permission --panel`で有効になり、`--panel`が無ければ何もしない。
+窓口の確認ダイアログ（auto modeが決められなかったBashなど）を、OrcaのHub (local)のパネルでも答えられるようにする。hookは2つあり、どちらも`--panel`を付けたときだけ動く。
+
+- `agent-ui-guard.py --panel`（`PreToolUse`）: 窓口の呼び出しを確認に回す前にパネルで待ち、許可なら`allow`、拒否なら`deny`を返す。答えが無いときだけ`ask`を返してダイアログを出す。`PreToolUse`のhookが終わるまでダイアログは出ないので、パネルで答えればターミナルには出ない。今の窓口のダイアログの多くはこのhookの`ask`から出る
+- `approval-gate.py permission --panel`（`PermissionRequest`）: ダイアログと並んで動く（2.1.329の実機で、待つあいだもダイアログが同時に出た。ダイアログを待たせる設定は無い）。先に答えたほうが使われる。上と両方を付けると、時間切れのあとに同じ呼び出しのカードがもう一度出るので、どちらか一方にする
+- 外に出る呼び出し（`external-post-guard.py`の確認）はパネルで許可できないので、パネルで待たずにすぐダイアログにする
 
 - 窓口（`claude agents --json`の名前が`orchestrator`）で、AskUserQuestionとExitPlanMode以外の呼び出しのダイアログが出るとき、hookは呼び出しの全体（`tool_name`と`tool_input`）を`~/hub/state/asks/<id>.json`に`kind: permission`の依頼として書き、答えのファイルを0.5秒おきに見て待つ。待ち時間は120秒で、環境変数`AGENT_PERMISSION_WAIT`で1〜540秒に変えられる。終わるとき（打ち切られたときも）依頼と答えのファイルを消す
 - パネルは依頼を「許可の確認」のカードにし、コマンドや書く中身を省かずに、見えない文字も見える形で出す。ボタンは「許可（今回だけ）」「拒否」「理由を書いて拒否」「ターミナルで確かめる」。外に出る呼び出しには許可を出さず、危険なコマンドの許可は2回押す。押すとパネルが`asks.py`の`answer`に`--by panel`と`--shown <sha256>`を付けて、答え（`allow`・`deny`・`terminal`）を書く。窓口のターミナルには何も打たない

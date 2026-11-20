@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -236,6 +237,87 @@ class AgentUiGuardTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         self.assertEqual(len(self.records()), 1)
         self.assertEqual(self.decision(command), "allow")
+
+
+class PanelFirstTest(unittest.TestCase):
+    """--panel: 窓口の止めた呼び出しを、ダイアログの前に Hub パネルで聞く（PreToolUse で待つ）。"""
+
+    COMMAND = "orca hub-permission-test"
+
+    def setUp(self):
+        AgentUiGuardTest.setUp(self)
+        self.asks_dir = self.root / "asks"
+        self.env["AGENT_ASKS_DIR"] = str(self.asks_dir)
+        self.env["AGENT_PERMISSION_WAIT"] = "5"
+        sys.path.insert(0, str(HOOKS))
+        import importlib
+        self.asks = importlib.import_module("asks")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def start(self, command=COMMAND, session=ORCH, panel=True):
+        proc = subprocess.Popen(
+            [sys.executable, str(HOOK), *(["--panel"] if panel else [])],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True,
+        )
+        proc.stdin.write(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "session_id": session}))
+        proc.stdin.close()
+        return proc
+
+    def written(self, proc):
+        for _ in range(200):
+            found = [p for p in self.asks_dir.glob("*.json") if not p.name.endswith(".answer.json")] if self.asks_dir.is_dir() else []
+            if found:
+                return found[0]
+            if proc.poll() is not None:
+                self.fail(proc.stderr.read())
+            time.sleep(0.05)
+        self.fail("no ask was written")
+
+    def answer(self, path, choice, text=None):
+        import hashlib
+        from unittest import mock
+        shown = hashlib.sha256(path.read_bytes()).hexdigest()
+        with mock.patch.dict(os.environ, {"AGENT_ASKS_DIR": str(self.asks_dir)}):
+            self.assertEqual(self.asks.answer(path.stem, "panel", choice, shown, text=text, panel_check=lambda: True)[0], 0)
+
+    def finish(self, proc):
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0, err)
+        return json.loads(out)["hookSpecificOutput"]
+
+    def test_the_panel_answers_before_any_dialog(self):
+        proc = self.start()
+        path = self.written(proc)
+        self.assertEqual(json.loads(path.read_text())["tool_input"], {"command": self.COMMAND})
+        self.answer(path, "allow")
+        self.assertEqual(self.finish(proc)["permissionDecision"], "allow")
+        proc = self.start()
+        self.answer(self.written(proc), "deny", text="まだ")
+        out = self.finish(proc)
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("まだ", out["permissionDecisionReason"])
+        self.assertEqual(list(self.asks_dir.glob("*.json")), [])
+
+    def test_without_an_answer_the_dialog_asks(self):
+        proc = self.start()
+        self.answer(self.written(proc), "terminal")
+        self.assertEqual(self.finish(proc)["permissionDecision"], "ask")
+        self.env["AGENT_PERMISSION_WAIT"] = "1"
+        proc = self.start()
+        self.written(proc)
+        self.assertEqual(self.finish(proc)["permissionDecision"], "ask")
+
+    def test_only_the_orchestrator_with_panel_waits(self):
+        for session, panel in ((WORKER, True), (ORCH, False)):
+            r = self.finish(self.start(session=session, panel=panel))
+            self.assertEqual(r["permissionDecision"], "ask", (session, panel))
+        self.assertFalse(self.asks_dir.exists() and list(self.asks_dir.glob("*.json")))
+        # A command the guard lets through never reaches the panel.
+        proc = self.start(command="orca status")
+        out, _ = proc.communicate(timeout=30)
+        self.assertEqual(out.strip(), "")
 
 
 if __name__ == "__main__":

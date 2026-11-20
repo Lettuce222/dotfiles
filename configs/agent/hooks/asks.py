@@ -384,6 +384,73 @@ def wait_permission(path, sha, wait, poll=PERMISSION_POLL, clock=time.monotonic,
         sleep(poll)
 
 
+PERMISSION_WAIT = 120
+PERMISSION_WAIT_RANGE = (1, 540)
+
+
+def permission_wait():
+    """Seconds a hook waits on the panel: AGENT_PERMISSION_WAIT, 120 by default."""
+    try:
+        seconds = float(os.environ.get("AGENT_PERMISSION_WAIT") or PERMISSION_WAIT)
+    except ValueError:
+        seconds = PERMISSION_WAIT
+    low, high = PERMISSION_WAIT_RANGE
+    return min(max(seconds, low), high)
+
+
+def denied_in_panel(reason):
+    lines = [
+        "Hub パネルでユーザーがこの操作を拒否しました。",
+        "別の手で回り込まずに、必要なら窓口でユーザーに聞いてください。",
+    ]
+    if reason:
+        lines.append(f"拒否の理由: {reason}")
+    return "\n".join(lines)
+
+
+class _Stopped(Exception):
+    pass
+
+
+def panel_decision(entry, data):
+    """Ask the panel about the orchestrator's call in a hook's input and wait for its answer.
+
+    {"behavior": "allow"} or {"behavior": "deny", "message": …}, or None when the terminal should
+    ask (terminal pressed, no answer in time, an answer that does not fit, any error). The ask is
+    removed when this returns, and when the hook is stopped (SIGTERM).
+    """
+    import signal
+
+    wait = permission_wait()
+    try:
+        written = new_permission(
+            entry, data.get("tool_name") or "", data.get("tool_input") or {}, wait,
+            agent_type=data.get("agent_type"), permission_mode=data.get("permission_mode"),
+        )
+    except (OSError, AskError):
+        return None
+    if not written:
+        return None
+    path, sha = written
+
+    def stop(signum, frame):
+        raise _Stopped()
+
+    previous = signal.signal(signal.SIGTERM, stop)
+    try:
+        got = wait_permission(path, sha, wait)
+    except (_Stopped, KeyboardInterrupt, OSError):
+        got = None
+    finally:
+        remove(path)
+        signal.signal(signal.SIGTERM, previous)
+    if not got or got["choice"] not in ("allow", "deny"):
+        return None
+    if got["choice"] == "allow":
+        return {"behavior": "allow"}
+    return {"behavior": "deny", "message": denied_in_panel(got.get("text"))}
+
+
 def cmd_decide(args):
     options = [parse_option(o) for o in args.option]
     if not 2 <= len(options) <= 4:

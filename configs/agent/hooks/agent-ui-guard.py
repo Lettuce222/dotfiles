@@ -21,6 +21,11 @@ own operation. This hook stops the commands that do that, in every session:
     `tmux -C`), on the server everyone works in. `-L` and `-S` pick another
     server, so tests that use them pass.
 
+With --panel, a stopped command of the orchestrator is first asked in the Hub
+panel (asks.panel_decision), up to AGENT_PERMISSION_WAIT seconds: the panel's
+allow or deny is returned, and only without one does the hook ask, so the
+terminal shows no dialog while the panel can still answer.
+
 When a command is stopped, a one-shot approval for this exact call and this
 session (approvals.py) lets it through once, as for gh writes. Without one the
 hook asks: a person sees the dialog in an interactive session, and in a worker
@@ -278,7 +283,27 @@ def take_approval(data):
     return approvals.take(data.get("tool_name"), data.get("tool_input") or {}, data.get("session_id"))
 
 
-def main():
+def ask_panel(data):
+    """With --panel, the orchestrator's call goes to the Hub panel before the dialog.
+
+    A PreToolUse hook finishes before the dialog shows, so while this waits the terminal shows
+    nothing. The panel's allow or deny is returned; None leaves the call to the dialog.
+    """
+    sys.path.insert(0, str(HERE))
+    sys.dont_write_bytecode = True
+    try:
+        import approvals
+        import asks
+    except ImportError:
+        return None
+    entry = approvals.session_entry(data.get("session_id"))
+    if not approvals.is_orchestrator(entry):
+        return None
+    return asks.panel_decision(entry, data)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     try:
         data = json.load(sys.stdin)
     except ValueError:
@@ -299,6 +324,13 @@ def main():
         "人が押すボタンや、ほかのセッションへの入力に届く操作です（" + "、".join(dict.fromkeys(found)) + "）。"
         "エージェントが自分の操作を承認できないように止めています。実行してよいか、人が確かめてください。"
     )
+    decision = ask_panel(data) if "--panel" in argv else None
+    if decision and decision["behavior"] == "allow":
+        decide("allow", "Hub パネルでユーザーが許可しました（今回だけ）。")
+        return 0
+    if decision:
+        decide("deny", decision["message"])
+        return 0
     decide("ask", reason + (f"\n\n（{why}）" if why else ""))
     return 0
 
