@@ -7,6 +7,7 @@ import { WATCHER, buildHubModel } from '../src/hub-model.mjs'
 import { renderHub } from '../src/hub-render.mjs'
 import { createHubWorker } from '../src/hub-worker.mjs'
 import { SESSION_A, SESSION_B, makeHome, task, writeTasks, writeTranscript } from './helpers.mjs'
+import { renderMarkdown as md } from '../src/markdown.mjs'
 
 const HOME = '/Users/me'
 
@@ -160,7 +161,7 @@ test('a project shows its TODO with dates and marks, what it waits for, and link
   const html = renderHub(model)
   assert.ok(html.includes('<div class="project-head" role="button" tabindex="0" data-report="/h/hub/state/cases/orca-setup.md"><span class="name">Orca</span>'))
   assert.ok(html.includes('<span class="badge">あなたの番 1</span>'))
-  assert.ok(html.includes('<span class="due overdue">過ぎた 11/18</span>資料 を読む'))
+  assert.ok(html.includes('<span class="due overdue">過ぎた 11/18</span><span class="md-link">資料</span> を読む'))
   assert.ok(html.includes('<span class="due today">今日 11/19</span><span class="bang">!</span>出す'))
   assert.ok(html.includes('レビュー待ち<span class="then"> → 直す</span>'))
   assert.ok(html.includes('<p class="quiet">TODO も待ちもありません</p>'))
@@ -253,8 +254,8 @@ test('what a session says is never cut: in full when it needs the user, and in t
   )
   const html = renderHub(model)
   const [attention, done] = html.split('<div class="group idle">')
-  assert.ok(attention.includes(`<div class="sub">${long}</div>`), 'the need in full')
-  assert.ok(done.includes(`<p class="said">${long}</p>`), 'the expansion has the whole line')
+  assert.ok(attention.includes(`<div class="sub md-sub">${md(long)}</div>`), 'the need in full')
+  assert.ok(done.includes(`<div class="said">${md(long)}</div>`), 'the expansion has the whole line')
   assert.ok(done.includes('<p class="where">~/hub/workers/impl-b</p>'), 'the place moved off the name line')
   assert.ok(!html.includes('<span class="repo">'))
 })
@@ -272,7 +273,7 @@ test('the focused workspace shows its own agent, not the workers working inside 
 test('cards are shaped as orca-milestone draws them, and the panel has their styles', async () => {
   const offer = { kind: 'permission', id: 'o1', path: '/w', question: 'Bash を許可しますか？ touch a', risk: 'write', where: '', dangerous: false, suggestions: [{ label: '許可', action: 'allow', detail: '今回だけ実行します' }] }
   const html = renderHub(buildHubModel([], [], [], { focused: { path: '/w', displayName: 'w', agentStates: ['waiting'] }, offers: [offer] }))
-  assert.ok(html.includes('<button type="button" class="action" data-next="o1" data-index="0"><span class="label">許可</span><span class="detail">今回だけ実行します</span></button>'))
+  assert.ok(html.includes(`<button type="button" class="action" data-next="o1" data-index="0"><span class="label">許可</span><span class="detail">${md('今回だけ実行します')}</span></button>`))
   const { readFile } = await import('node:fs/promises')
   const css = await readFile(join(import.meta.dirname, '..', 'panel', 'style.css'), 'utf8')
   // The label and its line sit one under the other only with these.

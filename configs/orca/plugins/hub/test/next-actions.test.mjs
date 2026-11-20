@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { createNextSender, nextOffer, parseSuggestions } from '../src/next-actions.mjs'
 import { buildHubModel } from '../src/hub-model.mjs'
 import { renderHub } from '../src/hub-render.mjs'
+import { renderMarkdown as md } from '../src/markdown.mjs'
 
 // orca-milestone's model and render, in the Hub's terms: the focused workspace with its cards.
 const buildModel = (focused, lists, agents = [], offers = []) => buildHubModel([], lists, agents, { focused, offers })
@@ -110,7 +111,7 @@ test('the focused workspace shows its offer as cards, escaped, under its tasks',
   const html = renderBody(buildModel({ path: '/work/app', displayName: 'app', agentStates: ['done'] }, sessions, [], [offer]))
   assert.ok(html.includes(`data-next="${offer.id}" data-index="0"`))
   assert.ok(html.includes('&lt;b&gt;直す&lt;/b&gt;'))
-  assert.ok(html.includes('<span class="reason">理由 &amp; 背景</span>'))
+  assert.ok(html.includes(`<span class="reason">${md('理由 & 背景')}</span>`))
   assert.ok(html.indexOf('class="next proposal"') > html.indexOf('<ol><li class="completed">'), 'under the tasks')
   const elsewhere = renderBody(buildModel({ path: '/work/other', displayName: 'other', agentStates: [] }, [], [], [offer]))
   assert.ok(!elsewhere.includes('data-next'), 'only the focused workspace')

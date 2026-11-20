@@ -16,7 +16,7 @@ const MESSAGES = {
   'resume-failed': 'worker に届けられませんでした。',
   invalid: '送れない内容です（空、長すぎる、見えない文字がある）。',
   asking: '窓口が問いや確認の途中なので、届けませんでした。',
-  'no-orchestrator': '窓口が見つかりません。',
+  'no-orchestrator': '窓口（名前が orchestrator の claude）が動いていません。',
   refused: '窓口のターミナルが受け取りませんでした。'
 }
 
@@ -25,6 +25,8 @@ export const ANSWER_CARDS = '.card, .row-card, .orchestrator-question'
 
 export function messageOf(result) {
   if (result?.ok) return MESSAGES.ok
+  // The worker of the plugin says why, when it knows better than a reason's word.
+  if (typeof result?.message === 'string' && result.message) return result.message
   return MESSAGES[result?.reason] ?? `送れませんでした（${result?.reason ?? '不明'}）。`
 }
 

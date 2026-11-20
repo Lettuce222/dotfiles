@@ -9,6 +9,7 @@ import { buildHubModel } from '../src/hub-model.mjs'
 import { renderHub } from '../src/hub-render.mjs'
 import { createHubWorker } from '../src/hub-worker.mjs'
 import { makeHome } from './helpers.mjs'
+import { renderMarkdown as md } from '../src/markdown.mjs'
 
 const ID = '20261119-160000-deadbeef'
 const SESSION = 'sess-worker'
@@ -66,8 +67,8 @@ test('the ask shows inside its worker row, which waits for the user, with every 
   const start = html.indexOf('<div class="group attention">')
   const next = html.indexOf('<div class="group', start + 1)
   const row = html.slice(start, next === -1 ? undefined : next)
-  assert.ok(row.includes('<p class="ask">設定をどこに置きますか</p>'))
-  assert.ok(row.includes(`data-answer data-id="${ID}" data-sha="${'f'.repeat(64)}" data-choice="1"><span class="label">1. configs/x<span class="recommended">推奨</span></span><span class="detail">configs/x に置く</span>`))
+  assert.ok(row.includes(`<div class="ask">${md('設定をどこに置きますか')}</div>`))
+  assert.ok(row.includes(`data-answer data-id="${ID}" data-sha="${'f'.repeat(64)}" data-choice="1"><span class="label">1. configs/x<span class="recommended">推奨</span></span><span class="detail">${md('configs/x に置く')}</span>`))
   assert.ok(row.includes(`class="action other" data-say="${SESSION}" data-name="impl-x" data-ask="${ID}"`))
 })
 

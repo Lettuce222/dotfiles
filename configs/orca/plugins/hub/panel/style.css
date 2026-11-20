@@ -119,8 +119,7 @@ code { font-size: 12px; }
 .action:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: 1px; }
 .action .label { font-weight: 600; }
 .action .reason { font-size: 12px; }
-.action .prompt { font-size: 11px; color: var(--orca-muted-foreground);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.action .prompt { font-size: 11px; color: var(--orca-muted-foreground); max-height: 4.5em; overflow: hidden; }
 .next.busy .action, .next.busy .submit { cursor: default; }
 .next.busy .action:not(.sending) { opacity: 0.55; }
 .next.settling .action, .next.settling .submit { opacity: 0.55; cursor: default; }
@@ -225,7 +224,10 @@ button { font: inherit; color: inherit; }
 /* The orchestrator's question, in full. */
 .orchestrator-question { padding: 10px 12px; margin-bottom: 12px; border: 1px solid color-mix(in oklch, var(--ms-todo) 55%, transparent);
   border-radius: 10px; background: var(--orca-card); }
-.orchestrator-question .preview.body { max-height: 50vh; overflow: auto; margin: 0 0 8px; }
+.orchestrator-question .body { max-height: 50vh; overflow: hidden auto; overscroll-behavior: contain; margin: 0 0 8px; padding: 6px 8px;
+  border-radius: 6px; background: color-mix(in oklch, var(--orca-foreground) 5%, transparent); }
+.orchestrator-question.kept { border-color: var(--orca-border); }
+.orchestrator-question .action.sent { cursor: default; background: color-mix(in oklch, var(--ms-todo) 12%, var(--orca-card)); }
 .orchestrator-question .ask.full { white-space: pre-wrap; overflow-wrap: anywhere; }
 .orchestrator-question .q-header { display: inline-block; margin-bottom: 4px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700;
   color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
@@ -244,6 +246,30 @@ button { font: inherit; color: inherit; }
 #composer .actions { display: flex; flex-direction: row; justify-content: flex-end; align-items: center; gap: 6px; }
 #composer .actions .keys { margin-right: auto; font-size: 11px; color: var(--orca-muted-foreground); }
 #composer button { padding: 2px 10px; border: 1px solid var(--orca-border); border-radius: 4px; background: var(--orca-card); cursor: pointer; }
+/* Markdown (src/markdown.mjs). Long lines wrap; a list item's wrapped lines start under its text,
+   not under its marker. A newline of the text, an item and a paragraph each leave a gap that a wrap
+   does not, so the two are told apart. */
+.md { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.md > * + *, .md-body > * + *, .md-quote > * + * { margin-top: 6px; }
+.md-p { display: flex; flex-direction: column; gap: 3px; }
+.md-line { min-width: 0; }
+.md-list { display: flex; flex-direction: column; gap: 3px; }
+.md-item { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 2px; }
+.md-marker { min-width: 1em; color: var(--orca-muted-foreground); font-variant-numeric: tabular-nums; }
+.md-ordered > .md-item > .md-marker { min-width: 1.4em; padding-right: 2px; text-align: right; }
+.md-body { min-width: 0; }
+.md-h { font-weight: 700; }
+.md-quote { padding-left: 8px; border-left: 3px solid var(--ms-track); color: var(--orca-muted-foreground); }
+/* Inline code also in a project's lines, which are inline Markdown without a block around them. */
+.md code, .project code { padding: 0 3px; border-radius: 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: color-mix(in oklch, var(--orca-foreground) 8%, transparent); }
+.md-code { margin: 0; padding: 6px 8px; border-radius: 6px; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in oklch, var(--orca-foreground) 6%, transparent); }
+.md-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.md-table th, .md-table td { padding: 2px 6px; border: 1px solid var(--orca-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.md-rule { margin: 6px 0; border: 0; border-top: 1px solid var(--orca-border); }
+.md-link { text-decoration: underline; text-decoration-color: var(--ms-track); text-underline-offset: 2px; }
+.action .detail .md, .action .reason .md { font-weight: 400; }
 @media (prefers-reduced-motion: reduce) {
   .action { transition: none; }
   .bar > div, li, li .mark, li .strike, .row > .detail { transition: none; }

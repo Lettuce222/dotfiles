@@ -36,7 +36,7 @@ import { actionText, latestAction } from './case-actions.mjs'
 import { createOrchestratorChannel } from './orchestrator.mjs'
 import { buildHubModel, isInside } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
-import { renderHub, renderLoading } from './hub-render.mjs'
+import { ORCHESTRATOR_FAILURES, renderHub, renderLoading } from './hub-render.mjs'
 
 const TASK_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 // Events say when the focus or an agent changes. This catches what they do not, such as a session
@@ -48,6 +48,8 @@ const REQUEST_RETRY_MS = 30_000
 const AGENTS_MIN_MS = 5_000
 const REPORT_NAME = 'report.md'
 const CASES_MAX_MS = 60_000
+// How often a kept answer is told again while the orchestrator cannot take it.
+const RESIGNAL_MS = 30_000
 
 /** 11/19 */
 function dayOf(ms) {
@@ -91,6 +93,12 @@ export function createHubWorker({
   // second press does nothing. Asks whose answer could not be delivered, with why, until pressed again.
   const pressed = new Map()
   const failures = new Map()
+  // Answers to the orchestrator's questions that are written but that the orchestrator was not told
+  // of, by ask id, with why. The answer file stays (the orchestrator's list of asks shows it
+  // answered), and the panel tells the orchestrator again once it can take a line.
+  const unsignaled = new Map()
+  let signalling = null
+  let signalledAt = -Infinity
   const paths = claudePaths(home)
   const { tasksRoot } = paths
   // Transcript heads never change once written; null entries are retried on the next refresh.
@@ -342,8 +350,41 @@ export function createHubWorker({
     asks = await readAsks(asksDir)
     const shownAsk = (ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null })
     const cards = asks.filter((ask) => ask.kind !== 'question').map(shownAsk)
-    const orchestratorAsks = asks.filter((ask) => ask.kind === 'question').map(shownAsk)
+    const orchestratorAsks = [
+      ...[...unsignaled.values()].map((entry) => ({ ...entry, kept: true })),
+      ...asks.filter((ask) => ask.kind === 'question').map(shownAsk)
+    ]
     publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
+  }
+
+  async function exists(name) {
+    return stat(join(asksDir, name)).then(() => true, () => false)
+  }
+
+  /** Tells the orchestrator of the answers it was not told of, one try at a time. */
+  function resignal() {
+    if (signalling || unsignaled.size === 0 || now() - signalledAt < RESIGNAL_MS) return signalling
+    signalledAt = now()
+    signalling = (async () => {
+      for (const entry of [...unsignaled.values()]) {
+        // Closed, or its answer given back: there is nothing left to tell.
+        if (!(await exists(`${entry.id}.json`)) || !(await exists(`${entry.id}.answer.json`))) {
+          unsignaled.delete(entry.id)
+          continue
+        }
+        const sent = await orchestrator.send(entry.id, { signal: true }).catch(() => ({ sent: false, reason: 'failed' }))
+        if (sent.sent) {
+          unsignaled.delete(entry.id)
+          orca.log(`hub: told the orchestrator of the kept answer to ${entry.id}`)
+        } else {
+          unsignaled.set(entry.id, { ...entry, reason: sent.reason })
+        }
+      }
+    })().finally(() => {
+      signalling = null
+      schedule()
+    })
+    return signalling
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -360,6 +401,7 @@ export function createHubWorker({
         pendingFocus = false
         try {
           await refreshOnce(focus)
+          void resignal()
         } catch (error) {
           orca.log(`hub: refresh failed: ${error.message}`)
         }
@@ -444,8 +486,12 @@ export function createHubWorker({
     if (taken !== 'taken') return fail(taken)
     const sent = await orchestrator.send(ask.id, { signal: true })
     if (!sent.sent) {
-      await deliver.release(asksDir, ask)
-      return fail(sent.reason)
+      // The answer is written and stays: only telling the orchestrator is tried again.
+      unsignaled.set(ask.id, { id: ask.id, question: ask.question, label, reason: sent.reason })
+      signalledAt = now()
+      orca.log(`hub: the answer to ${ask.id} is kept; the orchestrator was not told yet: ${sent.reason}`)
+      const why = ORCHESTRATOR_FAILURES[sent.reason] ?? ORCHESTRATOR_FAILURES.failed
+      return { ok: false, reason: 'kept', message: `答えは残しました。まだ窓口に知らせられていません: ${why} 窓口が受け取れるようになったら、パネルが自動で知らせます。` }
     }
     orca.log(`hub: answered the orchestrator's question ${ask.id} (${written ? 'written' : `option ${choice}`})`)
     await deliver.log({ ask: ask.id, worker: ask.worker, card: 'question', approval: ask.approval, choice: written ? 'written' : choice, label, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
@@ -494,7 +540,11 @@ export function createHubWorker({
       caseSending.set(slug, written ? `指示: ${written}` : line.slice(line.lastIndexOf(': ') + 2))
       schedule()
       const sent = await sendToOrchestrator(line)
-      if (!sent.sent) return fail(sent.reason)
+      if (!sent.sent) {
+        const result = fail(sent.reason)
+        const why = ORCHESTRATOR_FAILURES[sent.reason]
+        return why ? { ...result, message: `窓口に届けられませんでした: ${why}` } : result
+      }
       orca.log(`hub: delivered the action for ${slug} to the orchestrator`)
       await deliver.log({ case: slug, card: 'case', kind, item: text, ...(written ? { text: written } : { choice }) })
       return { ok: true }
@@ -547,5 +597,5 @@ export function createHubWorker({
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase }
+  return { start, refresh, resignal, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase }
 }

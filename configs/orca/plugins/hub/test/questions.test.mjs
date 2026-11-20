@@ -5,6 +5,7 @@ import { pendingCall, pendingQuestion } from '../src/claude-sessions.mjs'
 import { answerKeys, createNextSender, isDangerous, offersOf, questionButtons, questionForm } from '../src/next-actions.mjs'
 import { buildHubModel } from '../src/hub-model.mjs'
 import { renderHub } from '../src/hub-render.mjs'
+import { renderMarkdown as md } from '../src/markdown.mjs'
 
 // orca-milestone's model and render, in the Hub's terms: the focused workspace with its cards.
 const buildModel = (focused, lists, agents = [], offers = []) => buildHubModel([], lists, agents, { focused, offers })
@@ -145,7 +146,7 @@ test('the panel shows a question, a form and a permission in their own cards', a
   const focused = { path: '/work/app', displayName: 'app', agentStates: ['waiting'] }
   const show = async (agent, readers) => renderBody(buildModel(focused, [], [], await offersOf([worktree([agent])], readers)))
   const question = await show(waiting(), { readQuestion: async () => ask([single({ question: '<いつ>' })]) })
-  assert.ok(question.includes('<p class="ask">&lt;いつ&gt;</p>'))
+  assert.ok(question.includes(`<div class="ask">${md('<いつ>')}</div>`))
   assert.ok(question.includes('data-index="1"'))
   const form = await show(waiting(), { readQuestion: async () => ask([single({ multiSelect: true }), single()]) })
   assert.ok(form.includes('複数選択できます'))

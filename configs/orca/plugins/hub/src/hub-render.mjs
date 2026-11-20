@@ -6,6 +6,7 @@
 // restart card and the list of what "the rest of this turn" allowed.
 
 import { CHOICES, latestAction } from './case-actions.mjs'
+import { plainText, renderInline, renderMarkdown } from './markdown.mjs'
 
 const GOAL_MAX = 160
 const DETAIL_MAX = 160
@@ -56,8 +57,13 @@ function renderRow(row) {
   const focused = row.focused ? ' focused' : ''
   // What the session says, never cut: in full on a row that needs the user, in at most two lines on
   // the others, whose expansion then shows it in full.
-  const line = row.step ?? row.detail
-  const sub = line ? `<div class="sub">${row.step ? '▶ ' : ''}${escape(clip(line, FULL_MAX))}</div>` : ''
+  const sub = row.step
+    ? `<div class="sub">▶ ${escape(clip(row.step, FULL_MAX))}</div>`
+    : row.detail
+      ? row.state === 'attention'
+        ? `<div class="sub md-sub">${renderMarkdown(cut(row.detail, FULL_MAX))}</div>`
+        : `<div class="sub">${escape(clip(plainText(row.detail), FULL_MAX))}</div>`
+      : ''
   const say = row.say ? `<button type="button" class="say" data-say="${escape(row.say)}" data-name="${escape(row.name)}" title="指示を書く">✎</button>` : ''
   const head = `<div class="top">${mark}<span class="name" title="${escape(row.name)}">${escape(row.name)}</span>${kind}${STATE_BADGES[row.state] ?? ''}${of}${say}</div>${sub}${bar}`
   const key = escape(`${row.key}\n${clip(row.goal ?? '', GOAL_MAX)}`)
@@ -67,7 +73,7 @@ function renderRow(row) {
     : `<div class="head">${head}</div>`
   const where = row.where && row.where !== row.name ? `<p class="where">${escape(row.where)}</p>` : ''
   // A step hides what the session last said, and a clamped line may hide its end.
-  const said = row.detail && (row.step || row.state !== 'attention') ? `<p class="said">${escape(clip(row.detail, FULL_MAX))}</p>` : ''
+  const said = row.detail && (row.step || row.state !== 'attention') ? `<div class="said">${renderMarkdown(cut(row.detail, FULL_MAX))}</div>` : ''
   const goal = row.goal ? `<p class="goal">${escape(clip(row.goal, GOAL_MAX))}</p>` : ''
   const tasks = row.tasks.length > 0 ? `<ol>${row.tasks.map(renderTask).join('')}</ol>` : ''
   const ask = row.card ? renderRowCard(row.card, row.name) : row.state === 'attention' ? renderNoAsk(row) : ''
@@ -77,9 +83,10 @@ function renderRow(row) {
 <div class="detail"><div class="inner">${where}${said}${goal}${tasks}</div></div></li>`
 }
 
-/** Markdown links shown as their labels: the panel shows a case's lines as text. */
-function plain(value) {
-  return String(value).replace(/\[([^\]]+)\]\([^)\s]+\)/g, '$1')
+/** At most `max` characters, the lines kept: Markdown is rendered from what is left. */
+function cut(text, max) {
+  const value = String(text).trim()
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
 function dueLabel(item) {
@@ -92,30 +99,38 @@ function dueLabel(item) {
 
 function renderTodo(item) {
   const bang = item.bang ? '<span class="bang">!</span>' : ''
-  return `<li class="todo"><span class="mark">○</span><span class="text">${dueLabel(item)}${bang}${escape(plain(item.text))}</span></li>`
+  return `<li class="todo"><span class="mark">○</span><span class="text">${dueLabel(item)}${bang}${renderInline(item.text)}</span></li>`
 }
 
 function renderWaiting(item) {
-  const next = item.next ? `<span class="then"> → ${escape(plain(item.next))}</span>` : ''
-  return `<li class="waiting"><span class="mark">…</span><span class="text">${escape(plain(item.text))}${next}</span></li>`
+  const next = item.next ? `<span class="then"> → ${renderInline(item.next)}</span>` : ''
+  return `<li class="waiting"><span class="mark">…</span><span class="text">${renderInline(item.text)}${next}</span></li>`
+}
+
+export const ORCHESTRATOR_FAILURES = {
+  busy: '窓口が応答中のまま、3 分待っても終わりませんでした。',
+  covered: '窓口のターミナルでエディタなど別の画面が開いたまま、3 分待っても閉じませんでした。',
+  asking: '窓口が問いや確認の途中です。窓口の画面で答えてからにしてください。',
+  'no-orchestrator': '窓口（名前が orchestrator の claude）が動いていません。',
+  'many-orchestrators': '名前が orchestrator の claude が 2 つ以上あり、どれが窓口か決められません。',
+  'not-in-orca': '窓口が Orca のターミナルの中に見つかりません。',
+  'not-in-hub': '窓口のターミナルが hub のワークスペースに無いか、書き込めません。',
+  refused: '窓口のターミナルが受け取りませんでした。',
+  failed: '届けるときに失敗しました。'
 }
 
 const ACTION_FAILURES = {
-  busy: '窓口が作業を終えないので、届けられませんでした。もう一度押してください。',
-  asking: '窓口が問いや確認の途中なので、届けませんでした。窓口の画面で答えてから押してください。',
-  'no-orchestrator': '窓口（hub のワークスペースの orchestrator）が見つかりません。',
+  ...ORCHESTRATOR_FAILURES,
   stale: 'このアクションは変わりました。出し直したものを見てください。',
-  refused: '窓口のターミナルが受け取りませんでした。',
-  invalid: '届けられない指示です。',
-  failed: '届けるときに失敗しました。'
+  invalid: '届けられない指示です。'
 }
 
 /** The latest action in full, with what the orchestrator can be asked to do about it. */
 function renderLatest(project, action) {
   const key = escape(`latest\n${project.slug}\n${action.kind}\n${action.text}`)
   const mark = action.kind === 'todo' ? `${dueLabel(action)}${action.bang ? '<span class="bang">!</span>' : ''}` : '<span class="wait-mark">待ち</span>'
-  const then = action.kind === 'waiting' && action.next ? `<span class="then"> → ${escape(plain(action.next))}</span>` : ''
-  const text = `<p class="latest-text">${mark}${escape(plain(action.text))}${then}</p>`
+  const then = action.kind === 'waiting' && action.next ? `<span class="then"> → ${renderInline(action.next)}</span>` : ''
+  const text = `<p class="latest-text">${mark}${renderInline(action.text)}${then}</p>`
   if (project.sending) {
     return `<div class="latest next sending" data-key="${key}">${text}<div class="action sent"><span class="label">${escape(project.sending)}</span><span class="detail">窓口に届けています…</span></div></div>`
   }
@@ -124,7 +139,7 @@ function renderLatest(project, action) {
     .map((c) => `<li><button type="button" class="chip" data-case-act ${data} data-choice="${c.id}" title="${c.detail}"><span class="label">${c.label}</span></button></li>`)
     .join('')
   const write = `<li><button type="button" class="chip other" data-case-write ${data} data-name="${escape(project.short)}" title="こうしてほしい、を窓口に届ける"><span class="label">指示を書く…</span></button></li>`
-  const failure = project.failure ? `<p class="status">${ACTION_FAILURES[project.failure] ?? ACTION_FAILURES.failed}</p>` : ''
+  const failure = project.failure ? `<p class="status">届けられませんでした: ${ACTION_FAILURES[project.failure] ?? ACTION_FAILURES.failed}</p>` : ''
   return `<div class="latest next" data-key="${key}">${text}<ol class="choices">${choices}${write}</ol>${failure}</div>`
 }
 
@@ -168,7 +183,7 @@ const CHECK_NOTES = {
 }
 
 function lineSpans(lines) {
-  return lines.filter(([, text]) => text).map(([kind, text]) => `<span class="${kind}">${escape(text)}</span>`).join('')
+  return lines.filter(([, text]) => text).map(([kind, text]) => `<span class="${kind}">${renderMarkdown(text)}</span>`).join('')
 }
 
 function answerButton(card, choice, label, lines, recommended) {
@@ -188,7 +203,7 @@ function cardBody(card) {
     `<li>${card.check.ok ? answerButton(card, choice, label, lines, recommended) : plainOption(choice, label, lines)}</li>`
   if (card.kind === 'decide') {
     const options = card.options.map((option, index) => item(index + 1, option.label, [['detail', option.description]], card.recommended === index + 1)).join('')
-    return `<p class="ask">${escape(card.question)}</p><ol class="actions">${options}</ol>`
+    return `<div class="ask">${renderMarkdown(card.question)}</div><ol class="actions">${options}</ol>`
   }
   const steps = card.suggestions.map((step, index) => item(index + 1, step.label, [['reason', step.reason], ['detail', step.prompt]], false)).join('')
   return `<ol class="actions">${steps}</ol>`
@@ -234,7 +249,7 @@ function renderRowCard(card, name) {
   // Pressed: the options give way to the answer, until it reaches the worker or fails.
   if (card.pressed !== null && card.pressed !== undefined) {
     const answer = card.pressed ? `<span class="label">${escape(card.pressed)}</span>` : ''
-    return `<div class="row-card next sending" data-key="${key}"><p class="ask">${escape(card.question ?? '')}</p><div class="action sent">${answer}<span class="detail">届けています…（worker が今の作業を終えるのを待ってから届けます）</span></div></div>`
+    return `<div class="row-card next sending" data-key="${key}"><div class="ask">${renderMarkdown(card.question ?? '')}</div><div class="action sent">${answer}<span class="detail">届けています…（worker が今の作業を終えるのを待ってから届けます）</span></div></div>`
   }
   const note = card.check.ok ? '' : `<p class="note">${CHECK_NOTES[card.check.reason] ?? ''}</p>`
   const body = card.check.reason === 'level' ? '' : cardBody(card).replace(/<\/ol>$/, `${otherAnswer(card, name)}</ol>`)
@@ -273,17 +288,17 @@ function renderSession(session) {
 }
 
 function offerCard(offerId, index, label, lines, extra = '') {
-  const body = lines.filter(([, text]) => text).map(([kind, text]) => `<span class="${kind}">${escape(text)}</span>`).join('')
+  const body = lineSpans(lines)
   return `<li><button type="button" class="action" data-next="${escape(offerId)}" data-index="${index}"${extra}><span class="label">${escape(label)}</span>${body}</button></li>`
 }
 
 function renderForm(offer) {
   const questions = offer.questions.map((question, position) => {
     const options = question.options.map((option, index) =>
-      `<li><button type="button" class="action option" data-form="${escape(offer.id)}" data-question="${position}" data-option="${index}" data-multi="${question.multiSelect ? '1' : '0'}"><span class="label">${escape(option.label)}</span>${option.detail ? `<span class="detail">${escape(option.detail)}</span>` : ''}</button></li>`
+      `<li><button type="button" class="action option" data-form="${escape(offer.id)}" data-question="${position}" data-option="${index}" data-multi="${question.multiSelect ? '1' : '0'}"><span class="label">${escape(option.label)}</span>${option.detail ? `<span class="detail">${renderMarkdown(option.detail)}</span>` : ''}</button></li>`
     )
     const hint = question.multiSelect ? '<p class="hint">複数選択できます</p>' : ''
-    return `<div class="question"><p class="ask">${escape(question.question)}</p>${hint}<ol class="actions">${options.join('')}</ol></div>`
+    return `<div class="question"><div class="ask">${renderMarkdown(question.question)}</div>${hint}<ol class="actions">${options.join('')}</ol></div>`
   })
   return `${questions.join('')}<button type="button" class="submit" data-submit="${escape(offer.id)}" data-count="${offer.questions.length}" disabled>回答を送信</button>`
 }
@@ -299,7 +314,7 @@ function renderNext(offer) {
   } else if (offer.kind === 'question') {
     heading = '<h2>質問に答える</h2>'
     const cards = offer.suggestions.map((s, index) => offerCard(offer.id, index, s.label, [['detail', s.detail]]))
-    body = `<p class="ask">${escape(offer.question)}</p><ol class="actions">${cards.join('')}</ol>`
+    body = `<div class="ask">${renderMarkdown(offer.question)}</div><ol class="actions">${cards.join('')}</ol>`
   } else if (offer.kind === 'permission') {
     const risk = offer.dangerous ? '<span class="danger">危険なコマンド</span>' : RISK_LABELS[offer.risk] ? `<span class="risk ${escape(offer.risk)}">${RISK_LABELS[offer.risk]}</span>` : ''
     heading = `<h2>許可の確認${risk}</h2>`
@@ -308,10 +323,10 @@ function renderNext(offer) {
     )
     const where = offer.where ? `<p class="where">場所: ${escape(offer.where)}</p>` : ''
     const only = offer.terminalOnly ? '<p class="hint">外に出る操作です。許可は、ターミナルの確認で中身を全部読んでから押してください。</p>' : ''
-    body = `<p class="ask">${escape(offer.question)}</p>${where}${only}<ol class="actions">${cards.join('')}</ol>`
+    body = `<div class="ask">${renderMarkdown(offer.question)}</div>${where}${only}<ol class="actions">${cards.join('')}</ol>`
   } else {
     heading = '<h2>次の作業<span>選ばなくても構いません</span></h2>'
-    const cards = offer.suggestions.map((s, index) => offerCard(offer.id, index, s.label, [['reason', s.reason], ['prompt', clip(s.prompt, PROMPT_LINES_MAX)]]))
+    const cards = offer.suggestions.map((s, index) => offerCard(offer.id, index, s.label, [['reason', s.reason], ['prompt', cut(s.prompt, PROMPT_LINES_MAX)]]))
     body = `<ol class="actions">${cards.join('')}</ol>`
   }
   // Another offer is another set of cards: it replaces the old one without a transition.
@@ -322,12 +337,21 @@ function renderNext(offer) {
 // question the user approves is hidden.
 const HIDDEN = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad]/g
 
+function reveal(html) {
+  return html.replace(HIDDEN, (c) => `<span class="hidden-char">⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩</span>`)
+}
+
 function visible(value) {
-  return escape(value).replace(HIDDEN, (c) => `<span class="hidden-char">⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩</span>`)
+  return reveal(escape(value))
+}
+
+/** Markdown, with every character that does not show made visible. */
+function visibleMarkdown(value) {
+  return reveal(renderMarkdown(value))
 }
 
 function optionBody(option) {
-  const description = option.description ? `<span class="detail full">${visible(option.description)}</span>` : ''
+  const description = option.description ? `<span class="detail full">${visibleMarkdown(option.description)}</span>` : ''
   const preview = option.preview ? `<pre class="preview">${visible(option.preview)}</pre>` : ''
   return `<span class="label">${visible(option.label)}</span>${description}${preview}`
 }
@@ -351,7 +375,7 @@ function renderOrchestratorQuestion(offer) {
             : `<li><button type="button" class="action option full" data-form="${escape(offer.id)}" data-question="${position}" data-option="${index}" data-multi="${q.multiSelect ? '1' : '0'}">${optionBody(option)}</button></li>`
         )
         .join('')
-      return `<div class="question">${header}<p class="ask full">${visible(q.question)}</p>${hint}<ol class="actions">${options}</ol></div>`
+      return `<div class="question">${header}<div class="ask full">${visibleMarkdown(q.question)}</div>${hint}<ol class="actions">${options}</ol></div>`
     })
     .join('')
   const submit = single ? '' : `<button type="button" class="submit" data-submit="${escape(offer.id)}" data-count="${offer.questions.length}" disabled>回答を送信</button>`
@@ -366,8 +390,9 @@ function renderOrchestratorQuestion(offer) {
 function renderOrchestratorAsk(card) {
   const key = escape(`orchestrator-ask\n${card.id}\n${card.sha}`)
   const badge = card.approval ? '<span class="q-header">承認の問い</span>' : ''
-  const body = card.body ? `<pre class="preview body">${visible(card.body)}</pre>` : ''
-  const head = `<h2>窓口の問い<span>パネルで答えると、窓口が受け取ります</span></h2>${badge}<p class="ask full">${visible(card.question)}</p>${body}`
+  if (card.kept) return renderKeptAnswer(card, key)
+  const body = card.body ? `<div class="body">${visibleMarkdown(card.body)}</div>` : ''
+  const head = `<h2>窓口の問い<span>パネルで答えると、窓口が受け取ります</span></h2>${badge}<div class="ask full">${visibleMarkdown(card.question)}</div>${body}`
   if (card.pressed !== null && card.pressed !== undefined) {
     return `<div class="next orchestrator-question sending" data-key="${key}">${head}<div class="action sent"><span class="label">${escape(card.pressed)}</span><span class="detail">窓口に届けています…</span></div></div>`
   }
@@ -377,13 +402,23 @@ function renderOrchestratorAsk(card) {
   const options = card.options
     .map((option, index) => {
       const mark = card.recommended === index + 1 ? '<span class="recommended">推奨</span>' : ''
-      const description = option.description ? `<span class="detail full">${visible(option.description)}</span>` : ''
+      const description = option.description ? `<span class="detail full">${visibleMarkdown(option.description)}</span>` : ''
       return `<li><button type="button" class="action full" data-answer data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${index + 1}"><span class="label">${visible(option.label)}${mark}</span>${description}</button></li>`
     })
     .join('')
   const other = `<li><button type="button" class="action other" data-say="${escape(card.sessionId)}" data-name="窓口" data-ask="${escape(card.id)}" data-sha="${escape(card.sha)}"><span class="label">ほかの答えを書く</span><span class="detail">選択肢に無い答えや補足を、そのまま窓口に渡します</span></button></li>`
   const failure = card.failure ? `<p class="status">${FAILURES[card.failure] ?? FAILURES.failed}</p>` : ''
   return `<div class="next orchestrator-question" data-key="${key}">${head}<ol class="actions">${options}${other}</ol>${failure}</div>`
+}
+
+/**
+ * An answer to the orchestrator's question that is written, but that the orchestrator was not told
+ * of yet: what was answered, why it did not reach the orchestrator, and that the panel tries again.
+ */
+function renderKeptAnswer(card, key) {
+  const why = ORCHESTRATOR_FAILURES[card.reason] ?? ORCHESTRATOR_FAILURES.failed
+  const head = `<h2>窓口の問い<span>答えは残してあります</span></h2><div class="ask full">${visibleMarkdown(card.question)}</div>`
+  return `<div class="next orchestrator-question kept" data-key="${key}">${head}<div class="action sent"><span class="label">${escape(card.label)}</span><span class="detail">まだ窓口に知らせられていません: ${why} 窓口が受け取れるようになったら、パネルが自動で知らせます。</span></div></div>`
 }
 
 function renderFocused(focused) {

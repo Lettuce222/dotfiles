@@ -4,9 +4,13 @@
 // The orchestrator is an interactive Claude Code session in an Orca terminal of the hub workspace.
 // The panel types into it the way orca-milestone does (keys and `orca terminal send`), and only into
 // the one terminal that is surely the orchestrator:
-//   - the hub workspace has exactly one writable Claude terminal titled `orchestrator` (the title
-//     `claude -n orchestrator` sets), and `claude agents` lists exactly one running interactive
-//     session named orchestrator, in the hub folder.
+//   - `claude agents` lists exactly one running interactive session named orchestrator, and Orca
+//     knows exactly one live Claude pane whose conversation is named orchestrator (`claude -n
+//     orchestrator`), a writable terminal of the hub workspace. The session's folder is not checked:
+//     it follows the orchestrator's shell, which moves to wherever it works.
+//   - the terminal shows the orchestrator's own input box, whose border carries its name. What covers
+//     it (the editor of Ctrl+G, a full-screen command) would take the keys, so the panel waits until
+//     it is closed. The terminal's title says nothing here: an editor sets it and leaves it behind.
 // What is typed depends on what the orchestrator does now, as Orca reports it:
 //   - a line only while it is done (waits for a prompt). Not while it waits on a question or a
 //     permission menu, which would take the text as its answer; while it works, the line waits.
@@ -55,18 +59,35 @@ export function signalLine(askId) {
 /** The orchestrator's terminal and agent, or why there is none to type into. */
 export async function locateOrchestrator({ run, readSessions, hubRoot }) {
   const sessions = (await readSessions()).filter((s) => s.name === ORCHESTRATOR && s.kind === 'interactive' && s.alive)
-  if (sessions.length !== 1 || sessions[0].cwd !== hubRoot) return { ok: false, reason: 'no-orchestrator' }
-  const { terminals } = (await run(['terminal', 'list', '--json'])).result
-  const mine = (terminals ?? []).filter(
-    (t) => t.title === ORCHESTRATOR && t.agentIdentity === 'claude' && t.writable && t.worktreePath === hubRoot
-  )
-  if (mine.length !== 1) return { ok: false, reason: 'no-orchestrator' }
-  const [terminal] = mine
-  const paneKey = `${terminal.tabId}:${terminal.leafId}`
+  if (sessions.length === 0) return { ok: false, reason: 'no-orchestrator' }
+  if (sessions.length > 1) return { ok: false, reason: 'many-orchestrators' }
   const { worktrees } = (await run(['worktree', 'ps', '--limit', '1000', '--json'])).result
-  const agent = (worktrees ?? []).flatMap((w) => w.agents ?? []).find((a) => a.paneKey === paneKey && a.hasLivePty === true)
-  if (!agent) return { ok: false, reason: 'no-orchestrator' }
-  return { ok: true, reason: null, handle: terminal.handle, paneKey, agent, sessionId: sessions[0].sessionId }
+  const agents = (worktrees ?? [])
+    .flatMap((w) => w.agents ?? [])
+    .filter((a) => a.conversationName === ORCHESTRATOR && a.agentType === 'claude' && a.hasLivePty === true)
+  if (agents.length === 0) return { ok: false, reason: 'not-in-orca' }
+  if (agents.length > 1) return { ok: false, reason: 'many-orchestrators' }
+  const [agent] = agents
+  const { terminals } = (await run(['terminal', 'list', '--json'])).result
+  const panes = (terminals ?? []).filter((t) => `${t.tabId}:${t.leafId}` === agent.paneKey && t.agentIdentity === 'claude')
+  if (panes.length !== 1) return { ok: false, reason: 'not-in-orca' }
+  const [terminal] = panes
+  if (terminal.worktreePath !== hubRoot || !terminal.writable) return { ok: false, reason: 'not-in-hub' }
+  return {
+    ok: true,
+    reason: null,
+    handle: terminal.handle,
+    paneKey: agent.paneKey,
+    agent,
+    sessionId: sessions[0].sessionId
+  }
+}
+
+// The border of Claude Code's input box, with the session's name in it: `──── orchestrator ─`.
+const INPUT_BORDER = new RegExp(`─ ${ORCHESTRATOR} ─`)
+
+async function readScreen(run, handle) {
+  return (await run(['terminal', 'read', '--terminal', handle, '--screen', '--limit', SCREEN_LINES, '--json'])).result.terminal.tail.join('\n')
 }
 
 /** Whether the orchestrator takes a line now. */
@@ -75,8 +96,12 @@ export async function findOrchestrator(deps) {
   if (!found.ok) return found
   if (found.agent.state === 'working') return { ok: false, reason: 'busy' }
   if (found.agent.state !== 'done') return { ok: false, reason: 'asking' }
+  if (!INPUT_BORDER.test(await readScreen(deps.run, found.handle))) return { ok: false, reason: 'covered' }
   return { ok: true, reason: null, handle: found.handle, since: found.agent.stateStartedAt ?? null }
 }
+
+// What passes by itself: the orchestrator ends its turn, an editor over it is closed.
+const PASSING = new Set(['busy', 'covered'])
 
 function text(value) {
   return typeof value === 'string' ? value : ''
@@ -147,7 +172,7 @@ export function createOrchestratorChannel({ run, readSessions, hubRoot, readPend
   }
 
   async function screen(handle) {
-    return (await run(['terminal', 'read', '--terminal', handle, '--screen', '--limit', SCREEN_LINES, '--json'])).result.terminal.tail.join('\n')
+    return readScreen(run, handle)
   }
 
   async function ready() {
@@ -156,8 +181,8 @@ export function createOrchestratorChannel({ run, readSessions, hubRoot, readPend
       const found = await findOrchestrator({ run, readSessions, hubRoot })
       const taken = !(found.ok && lastSince !== null && found.since === lastSince)
       if (found.ok && taken) return found
-      if (found.ok || found.reason === 'busy') {
-        if (now() >= until) return { ok: false, reason: 'busy' }
+      if (found.ok || PASSING.has(found.reason)) {
+        if (now() >= until) return { ok: false, reason: found.ok ? 'busy' : found.reason }
         await sleep(BUSY_POLL_MS)
         continue
       }
