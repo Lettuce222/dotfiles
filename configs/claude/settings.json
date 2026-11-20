@@ -101,8 +101,8 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/agent-ui-guard.py",
-            "timeout": 15
+            "command": "python3 ~/.claude/hooks/agent-ui-guard.py --panel",
+            "timeout": 180
           }
         ]
       },
@@ -133,8 +133,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/approval-gate.py permission --panel",
-            "timeout": 180
+            "command": "python3 ~/.claude/hooks/approval-gate.py permission",
+            "timeout": 15
           }
         ]
       }
