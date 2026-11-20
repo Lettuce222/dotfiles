@@ -156,10 +156,10 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/hooks/textlint-mcp.sh` | MCPのtoolを呼ぶ前 | 送る本文の日本語をtextlintにかけ、指摘があれば止める |
 | `configs/agent/hooks/external-post-guard.py` | MCPのtoolと、ghの書き込みの前 | リンクになっていないチケットID・PR番号、曜日のない日付を止める。通れば、承認の記録があれば通し、無ければ送り先と本文を見せて確認を出す |
 | `configs/agent/hooks/approvals.py` | 窓口がユーザーの承認の直後に呼ぶ | 承認した操作を1回だけ通す記録を`~/hub/state/approvals/`に書く（30分で切れる）。workerに向けた記録は`--worker <worker名>`で書く（古い`--thread`も受け付ける） |
-| `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。承認の記録と一致すれば通す。窓口以外が承認の記録や依頼の答えを書くのを止める |
+| `configs/agent/hooks/approval-gate.py` | 確認ダイアログの直前、とtoolの実行前 | workerではダイアログの代わりに断り、窓口で聞く流れに乗せる。`--panel`を付けると、窓口のダイアログを先にHub (local)のカードにして答えを待つ（時間切れならダイアログ）。承認の記録と一致すれば通す。窓口以外が承認の記録や依頼の答えを書くのを止め、パネルの答えはどのセッションにも書かせない |
 | `configs/agent/hooks/tmux-socket-guard.py` | Bashの実行前 | いつも使っているtmuxサーバーを止めるコマンドを止める |
 | `configs/agent/hooks/agent-ui-guard.py` | Bashの実行前 | 人が押すボタンやほかのセッションへの入力に届くコマンド（読むだけでないOrcaのCLI、osascriptのUI操作、cliclick、いつものtmuxサーバーへのsend-keys）を確認に回す。承認の記録があれば通す |
-| `configs/agent/hooks/asks.py` | workerが止まるときに呼ぶ | workerの問い（`decide`）と次の作業の候補（`next`）を`~/hub/state/asks/`に依頼のファイルとして書く。OrcaのHub (local)がカードにし、先に答えた1つだけが通る（`answer`・`claim`）。panel-modeの窓口は自分の問いも`question`で書き、パネルの答えを`verify`で読む（パネルとして答えられるのはOrcaのplugin hostから動いたときだけ） |
+| `configs/agent/hooks/asks.py` | workerが止まるときに呼ぶ | workerの問い（`decide`）と次の作業の候補（`next`）を`~/hub/state/asks/`に依頼のファイルとして書く。OrcaのHub (local)がカードにし、先に答えた1つだけが通る（`answer`・`claim`）。panel-modeの窓口は自分の問いも`question`で書き、パネルの答えを`verify`で読む（パネルとして答えられるのはOrcaのplugin hostから動いたときだけ）。窓口の確認ダイアログを待つ依頼（`permission`）は`approval-gate.py`が書き、パネルだけが答える |
 | `configs/agent/hooks/ask-preview-guard.py` | AskUserQuestionの前 | 全部は表示されないpreview（2000文字超え、端末に収まらない行数）と、上の返事を参照する問いを止める。`--check <file>`で下書きを確かめ、`--pages <file>`で本文をpreviewのページに分ける |
 
 #### テスト（`configs/agent/tests/`）
@@ -339,7 +339,7 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 | ファイル | 役割 |
 | --- | --- |
-| `configs/orca/plugins/hub/` | Hub (local)。上に、開いているワークスペースのゴールとマイルストーンと、そのエージェントへのカード（次の作業・質問・許可。orca-milestoneと同じ）を出す。許可のカードはターミナルの確認のメニューに1かEscを送るだけで、外に出る呼び出しには「許可」を出さない。その下に、窓口の案件（`cases.py json`）をプロジェクトとして、TODO（期日と`!`）・Waiting・結びつくworkerの行とともに出し、どの案件にも結びつかないセッションを「あなたの番」「動いている」「待っている」に分けて出す。済んだworkerは出さない。workerには行の✎から指示を送れ（`claude --bg --resume`）、`asks.py`の依頼はカードになる。承認の記録は書かない。orca-milestoneのコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
+| `configs/orca/plugins/hub/` | Hub (local)。上に、開いているワークスペースのゴールとマイルストーンと、そのエージェントへのカード（次の作業・質問・許可。orca-milestoneと同じ）を出す。許可のカードはターミナルの確認のメニューに1かEscを送るだけで、外に出る呼び出しには「許可」を出さない。その下に、窓口の案件（`cases.py json`）をプロジェクトとして、TODO（期日と`!`）・Waiting・結びつくworkerの行とともに出し、どの案件にも結びつかないセッションを「あなたの番」「動いている」「待っている」に分けて出す。済んだworkerは出さない。workerには行の✎から指示を送れ（`claude --bg --resume`）、`asks.py`の依頼はカードになる。窓口の確認ダイアログを`approval-gate.py --panel`が待たせているあいだは、いちばん上に「許可の確認」のカードを出し、押された答え（許可・拒否・ターミナルで確かめる）を答えのファイルに書く。承認の記録は書かない。orca-milestoneのコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
 | `configs/orca/plugins/milestone/` | Milestone (local)。Orcaのターミナルで起動したClaude Codeにゴール付きのタスクを書かせ、フォーカス中のワークスペースのゴールとマイルストーンを右サイドバーに出す。見るだけで、セッションへの送信も許可の返答もしない。[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone)（MIT）から表示の部分だけを持ってきた。出典と除いた部分は`NOTICE.md`、テストは`node --test test/` |
 
 ### `docs/`

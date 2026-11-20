@@ -7,6 +7,7 @@ hook と approvals.py をサブプロセスで呼ぶ。`claude agents --json` �
 偽の claude が返す。approvals.py add は CLAUDE_CODE_SESSION_ID で呼んだセッションを見る。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -15,6 +16,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOKS = Path(__file__).resolve().parents[1] / "hooks"
 GUARD = HOOKS / "external-post-guard.py"
@@ -53,6 +55,7 @@ class ApprovalTest(unittest.TestCase):
         self.env = {
             **{k: v for k, v in os.environ.items() if k not in ("AGENT_ORCHESTRATOR_NAME", "CLAUDE_CODE_SESSION_ID")},
             "AGENT_APPROVALS_DIR": str(self.dir),
+            "AGENT_ASKS_DIR": str(root / "asks"),
             "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
         }
         self.draft = root / "draft.md"
@@ -267,6 +270,8 @@ class ApprovalTest(unittest.TestCase):
                         "echo '{}' > ~/hub/state/asks/20261119-000000-deadbeef.answer.json"):
             for session in (WORKER, INTERACTIVE):
                 self.assertEqual(self.decision(self.gate("pre", {"command": command}, session=session)), "deny", (command, session))
+        for command in ("python3 ~/.claude/hooks/asks.py answer 20261119-000000-deadbeef --by orchestrator --choice 1",
+                        "python3 ~/.claude/hooks/asks.py claim 20261119-000000-deadbeef"):
             r = self.gate("pre", {"command": command}, session=ORCH)
             self.assertEqual((r.returncode, r.stdout), (0, ""), command)
         write = {"file_path": "/h/hub/state/asks/x.answer.json", "content": "{}"}
@@ -366,6 +371,156 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(self.permission(self.gate("permission", {**params, "name": "+1"}, tool_name=tool)), "deny")
         self.assertEqual(self.permission(self.gate("permission", params, tool_name=tool)), "allow")
         self.assertEqual(self.records(), [])
+
+
+class PanelPermissionTest(ApprovalTest):
+    """窓口の確認ダイアログを Hub パネルのカードで答える（approval-gate.py permission --panel）。"""
+
+    CALL = {"command": "rm -rf build", "description": "build を消す"}
+
+    def setUp(self):
+        super().setUp()
+        self.asks_dir = Path(self.env["AGENT_ASKS_DIR"])
+        self.env["AGENT_PERMISSION_WAIT"] = "5"
+        sys.path.insert(0, str(HOOKS))
+        import importlib
+        self.asks = importlib.import_module("asks")
+
+    def start(self, tool_input=None, tool_name="Bash", session=ORCH, panel=True, extra=None):
+        payload = {"tool_name": tool_name, "tool_input": tool_input or self.CALL, "session_id": session,
+                   "permission_mode": "auto", **(extra or {})}
+        proc = subprocess.Popen(
+            [sys.executable, str(GATE), "permission", *(["--panel"] if panel else [])],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True,
+        )
+        proc.stdin.write(json.dumps(payload))
+        proc.stdin.close()
+        return proc
+
+    def written(self, proc, timeout=10):
+        """The ask the hook wrote, once it is there."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            found = [p for p in self.asks_dir.glob("*.json") if not p.name.endswith(".answer.json")] if self.asks_dir.is_dir() else []
+            if found:
+                time.sleep(0.05)  # written with os.replace, so whole once seen
+                return found[0]
+            if proc.poll() is not None:
+                self.fail(f"the hook ended without an ask: {proc.stderr.read()}")
+            time.sleep(0.05)
+        self.fail("no ask was written")
+
+    def finish(self, proc):
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0, err)
+        if not out.strip():
+            return None
+        out = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PermissionRequest")
+        return out["decision"]
+
+    def answer(self, path, choice, text=None, shown=None):
+        shown = shown or hashlib.sha256(path.read_bytes()).hexdigest()
+        with mock.patch.dict(os.environ, {"AGENT_ASKS_DIR": str(self.asks_dir)}):
+            return self.asks.answer(path.stem, "panel", choice, shown, text=text, panel_check=lambda: True)
+
+    def test_the_panels_allow_allows_once(self):
+        proc = self.start()
+        path = self.written(proc)
+        ask = json.loads(path.read_text())
+        self.assertEqual((ask["kind"], ask["worker"], ask["session_id"], ask["tool_name"]), ("permission", "orchestrator", ORCH, "Bash"))
+        self.assertEqual(ask["tool_input"], self.CALL)
+        self.assertGreater(ask["expires_at"], ask["created_at"])
+        self.assertEqual(self.answer(path, "allow")[0], 0)
+        self.assertEqual(self.finish(proc), {"behavior": "allow"}, "no updatedPermissions: this once only")
+        self.assertEqual(list(self.asks_dir.glob("*.json")), [], "the ask and its answer are removed")
+
+    def test_the_panels_deny_carries_the_reason(self):
+        proc = self.start()
+        path = self.written(proc)
+        self.answer(path, "deny", text="まだ消さないで")
+        decision = self.finish(proc)
+        self.assertEqual(decision["behavior"], "deny")
+        self.assertIn("Hub パネル", decision["message"])
+        self.assertIn("まだ消さないで", decision["message"])
+        self.assertNotIn("interrupt", decision)
+
+    def test_terminal_and_no_answer_leave_the_dialog(self):
+        proc = self.start()
+        self.answer(self.written(proc), "terminal")
+        self.assertIsNone(self.finish(proc))
+        self.env["AGENT_PERMISSION_WAIT"] = "1"
+        proc = self.start()
+        self.written(proc)
+        self.assertIsNone(self.finish(proc), "no answer in time")
+        self.assertEqual(list(self.asks_dir.glob("*.json")), [])
+
+    def test_an_answer_not_for_the_ask_as_written_leaves_the_dialog(self):
+        # The card showed other bytes than the hook wrote.
+        proc = self.start()
+        path = self.written(proc)
+        self.assertEqual(self.answer(path, "allow", shown="0" * 64)[0], self.asks.EXIT_GONE)
+        (path.with_name(path.stem + ".answer.json")).write_text(json.dumps({"by": "panel", "choice": "allow", "shown_sha256": "0" * 64}))
+        self.assertIsNone(self.finish(proc))
+        # The ask was changed after the hook wrote it, and the answer is for the changed one.
+        proc = self.start()
+        path = self.written(proc)
+        raw = json.loads(path.read_text())
+        raw["tool_input"] = {"command": "ls"}
+        path.write_text(json.dumps(raw))
+        self.answer(path, "allow")
+        self.assertIsNone(self.finish(proc))
+        # Not the panel's answer.
+        proc = self.start()
+        path = self.written(proc)
+        shown = hashlib.sha256(path.read_bytes()).hexdigest()
+        (path.with_name(path.stem + ".answer.json")).write_text(json.dumps({"by": "orchestrator", "choice": "allow", "shown_sha256": shown}))
+        self.assertIsNone(self.finish(proc))
+
+    def test_only_the_panel_answers_a_permission(self):
+        proc = self.start()
+        path = self.written(proc)
+        shown = hashlib.sha256(path.read_bytes()).hexdigest()
+        with mock.patch.dict(os.environ, {"AGENT_ASKS_DIR": str(self.asks_dir)}):
+            for by, choice, check in (("orchestrator", "allow", lambda: True), ("panel", "allow", lambda: False),
+                                      ("panel", "1", lambda: True)):
+                with self.assertRaises(self.asks.AskError, msg=(by, choice)):
+                    self.asks.answer(path.stem, by, choice, shown, panel_check=check)
+            with self.assertRaises(self.asks.AskError):
+                self.asks.answer(path.stem, "panel", "allow", shown, text="理由", panel_check=lambda: True)
+        self.answer(path, "terminal")
+        self.finish(proc)
+
+    def test_others_are_not_asked_in_the_panel(self):
+        # Workers are still turned to the orchestrator; other sessions and questions keep the dialog.
+        r = subprocess.run([sys.executable, str(GATE), "permission", "--panel"], input=json.dumps(
+            {"tool_name": "Bash", "tool_input": self.CALL, "session_id": WORKER}), env=self.env, capture_output=True, text=True)
+        self.assertEqual(self.permission(r), "deny")
+        for session, tool, panel in ((INTERACTIVE, "Bash", True), (ORCH, "AskUserQuestion", True),
+                                     (ORCH, "ExitPlanMode", True), (ORCH, "Bash", False)):
+            proc = self.start(tool_name=tool, session=session, panel=panel)
+            self.assertIsNone(self.finish(proc), (session, tool, panel))
+        self.assertFalse(self.asks_dir.exists() and list(self.asks_dir.glob("*.json")))
+
+    def test_a_too_long_call_is_left_to_the_terminal(self):
+        proc = self.start(tool_input={"command": "echo " + "x" * 60000})
+        self.assertIsNone(self.finish(proc))
+
+    def test_a_stopped_hook_removes_its_ask(self):
+        self.env["AGENT_PERMISSION_WAIT"] = "60"
+        proc = self.start()
+        self.written(proc)
+        proc.terminate()
+        proc.communicate(timeout=10)
+        self.assertEqual(list(self.asks_dir.glob("*.json")), [])
+
+    def test_the_orchestrator_cannot_write_the_panels_answer(self):
+        for command in ("python3 ~/.claude/hooks/asks.py answer 20261119-000000-deadbeef --by panel --choice allow --shown x",
+                        "python3 ~/.claude/hooks/asks.py answer 20261119-000000-deadbeef --by=panel --choice allow",
+                        "echo '{}' > ~/hub/state/asks/20261119-000000-deadbeef.answer.json"):
+            self.assertEqual(self.decision(self.gate("pre", {"command": command}, session=ORCH)), "deny", command)
+        write = {"file_path": "/h/hub/state/asks/x.answer.json", "content": "{}"}
+        self.assertEqual(self.decision(self.gate("pre", write, tool_name="Write", session=ORCH)), "deny")
 
 
 if __name__ == "__main__":

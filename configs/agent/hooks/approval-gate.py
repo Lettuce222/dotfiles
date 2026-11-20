@@ -11,8 +11,14 @@ through once the user approved it there (approvals.py).
     - a one-shot record for this session matches the call -> allow, consume it
     - the session is a worker -> deny, and tell the worker to report the call
       as 「要判断」 to the orchestrator and rerun it unchanged once approved
-    - otherwise (the orchestrator, sessions outside the orchestrator) -> no
-      decision, the dialog shows as before
+    - with --panel, the orchestrator -> the call is written as an ask the Hub
+      panel shows as a card (asks.new_permission), and the hook waits up to
+      AGENT_PERMISSION_WAIT seconds (120 by default) for the panel's answer:
+      allow -> allow this once, deny -> deny with the reason written, anything
+      else (terminal, no answer in time, an answer that is not the panel's for
+      the ask as written) -> no decision. The ask is removed when the hook ends.
+    - otherwise (the orchestrator without --panel, sessions outside the
+      orchestrator) -> no decision, the dialog shows as before
 
   approval-gate.py pre          (PreToolUse)
     - a session other than the orchestrator that would write approval records
@@ -22,6 +28,9 @@ through once the user approved it there (approvals.py).
       directory) -> deny. The Hub panel writes answers from Orca, outside any
       Claude Code session, and an answer to the orchestrator's question is
       what it turns into an approval.
+    - the orchestrator too, when it would write the panel's answer
+      (`asks.py answer … --by panel`) or an answer file itself -> deny. The
+      panel's answer to a permission is what lets the orchestrator's call run.
     - a one-shot record for this session matches the call -> allow, consume
       it. This covers calls that get no dialog but would be refused, such as
       auto mode classifier blocks. gh writes and MCP calls with prose are left
@@ -34,7 +43,9 @@ Sessions are told apart by `claude agents --json` (see approvals.py).
 
 import importlib.util
 import json
+import os
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -42,9 +53,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.dont_write_bytecode = True  # keep __pycache__ out of the hooks directory
 import approvals  # noqa: E402
+import asks  # noqa: E402
 
 RECORD_WRITE = re.compile(r"approvals\.py\b(?:(?![;&|\n]).)*\badd\b|state/approvals\b")
 ANSWER_WRITE = re.compile(r"asks\.py\b(?:(?![;&|\n]).)*\b(?:answer|claim)\b|\.answer\.json\b")
+PANEL_ANSWER = re.compile(r"asks\.py\b(?:(?![;&|\n]).)*\banswer\b(?:(?![;&|\n]).)*--by(?:=|\s+)['\"]?panel\b|\.answer\.json\b")
+PERMISSION_WAIT = 120
+PERMISSION_WAIT_RANGE = (1, 540)
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHOWN_LIMIT = 300
 
@@ -105,6 +120,13 @@ def writes_answers(tool_name, tool_input):
     return False
 
 
+def writes_panel_answers(tool_name, tool_input):
+    """Writing what only the Hub panel writes: its answers, or an answer file by hand."""
+    if tool_name == "Bash":
+        return bool(PANEL_ANSWER.search(tool_input.get("command") or ""))
+    return writes_answers(tool_name, tool_input)
+
+
 def shown(tool_name, tool_input):
     if tool_name == "Bash":
         text = tool_input.get("command") or ""
@@ -133,18 +155,79 @@ def emit(event, body):
     json.dump({"hookSpecificOutput": {"hookEventName": event, **body}}, sys.stdout, ensure_ascii=False)
 
 
-def on_permission(data):
+def permission_wait():
+    try:
+        seconds = float(os.environ.get("AGENT_PERMISSION_WAIT") or PERMISSION_WAIT)
+    except ValueError:
+        seconds = PERMISSION_WAIT
+    low, high = PERMISSION_WAIT_RANGE
+    return min(max(seconds, low), high)
+
+
+def denied_in_panel(reason):
+    lines = [
+        "Hub パネルでユーザーがこの操作を拒否しました。",
+        "別の手で回り込まずに、必要なら窓口でユーザーに聞いてください。",
+    ]
+    if reason:
+        lines.append(f"拒否の理由: {reason}")
+    return "\n".join(lines)
+
+
+class Stopped(Exception):
+    pass
+
+
+def ask_panel(data, entry):
+    """The panel's decision on the orchestrator's dialog, or None to leave it to the terminal."""
+    wait = permission_wait()
+    try:
+        written = asks.new_permission(
+            entry, data.get("tool_name") or "", data.get("tool_input") or {}, wait,
+            agent_type=data.get("agent_type"), permission_mode=data.get("permission_mode"),
+        )
+    except (OSError, asks.AskError):
+        return None
+    if not written:
+        return None
+    path, sha = written
+
+    def stop(signum, frame):
+        raise Stopped()
+
+    previous = signal.signal(signal.SIGTERM, stop)
+    try:
+        got = asks.wait_permission(path, sha, wait)
+    except (Stopped, KeyboardInterrupt, OSError):
+        got = None
+    finally:
+        asks.remove(path)
+        signal.signal(signal.SIGTERM, previous)
+    if not got or got["choice"] not in ("allow", "deny"):
+        return None
+    if got["choice"] == "allow":
+        return {"behavior": "allow"}
+    return {"behavior": "deny", "message": denied_in_panel(got.get("text"))}
+
+
+def on_permission(data, panel=False):
     tool_name = data.get("tool_name") or ""
     tool_input = data.get("tool_input") or {}
     record, why = approvals.take(tool_name, tool_input, data.get("session_id"))
     if record:
         emit("PermissionRequest", {"decision": {"behavior": "allow"}})
         return 0
-    if approvals.is_worker(approvals.session_entry(data.get("session_id"))):
+    entry = approvals.session_entry(data.get("session_id"))
+    if approvals.is_worker(entry):
         emit(
             "PermissionRequest",
             {"decision": {"behavior": "deny", "message": worker_guidance(tool_name, tool_input, why)}},
         )
+        return 0
+    if panel and approvals.is_orchestrator(entry):
+        decision = ask_panel(data, entry)
+        if decision:
+            emit("PermissionRequest", {"decision": decision})
     return 0
 
 
@@ -175,6 +258,18 @@ def on_pre(data):
         )
         return 0
 
+    if writes_panel_answers(tool_name, tool_input):
+        emit(
+            "PreToolUse",
+            {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "パネルの答え（--by panel、答えのファイル）を書けるのは Hub パネルだけです。"
+                "窓口が依頼を取るときは asks.py claim、窓口の答えは --by orchestrator を使ってください。"
+                "許可の確認には、窓口からは答えられません。",
+            },
+        )
+        return 0
+
     if not approvals.has_records() or left_to_guard(tool_name, tool_input):
         return 0
     record, _ = approvals.take(tool_name, tool_input, session_id)
@@ -193,13 +288,13 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     mode = argv[0] if argv else ""
     if mode not in ("pre", "permission"):
-        print("usage: approval-gate.py pre|permission", file=sys.stderr)
+        print("usage: approval-gate.py pre|permission [--panel]", file=sys.stderr)
         return 0  # never block a tool call because of a wiring mistake
     try:
         data = json.load(sys.stdin)
     except ValueError:
         return 0
-    return on_pre(data) if mode == "pre" else on_permission(data)
+    return on_pre(data) if mode == "pre" else on_permission(data, panel="--panel" in argv[1:])
 
 
 if __name__ == "__main__":

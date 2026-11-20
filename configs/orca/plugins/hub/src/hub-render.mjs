@@ -228,6 +228,7 @@ const FAILURES = {
   'stop-failed': 'worker を止められず、届けられませんでした。',
   'resume-failed': 'worker を続けられず、届けられませんでした。',
   invalid: '届けられない答えです。',
+  expired: '期限が過ぎました。窓口のターミナルの確認で答えてください。',
   failed: '届けるときに失敗しました。'
 }
 
@@ -388,6 +389,7 @@ function renderOrchestratorQuestion(offer) {
  * one text, and the real answers. Pressing writes the answer, which the orchestrator reads itself.
  */
 function renderOrchestratorAsk(card) {
+  if (card.kind === 'permission') return renderPermissionAsk(card)
   const key = escape(`orchestrator-ask\n${card.id}\n${card.sha}`)
   const badge = card.approval ? '<span class="q-header">承認の問い</span>' : ''
   if (card.kept) return renderKeptAnswer(card, key)
@@ -409,6 +411,66 @@ function renderOrchestratorAsk(card) {
   const other = `<li><button type="button" class="action other" data-say="${escape(card.sessionId)}" data-name="窓口" data-ask="${escape(card.id)}" data-sha="${escape(card.sha)}"><span class="label">ほかの答えを書く</span><span class="detail">選択肢に無い答えや補足を、そのまま窓口に渡します</span></button></li>`
   const failure = card.failure ? `<p class="status">${FAILURES[card.failure] ?? FAILURES.failed}</p>` : ''
   return `<div class="next orchestrator-question" data-key="${key}">${head}<ol class="actions">${options}${other}</ol>${failure}</div>`
+}
+
+const PERMISSION_NOTES = {
+  identity: '窓口のセッションを確かめられないので、ボタンは出しません。窓口のターミナルで答えてください。',
+  expired: '期限が過ぎました。窓口のターミナルの確認で答えてください。'
+}
+
+/** HH:MM:SS of a time, local. */
+function clock(ms) {
+  const date = new Date(ms)
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
+}
+
+/** The whole text of a call, never cut, with every character that does not show made visible. */
+function callBlock(label, value) {
+  if (typeof value !== 'string' || value === '') return ''
+  return `<p class="hint">${escape(label)}</p><pre class="preview">${visible(value)}</pre>`
+}
+
+/** What the call would do, in full: what a person reads before allowing it in place of the dialog. */
+function permissionBody(card) {
+  const input = card.input
+  if (card.toolName === 'Bash' && typeof input.command === 'string') {
+    const description = typeof input.description === 'string' && input.description.trim() ? `<div class="ask full">${visible(input.description)}</div>` : ''
+    const rest = Object.fromEntries(Object.entries(input).filter(([name]) => !['command', 'description'].includes(name)))
+    return `${description}${callBlock('コマンド', input.command)}${Object.keys(rest).length ? callBlock('ほかの引数', JSON.stringify(rest, null, 2)) : ''}`
+  }
+  if (typeof input.file_path === 'string' && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(card.toolName)) {
+    const rest = Object.fromEntries(Object.entries(input).filter(([name]) => !['file_path', 'content', 'old_string', 'new_string'].includes(name)))
+    return `${callBlock('ファイル', input.file_path)}${callBlock('書く中身', input.content)}${callBlock('置き換える前', input.old_string)}${callBlock('置き換えたあと', input.new_string)}${Object.keys(rest).length ? callBlock('ほかの引数', JSON.stringify(rest, null, 2)) : ''}`
+  }
+  return callBlock('引数', JSON.stringify(input, null, 2))
+}
+
+/**
+ * A permission dialog of the orchestrator that approval-gate.py holds back while the panel answers:
+ * the call in full, and allow (this once), deny, deny with a reason, or the terminal's dialog now.
+ * A call that reaches past this machine gets no allow button, and a dangerous one is pressed twice.
+ */
+function renderPermissionAsk(card) {
+  const key = escape(`orchestrator-permission\n${card.id}\n${card.sha}`)
+  const risk = card.dangerous ? '<span class="danger">危険なコマンド</span>' : RISK_LABELS[card.risk] ? `<span class="risk ${escape(card.risk)}">${RISK_LABELS[card.risk]}</span>` : ''
+  const agent = card.agentType ? `（サブエージェント ${visible(card.agentType)}）` : ''
+  const where = card.where || card.cwd ? `<p class="where">場所: ${visible(card.where || card.cwd)}</p>` : ''
+  const head = `<h2>許可の確認${risk}<span>パネルで答えると、窓口の確認ダイアログの代わりになります</span></h2><div class="ask full">窓口の ${visible(card.toolName)}${agent} を実行してよいですか</div>${permissionBody(card)}${where}`
+  if (card.pressed !== null && card.pressed !== undefined) {
+    return `<div class="next orchestrator-question permission sending" data-key="${key}">${head}<div class="action sent"><span class="label">${escape(card.pressed)}</span><span class="detail">窓口に返しています…</span></div></div>`
+  }
+  if (!card.check.ok) {
+    return `<div class="next orchestrator-question permission" data-key="${key}">${head}<p class="note">${PERMISSION_NOTES[card.check.reason] ?? CHECK_NOTES[card.check.reason] ?? ''}</p></div>`
+  }
+  const button = (choice, label, detail, extra = '') =>
+    `<li><button type="button" class="action full" data-answer data-permission data-id="${escape(card.id)}" data-sha="${escape(card.sha)}" data-choice="${choice}"${extra}><span class="label">${label}</span><span class="detail full">${detail}</span></button></li>`
+  const allow = card.risk === 'outside' ? '' : button('allow', '許可（今回だけ）', 'この 1 回だけ実行します。許可のルールは足しません', card.dangerous ? ' data-dangerous="1"' : '')
+  const only = card.risk === 'outside' ? '<p class="hint">外に出る操作です。許可は、窓口のターミナルの確認で中身を全部読んでから押してください。</p>' : ''
+  const reason = `<li><button type="button" class="action other" data-say="${escape(card.sessionId)}" data-name="許可の確認" data-to="許可の確認を拒否する理由" data-ask="${escape(card.id)}" data-sha="${escape(card.sha)}"><span class="label">理由を書いて拒否</span><span class="detail">書いた理由を添えて拒否し、窓口の Claude に返します</span></button></li>`
+  const options = `${allow}${button('deny', '拒否', '実行しません。窓口の Claude には、パネルで拒否されたと返します')}${reason}${button('terminal', 'ターミナルで確かめる', '待たずに、窓口のターミナルに確認ダイアログを出します')}`
+  const deadline = `<p class="hint">${clock(card.expiresAt)} までに答えないと、窓口のターミナルに確認ダイアログが出ます。</p>`
+  const failure = card.failure ? `<p class="status">${FAILURES[card.failure] ?? FAILURES.failed}</p>` : ''
+  return `<div class="next orchestrator-question permission" data-key="${key}">${head}${only}<ol class="actions">${options}</ol>${deadline}${failure}</div>`
 }
 
 /**

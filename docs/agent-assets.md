@@ -97,7 +97,8 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 - `approval-gate.py permission`: Claude Codeの`PermissionRequest`（全tool）で動く。このeventはダイアログを出す直前にだけ発火するので、hookの`ask`、`permissions.ask`、auto modeがブロックを重ねて確認に戻ったときなど、ダイアログの出どころによらず同じに扱える
   - そのセッション向けの承認の記録と一致すれば`allow`を返し、記録を消す
   - worker（`claude agents --json`で`kind`が`background`、名前が窓口でないもの）なら`deny`を返す。`message`に、止めた操作と、「要判断」で窓口に報告して止まり、承認が届いたら同じコマンドを変えずに実行し直すことを書く
-  - 窓口や、窓口と関係ない対話のセッション、`claude agents --json`で引けないセッションでは何も返さず、今までどおりダイアログを出す
+  - `--panel`を付けたときの窓口では、下の「窓口の確認ダイアログをパネルで答える」のとおり、先にHub (local)のパネルで聞く
+  - 窓口（`--panel`なし）や、窓口と関係ない対話のセッション、`claude agents --json`で引けないセッションでは何も返さず、今までどおりダイアログを出す
 - `approval-gate.py pre`: `PreToolUse`（`Bash`、`Write`・`Edit`などの編集、全MCP tool）で動く
   - 窓口以外のセッションが承認の記録を書く呼び出しをdenyする（上の「承認の記録」を参照）
   - そのセッション向けの記録と一致すれば`allow`を返して記録を消す。ダイアログを経ずに断られる操作（auto modeの分類器のブロック）を、承認のあとに通すため。ghの書き込みと本文を持つMCPの呼び出しは`external-post-guard.py`が記録を使うので、ここでは触らない（2つのhookで同じ記録を取り合わないように）
@@ -107,6 +108,17 @@ worker（`claude --bg`で起動したbackgroundのセッション）の画面は
 - docsで決まっていないこと: PreToolUseの`allow`がauto modeの分類器を飛ばすかは書かれていない。飛ばさなければ、承認のあとでも分類器にブロックされ、workerは「ブロック」を報告する。auto modeのブロックは`PermissionRequest`を通らない（Claudeに理由が返るだけ）ので、workerのスキルで「要判断」に回させている
 
 `settings.json`からは`python3`で呼ぶ。テストは`python3 -m unittest configs/agent/tests/test_approvals.py`。
+
+### 窓口の確認ダイアログをパネルで答える
+
+窓口の確認ダイアログ（auto modeが決められなかったBashなど）を、OrcaのHub (local)のパネルでも答えられるようにする。`approval-gate.py permission --panel`で有効になり、`--panel`が無ければ何もしない。
+
+- 窓口（`claude agents --json`の名前が`orchestrator`）で、AskUserQuestionとExitPlanMode以外の呼び出しのダイアログが出るとき、hookは呼び出しの全体（`tool_name`と`tool_input`）を`~/hub/state/asks/<id>.json`に`kind: permission`の依頼として書き、答えのファイルを0.5秒おきに見て待つ。待ち時間は120秒で、環境変数`AGENT_PERMISSION_WAIT`で1〜540秒に変えられる。終わるとき（打ち切られたときも）依頼と答えのファイルを消す
+- パネルは依頼を「許可の確認」のカードにし、コマンドや書く中身を省かずに、見えない文字も見える形で出す。ボタンは「許可（今回だけ）」「拒否」「理由を書いて拒否」「ターミナルで確かめる」。外に出る呼び出しには許可を出さず、危険なコマンドの許可は2回押す。押すとパネルが`asks.py`の`answer`に`--by panel`と`--shown <sha256>`を付けて、答え（`allow`・`deny`・`terminal`）を書く。窓口のターミナルには何も打たない
+- hookは、答えが`by: panel`で、`shown_sha256`が自分が書いた依頼のバイト列のsha256と同じで、依頼のファイルも書いたときのままのときだけ答えを使う。許可は`allow`（`updatedPermissions`なし、ルールは足さない）、拒否は理由を添えた`deny`。それ以外（ターミナルで確かめる、時間切れ、答えが合わない、エラー）は何も返さず、ダイアログが出る。勝手に許可はしない
+- 偽の答えを防ぐ仕組み。`asks.py`は、`permission`の依頼には`--by panel`と`--shown`があり、Orcaのplugin hostから動いたとき（`from_panel`）だけ答えを書き、`--by orchestrator`と`claim`は断る。`approval-gate.py pre`は、窓口も含むどのセッションでも、`--by panel`の答えと答えのファイルへの書き込みをdenyする。同じユーザーのプロセスならファイルを直接書けるので、これはうっかりとClaudeからの書き込みを防ぐもので、悪意のあるプロセスは防げない
+- 窓口が依頼を待たせているあいだは、Orcaの許可のカード（ターミナルに1かEscを打つもの）を窓口のワークスペースに出さない
+- 公式のドキュメントには、hookが動いているあいだダイアログが待つのか並んで出るのかが書かれていない。並んで出るときは、先に答えたほうが使われる。どちらでも勝手に許可はしない
 
 ### tmuxのサーバーを守る
 

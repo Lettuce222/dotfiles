@@ -7,6 +7,8 @@
 import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isDangerous } from './dangerous.mjs'
+import { riskOf, whereOf } from './risk.mjs'
 
 export const ASK_ID = /^\d{8}-\d{6}-[0-9a-f]{8}$/
 export const SHA256 = /^[0-9a-f]{64}$/
@@ -58,6 +60,8 @@ export function parseAsk(raw) {
   if (!worker || !sessionId) return null
   // The orchestrator's own question (panel-mode): only the orchestrator writes it.
   if (raw.kind === 'question') return parseQuestion(raw, worker, sessionId)
+  // A permission dialog of the orchestrator, written by approval-gate.py while it waits.
+  if (raw.kind === 'permission') return parsePermission(raw, worker, sessionId)
   if (NOT_WORKERS.has(worker)) return null
   const base = {
     id: raw.id,
@@ -115,6 +119,36 @@ function parseQuestion(raw, worker, sessionId) {
   }
 }
 
+export const PERMISSION_CHOICES = ['allow', 'deny', 'terminal']
+const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,200}$/
+
+function parsePermission(raw, worker, sessionId) {
+  if (worker !== 'orchestrator') return null
+  const toolName = typeof raw.tool_name === 'string' && TOOL_NAME.test(raw.tool_name) ? raw.tool_name : null
+  const input = raw.tool_input && typeof raw.tool_input === 'object' && !Array.isArray(raw.tool_input) ? raw.tool_input : null
+  if (!toolName || !input || JSON.stringify(input).length > BODY_MAX) return null
+  if (!Number.isFinite(raw.created_at) || !Number.isFinite(raw.expires_at)) return null
+  const call = { name: toolName, input }
+  const cwd = text(raw.cwd, 1000)
+  return {
+    id: raw.id,
+    kind: 'permission',
+    worker,
+    sessionId,
+    toolName,
+    input,
+    agentType: text(raw.agent_type, 100),
+    risk: riskOf(call),
+    dangerous: isDangerous(call),
+    where: cwd ? whereOf(call, cwd, { cwd }) : '',
+    cwd,
+    case: null,
+    level: 'B',
+    createdAt: raw.created_at * 1000,
+    expiresAt: raw.expires_at * 1000
+  }
+}
+
 /** One ask file, with the hash of its bytes; null when it is gone, answered or not an ask. */
 export async function readAsk(dir, id) {
   if (!ASK_ID.test(id ?? '')) return null
@@ -154,9 +188,13 @@ export async function readAsks(dir) {
  * `claude agents` lists it, and the ask holds nothing above level B.
  * @returns {{ ok: boolean, reason: string | null }}
  */
-export function checkAsk(ask, sessions) {
+export function checkAsk(ask, sessions, now = Date.now()) {
   if (!SHOWABLE.has(ask.level)) return { ok: false, reason: 'level' }
   const session = sessions.find((candidate) => candidate.sessionId === ask.sessionId)
+  if (ask.kind === 'permission') {
+    if (ask.expiresAt <= now) return { ok: false, reason: 'expired' }
+    return session?.name === 'orchestrator' ? { ok: true, reason: null } : { ok: false, reason: 'identity' }
+  }
   if (ask.kind === 'question') {
     return session?.name === 'orchestrator' ? { ok: true, reason: null } : { ok: false, reason: 'identity' }
   }

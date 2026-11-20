@@ -6,11 +6,12 @@
 // ../NOTICE.md). Left out: Codex progress, answers to questions and permissions, "allow the rest
 // of this turn", restarting a session. Added: the sessions of `claude agents`, background ones
 // included, and the cards of the asks workers write (src/asks.mjs), whose answers reach the worker
-// through src/deliver.mjs.
+// through src/deliver.mjs. And the orchestrator's permission dialogs, which approval-gate.py writes
+// as asks while it waits: a card answers one in place of the dialog (answerPermission).
 import { watch } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
-import { ASK_ID, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
+import { ASK_ID, PERMISSION_CHOICES, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { casesScriptOf, readCases as readCasesJson } from './cases.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
 import { answerText, cleanText, createDelivery, resolvePython, writtenAnswerText } from './deliver.mjs'
@@ -50,6 +51,7 @@ const REPORT_NAME = 'report.md'
 const CASES_MAX_MS = 60_000
 // How often a kept answer is told again while the orchestrator cannot take it.
 const RESIGNAL_MS = 30_000
+const PERMISSION_LABELS = { allow: '許可（今回だけ）', deny: '拒否', terminal: 'ターミナルで確かめる' }
 
 /** 11/19 */
 function dayOf(ms) {
@@ -348,13 +350,19 @@ export function createHubWorker({
       }
     }
     asks = await readAsks(asksDir)
-    const shownAsk = (ask) => ({ ...ask, check: checkAsk(ask, sessions), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null })
-    const cards = asks.filter((ask) => ask.kind !== 'question').map(shownAsk)
+    const shownAsk = (ask) => ({ ...ask, check: checkAsk(ask, sessions, now()), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null })
+    const forOrchestrator = (ask) => ask.kind === 'question' || ask.kind === 'permission'
+    const cards = asks.filter((ask) => !forOrchestrator(ask)).map(shownAsk)
+    // A permission past its time is the terminal's again: its card goes.
+    const permissions = asks.filter((ask) => ask.kind === 'permission' && ask.expiresAt > now())
     const orchestratorAsks = [
+      ...permissions.map(shownAsk),
       ...[...unsignaled.values()].map((entry) => ({ ...entry, kept: true })),
       ...asks.filter((ask) => ask.kind === 'question').map(shownAsk)
     ]
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
+    // While the orchestrator waits on the panel, its menu is not up: no card that types into it.
+    const shownOffers = permissions.length > 0 ? offers.filter((offer) => !(offer.kind === 'permission' && resolve(offer.path ?? '') === resolve(hubRoot))) : offers
+    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers: shownOffers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
   }
 
   async function exists(name) {
@@ -425,10 +433,10 @@ export function createHubWorker({
    * worker. The ask is read again and must be the one the card showed (same hash), from the worker
    * it names.
    */
-  async function answerAsk({ id, sha, choice, text } = {}) {
+  async function answerAsk({ id, sha, choice, text, confirmed = false } = {}) {
     const written = text === undefined ? null : cleanText(text)
     if (!ASK_ID.test(id ?? '') || !SHA256.test(sha ?? '')) return { ok: false, reason: 'invalid' }
-    if (text === undefined ? !Number.isInteger(choice) : !written) return { ok: false, reason: 'invalid' }
+    if (text === undefined ? !(Number.isInteger(choice) || PERMISSION_CHOICES.includes(choice)) : !written) return { ok: false, reason: 'invalid' }
     if (pressed.has(id)) return { ok: false, reason: 'pressed' }
     pressed.set(id, written ?? '')
     failures.delete(id)
@@ -442,7 +450,10 @@ export function createHubWorker({
       const ask = await readAsk(asksDir, id)
       if (!ask || ask.sha !== sha) return fail('stale')
       const current = await readClaude(claudeCli)
-      if (!checkAsk(ask, current).ok) return fail('unverified')
+      const check = checkAsk(ask, current, now())
+      if (!check.ok) return fail(check.reason === 'expired' ? 'expired' : 'unverified')
+      if (ask.kind === 'permission') return await answerPermission(ask, choice, written, confirmed, fail)
+      if (!written && !Number.isInteger(choice)) return fail('invalid')
       if (ask.kind === 'question') return await answerQuestion(ask, choice, written, fail)
       if (written && ask.kind !== 'decide') return fail('invalid')
       const answer = written ? writtenAnswerText(ask, written) : answerText(ask, choice)
@@ -495,6 +506,26 @@ export function createHubWorker({
     }
     orca.log(`hub: answered the orchestrator's question ${ask.id} (${written ? 'written' : `option ${choice}`})`)
     await deliver.log({ ask: ask.id, worker: ask.worker, card: 'question', approval: ask.approval, choice: written ? 'written' : choice, label, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
+    return { ok: true }
+  }
+
+  /**
+   * The orchestrator's permission dialog: the panel writes the answer file, which approval-gate.py
+   * waits on and checks against the ask it wrote. Nothing is typed into the orchestrator. A call that
+   * reaches past this machine is never allowed here, and a dangerous one only when pressed twice.
+   */
+  async function answerPermission(ask, choice, written, confirmed, fail) {
+    const picked = written ? 'deny' : choice
+    if (!PERMISSION_CHOICES.includes(picked)) return fail('invalid')
+    if (picked === 'allow' && ask.risk === 'outside') return fail('invalid')
+    if (picked === 'allow' && ask.dangerous && confirmed !== true) return { ok: false, reason: 'confirm' }
+    const label = written ? `拒否: ${written}` : PERMISSION_LABELS[picked]
+    pressed.set(ask.id, label)
+    schedule()
+    const taken = await deliver.take(ask, picked, written)
+    if (taken !== 'taken') return fail(taken)
+    orca.log(`hub: answered the orchestrator's permission ${ask.id} (${ask.toolName}): ${picked}`)
+    await deliver.log({ ask: ask.id, worker: ask.worker, card: 'permission', tool: ask.toolName, choice: picked, ...(written ? { text: written } : {}), shown_sha256: ask.sha })
     return { ok: true }
   }
 

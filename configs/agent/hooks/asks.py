@@ -43,8 +43,16 @@ CLI:
       no Claude Code session around it. Agents run under a shell or Orca's terminal daemon.
   asks.py claim <id>
       The orchestrator takes the ask to ask the user in its own window.
+      A permission (below) can be neither claimed nor answered by the orchestrator.
   asks.py close <id> | close --worker NAME
       Remove an ask and its answer (the orchestrator, when it removes a worker).
+
+Permissions (kind "permission") are written by approval-gate.py, not from the command line: when
+the orchestrator's Claude Code is about to show a permission dialog, the hook writes the call
+(new_permission) and waits for the panel's answer (wait_permission): allow, deny (with an optional
+reason in --text) or terminal (show the dialog now). Only the Hub panel answers one, with the hash
+of the ask as its card showed it, and the hook uses the answer only when that hash is the one of
+the bytes it wrote. Anything else leaves the dialog to the terminal.
 
 decide and next run in the worker: the worker's name, session and cwd come from
 CLAUDE_CODE_SESSION_ID and `claude agents --json`, never from arguments. A new
@@ -81,6 +89,11 @@ ORCA_HELPER = "/Applications/Orca.app/Contents/Frameworks/Orca Helper.app/Conten
 ORCA_MAIN = "/Applications/Orca.app/Contents/MacOS/Orca"
 BODY_MAX = 50000
 EXIT_GONE = 4
+PERMISSION_CHOICES = ("allow", "deny", "terminal")
+# Calls whose dialog is a question to the user, answered in the orchestrator's own way.
+NOT_PANEL_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
+PERMISSION_INPUT_MAX = 50000
+PERMISSION_POLL = 0.5
 
 
 class AskError(Exception):
@@ -288,6 +301,8 @@ def answer(ask_id, by, choice, shown=None, directory=None, text=None, panel_chec
     if shown and sha_file(path) != shown:
         return EXIT_GONE, None
     current = load(path) or {}
+    if current.get("kind") == "permission":
+        check_permission_answer(current, by, choice, shown, text, panel_check)
     if current.get("kind") == "question" and by == "panel":
         if not shown:
             raise AskError("窓口の問いには、カードに出した中身の hash（--shown）が要ります")
@@ -303,6 +318,70 @@ def answer(ask_id, by, choice, shown=None, directory=None, text=None, panel_chec
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False)
     return 0, load(path)
+
+
+def check_permission_answer(ask, by, choice, shown, text, panel_check):
+    if by != "panel":
+        raise AskError("許可の確認に答えられるのは Hub パネルだけです")
+    if not shown:
+        raise AskError("許可の確認には、カードに出した中身の hash（--shown）が要ります")
+    if choice not in PERMISSION_CHOICES:
+        raise AskError(f"許可の確認の答えは {', '.join(PERMISSION_CHOICES)} のどれかです")
+    if text is not None and choice != "deny":
+        raise AskError("理由を書けるのは拒否のときだけです")
+    if (ask.get("expires_at") or 0) < time.time():
+        raise AskError("許可の確認の期限が過ぎました（ターミナルで答えてください）")
+    if not panel_check():
+        raise AskError("許可の確認に答えられるのは、Orca の Hub パネルだけです")
+
+
+def new_permission(entry, tool_name, tool_input, wait, agent_type=None, permission_mode=None, directory=None):
+    """Write the ask for a permission dialog of the orchestrator. (path, sha256 of the bytes) or None."""
+    if tool_name in NOT_PANEL_TOOLS or not isinstance(tool_input, dict):
+        return None
+    if len(json.dumps(tool_input, ensure_ascii=False)) > PERMISSION_INPUT_MAX:
+        return None  # a card could not show it in full
+    ask = new_ask("permission", entry, None, "B", tool_name=tool_name, tool_input=tool_input,
+                  agent_type=agent_type, permission_mode=permission_mode)
+    ask["expires_at"] = ask["created_at"] + wait
+    # The orchestrator may wait on several calls at once.
+    path = save(ask, directory, replace=False)
+    return path, sha_file(path)
+
+
+def permission_answer(path, sha):
+    """The panel's answer to a permission, once there is one.
+
+    None while there is none; {"choice": "invalid"} when the ask changed after it was written or
+    the answer is not the panel's for the ask as written; else {"choice": allow|deny|terminal, "text"}.
+    """
+    try:
+        if sha_file(path) != sha:
+            return {"choice": "invalid"}
+    except OSError:
+        return {"choice": "invalid"}
+    answer_file = answer_path(path)
+    if not answer_file.exists():
+        return None
+    record = load(answer_file)
+    if record is None:
+        return None  # still being written
+    if record.get("by") != "panel" or record.get("shown_sha256") != sha or record.get("choice") not in PERMISSION_CHOICES:
+        return {"choice": "invalid"}
+    text = record.get("text") if record.get("choice") == "deny" else None
+    return {"choice": record["choice"], "text": text if isinstance(text, str) else None}
+
+
+def wait_permission(path, sha, wait, poll=PERMISSION_POLL, clock=time.monotonic, sleep=time.sleep):
+    """Waits up to `wait` seconds for the panel's answer; None when none came."""
+    end = clock() + wait
+    while True:
+        got = permission_answer(path, sha)
+        if got is not None:
+            return got
+        if clock() >= end:
+            return None
+        sleep(poll)
 
 
 def cmd_decide(args):
@@ -398,7 +477,7 @@ def cmd_list(args):
         print(json.dumps(items, ensure_ascii=False, indent=2))
         return 0
     for ask in items:
-        head = ask.get("question") or " / ".join(s["label"] for s in ask.get("suggestions", []))
+        head = ask.get("question") or " / ".join(s["label"] for s in ask.get("suggestions", [])) or f"許可の確認: {ask.get('tool_name')}"
         mark = " (答え済み)" if ask["answered"] else ""
         print(f"{ask['id']}  {ask['kind']:<6} {ask['worker']}  {head.splitlines()[0][:60]}{mark}")
     return 0

@@ -17,7 +17,9 @@ const MESSAGES = {
   invalid: '送れない内容です（空、長すぎる、見えない文字がある）。',
   asking: '窓口が問いや確認の途中なので、届けませんでした。',
   'no-orchestrator': '窓口（名前が orchestrator の claude）が動いていません。',
-  refused: '窓口のターミナルが受け取りませんでした。'
+  refused: '窓口のターミナルが受け取りませんでした。',
+  confirm: '危険なコマンドです。許可してよければ、もう一度押してください。',
+  expired: '期限が過ぎました。窓口のターミナルの確認で答えてください。'
 }
 
 // Every card that holds answer buttons: a worker's ask (alone or in its row) and the orchestrator's question.
@@ -91,8 +93,18 @@ export function setUpActions({ view, notice, composer, request }) {
     const answer = event.target.closest('button[data-answer]')
     if (answer) {
       event.stopPropagation()
+      // A permission's answer is a word (allow, deny, terminal); allowing a dangerous command takes
+      // two presses, the first only asks for the second.
+      const permission = answer.dataset.permission !== undefined
+      const dangerous = permission && answer.dataset.dangerous === '1'
+      if (dangerous && !answer.classList.contains('armed')) {
+        answer.classList.add('armed')
+        say(MESSAGES.confirm)
+        return
+      }
+      const choice = permission ? answer.dataset.choice : Number(answer.dataset.choice)
       // The answer goes first: how the card looks must never keep it from being sent.
-      void call('ask.answer', { id: answer.dataset.id, sha: answer.dataset.sha, choice: Number(answer.dataset.choice) })
+      void call('ask.answer', { id: answer.dataset.id, sha: answer.dataset.sha, choice, ...(dangerous ? { confirmed: true } : {}) })
       // The options give way to the pressed one at once; the worker's next body says how it went.
       const card = answer.closest(ANSWER_CARDS)
       answer.classList.add('chosen')
@@ -107,7 +119,7 @@ export function setUpActions({ view, notice, composer, request }) {
       event.stopPropagation()
       target = open.dataset.say
       ask = open.dataset.ask ? { id: open.dataset.ask, sha: open.dataset.sha } : null
-      to.textContent = ask ? `${open.dataset.name} の判断への答え` : `${open.dataset.name} への指示`
+      to.textContent = open.dataset.to ?? (ask ? `${open.dataset.name} の判断への答え` : `${open.dataset.name} への指示`)
       composer.hidden = false
       textarea.focus()
     }
