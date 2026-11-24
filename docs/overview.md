@@ -79,7 +79,7 @@ dotfiles/
 
 `install.sh`の動き方は3つ。
 
-- 引数なし: fish、ログインシェル、symlink、mise、textlint、選んだagentのCLI、macOSではHomebrew・アプリ・キーリピートまで。
+- 引数なし: fish、ログインシェル、symlink、mise、textlint、lazygtd、選んだagentのCLI、macOSではHomebrew・アプリ・キーリピートまで。
 - `--links-only`: symlinkと設定の生成だけ。ネットワークに出ず、symlinkでない本物のファイルは置き換えない。エージェントが反映に使う。
 - `--dry-run`: `--links-only`の予定だけを出す。
 
@@ -349,7 +349,9 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 ### `tools/`
 
-[lazygtd の旧 Hub 版仕様](../tools/lazygtd/SPEC.md) を参照資料として置く。実装とインストールは dotfiles の対象外。
+[lazygtd の旧 Hub 版仕様](../tools/lazygtd/SPEC.md) を参照資料として置く。実装は別リポジトリ。`tools/install-lazygtd.sh` は通常セットアップで公式の配布バイナリだけを取得する。
+Windowsネイティブは `tools/install-lazygtd.ps1` を個別に実行する。取得するバージョンと
+チェックサム一覧のSHA-256は `tools/lazygtd-release.lock` に固定する。
 
 ### `docs/`
 
@@ -366,6 +368,8 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 | ファイル | 確かめるもの |
 | --- | --- |
 | `tests/test_install_links_only.py` | `install.sh --links-only`と`--dry-run`。一時ディレクトリを`HOME`にし、brewなどは偽物に差し替える |
+| `tests/test_lazygtd_install.py` | 配布バイナリの取得、検証、失敗時に既存のインストールが残ること（Unix） |
+| `tests/test_lazygtd_install_windows.ps1` | Windows PowerShell 5.1で同じインストールの検証（通信なし） |
 | `tests/test_open_link.py` | `open-link.sh`がリンクの種類ごとに正しいもので開くこと |
 | `tests/test_overview.py` | 追跡しているファイルがすべてこのページに載っていること、このページに載っているパスが実在すること |
 

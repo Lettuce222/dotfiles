@@ -94,6 +94,31 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
 
 テスト: `python3 -m unittest tests/test_open_link.py`
 
+## lazygtd
+
+- macOS（Apple Silicon / Intel）、Linux / WSL（x86_64 / aarch64、glibc環境）では、通常の
+  `./install.sh` が [lazygtdのGitHub Releases](https://github.com/Lettuce222/lazygtd/releases)
+  から固定バージョンのバイナリを取得する。Go・Rust・SQLiteの別途インストールは不要。
+- HTTPSのリリースから該当アーカイブと `SHA256SUMS` を取得し、アーカイブの
+  SHA-256とバイナリのバージョンを照合してから `~/.local/bin/lazygtd` に置く。
+  `SHA256SUMS` 自体も `tools/lazygtd-release.lock` に記録したSHA-256と照合する。
+  `curl`、`tar`、`sha256sum` または `shasum` が必要。
+- リリース未公開、対応アーキテクチャがない、もしくは検証失敗の場合、既存の
+  lazygtdを上書きしない。ほかのセットアップは続く。
+- lazygtdだけ再試行するには `sh tools/install-lazygtd.sh`。
+  `--links-only` と `--dry-run` ではlazygtdのダウンロードを行わない。
+- 動作確認は `~/.local/bin/lazygtd --demo`。
+- Windowsネイティブ（x64 / ARM64）は PowerShell で
+  `& .\tools\install-lazygtd.ps1`。同じ署名なしのリリースと固定チェックサムを
+  検証して、`$env:LOCALAPPDATA\Programs\lazygtd\lazygtd.exe` に置く。
+  `curl.exe` が必要。PATHや実行ポリシーは変えない。動作確認は
+  `& "$env:LOCALAPPDATA\Programs\lazygtd\lazygtd.exe" --demo`。
+  スクリプトの実行が許可されていないWindowsでは、実行ポリシーは変更せず
+  Releasesから対象のZIPと `SHA256SUMS` を取得する。`Get-FileHash -Algorithm SHA256`
+  で一覧を固定値と、ZIPを一覧の同名エントリとそれぞれ照合し、解凍先で
+  `.\lazygtd.exe --demo` を実行する。
+  WSLで使う場合はPowerShellではなく、上のLinux用 `./install.sh` を実行する。
+
 ## 新しいアプリ設定
 
 1. `configs/{app}/`に設定を置く。

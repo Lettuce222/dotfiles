@@ -1,6 +1,6 @@
 # lazygtd の仕様
 
-> 旧 Hub 版の参照資料。現在の dotfiles は lazygtd の実装を含まず、インストールもしない。
+> 旧 Hub 版の参照資料。現在の dotfiles は実装を含まず、通常のセットアップで別リポジトリの配布バイナリを導入する。
 
 lazygtd に求められていることを、これまでの話し合いから集めた。いま作れているかどうかは [当時の HANDOFF.md](https://github.com/Lettuce222/dotfiles/blob/322bea95fea96e491cc1c742e32a92c231c5b61f/tools/lazygtd/HANDOFF.md) の「いまできていること」「いまできていないこと」にある。ここには、目指す形を書く。
 

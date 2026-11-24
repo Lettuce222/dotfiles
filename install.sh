@@ -109,7 +109,7 @@ usage() {
 Usage: ./install.sh [--links-only] [--dry-run]
 
   (no options)  Full setup: Homebrew, fish, login shell, symlinks, mise, apps,
-                macOS defaults.
+                macOS defaults and the pinned lazygtd release.
   --links-only  Place symlinks for the selected agent and generate settings.
                 Never installs anything or asks for a password.
                 Prints one line per change.
@@ -861,6 +861,7 @@ fish -c '
         install_udev_gothic_nf
     end
     install_mise
+    sh "$DOTFILES_DIR/tools/install-lazygtd.sh"; or echo "lazygtd installation skipped; other setup continues." >&2
     install_agent_cli; or exit 1
     install_textlint
     if test "$platform" = Darwin
