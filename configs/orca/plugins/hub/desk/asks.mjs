@@ -81,7 +81,10 @@ const written = (card, label, hint) =>
  */
 export function askDetail(card, { now, armed = null }) {
   if (card.kind === 'kept') {
-    return `<div class="head"><h2>窓口の問い</h2></div><div class="card ask"><h3>答えは残してあります</h3>${visibleMarkdown(card.question)}<p><b>${visible(card.label)}</b></p><p class="note">${esc(card.note)}</p></div>`
+    const line = card.line
+      ? `<p class="note">届かないあいだは、次の 1 行を窓口のターミナルに貼って送っても同じです。</p><pre class="preview" data-oa-line>${visible(card.line)}</pre><div class="actions"><button class="btn primary" data-oa-retry="${esc(card.id)}">いま試し直す</button><button class="btn" data-oa-copy="${esc(card.id)}">窓口に貼る 1 行をコピー</button></div>`
+      : ''
+    return `<div class="head"><h2>窓口の問い</h2></div><div class="card ask"><h3>答えは残してあります</h3>${visibleMarkdown(card.question)}<p><b>${visible(card.label)}</b></p><p class="note">${esc(card.note)}</p>${line}</div>`
   }
   const sending = card.pressed !== null && card.pressed !== undefined
   const status = sending ? `<p class="status">「${visible(card.pressed)}」を窓口に返しています…</p>` : ''

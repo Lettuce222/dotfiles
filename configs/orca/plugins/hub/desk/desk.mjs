@@ -237,6 +237,8 @@ function renderAskDetail(d, card) {
   d.innerHTML = askDetail(card, { now: Date.now(), armed })
   d.querySelectorAll('[data-oa]').forEach((b) => { b.onclick = () => answerCard(card, card.kind === 'permission' ? b.dataset.choice : Number(b.dataset.choice)) })
   d.querySelectorAll('[data-oa-send]').forEach((b) => { b.onclick = () => sendWritten(card) })
+  d.querySelectorAll('[data-oa-retry]').forEach((b) => { b.onclick = () => retrySignal(card, b) })
+  d.querySelectorAll('[data-oa-copy]').forEach((b) => { b.onclick = () => copyLine(card) })
   const area = d.querySelector('[data-oa-text]')
   if (area && keep) {
     // A redraw while writing keeps what was written.
@@ -481,6 +483,25 @@ async function answerCard(card, pick) {
   armed = null
   const j = await write('/api/answer', { askId: card.id, sha: card.sha, choice: pick, ...(confirmed ? { confirmed: true } : {}) })
   if (j) toast(j.kept ? esc(j.message ?? '答えは残しました') : '窓口に返した')
+}
+// A kept answer: tell the orchestrator now, or copy the line to paste into its terminal.
+async function retrySignal(card, button) {
+  button.disabled = true
+  toast('窓口に知らせています…（窓口が応答中なら、終わるまで待ちます）', 1e9)
+  const j = await write('/api/resignal', { askId: card.id })
+  if (j) toast('窓口に知らせた')
+  button.disabled = false
+}
+async function copyLine(card) {
+  try {
+    await navigator.clipboard.writeText(card.line)
+    toast('コピーした。窓口のターミナルに貼って Enter を押してください')
+  } catch {
+    // Without the clipboard API: select the line, for Cmd+C.
+    const pre = $('detail').querySelector('[data-oa-line]')
+    if (pre) window.getSelection()?.selectAllChildren(pre)
+    toast('コピーできなかった。選んだ 1 行を ⌘+C でコピーしてください')
+  }
 }
 async function sendWritten(card) {
   const area = $('detail').querySelector('[data-oa-text]')

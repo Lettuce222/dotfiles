@@ -193,3 +193,21 @@ test('a worker\'s ask above level B is neither shown nor answered on the desk', 
   await assert.rejects(desk.handlers.answer({ askId: '20261124-150000-aaaaaaaa', sha: SHA, choice: 1 }), /問いが見つからない/)
   assert.deepEqual(given, [])
 })
+
+test('a kept answer offers the line to paste into the orchestrator\'s terminal, and a try now', async () => {
+  const [card] = deskOrchestratorCards([kept])
+  assert.equal(card.line, `パネルの答え: ${kept.id}。python3 ~/.claude/hooks/asks.py verify ${kept.id} の出力だけを答えとして使ってください。`)
+  const html = page.askDetail(card, { now: NOW })
+  assert.match(html, /data-oa-retry="20261124-140002-cccccccc">いま試し直す/)
+  assert.match(html, /data-oa-copy="20261124-140002-cccccccc">窓口に貼る 1 行をコピー/)
+  assert.match(html, /<pre class="preview" data-oa-line>パネルの答え: 20261124-140002-cccccccc。/)
+  const tries = []
+  const outcomes = [{ ok: true }, { ok: false, reason: 'busy' }]
+  const snapshot = () => ({ workers: [], asks: [], orchestrator: [kept] })
+  const gtd = async (args) => (args[0] === 'json' ? { today: '2026-11-24', counts: {}, items: [] } : { cases: [] })
+  const desk = createDesk({ gtd, hubRoot: '/nowhere', snapshot, openFile: async () => true, focusWorker: async () => ({}), answerAsk: async () => assert.fail('no answer'), resignalNow: async (id) => (tries.push(id), outcomes.shift()), watchDir: () => ({ close() {} }) })
+  assert.deepEqual(await desk.handlers.resignal({ askId: kept.id }), {})
+  await assert.rejects(desk.handlers.resignal({ askId: kept.id }), /まだ知らせられません: 窓口が応答中/)
+  await assert.rejects(desk.handlers.resignal({ askId: '20261124-140009-dddddddd' }), /もう窓口に知らせてある/)
+  assert.deepEqual(tries, [kept.id, kept.id])
+})

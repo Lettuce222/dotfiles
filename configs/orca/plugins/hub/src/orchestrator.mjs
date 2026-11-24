@@ -83,8 +83,10 @@ export async function locateOrchestrator({ run, readSessions, hubRoot }) {
   }
 }
 
-// The border of Claude Code's input box, with the session's name in it: `──── orchestrator ─`.
-const INPUT_BORDER = new RegExp(`─ ${ORCHESTRATOR} ─`)
+// The border of Claude Code's input box, a line of ─ that ends with the session's name:
+// `──── orchestrator ─`, or with what Claude Code shows before it, `──── ● high · /effort  orchestrator ─`.
+// The name must end the line, so a line of text that only mentions it does not count.
+export const INPUT_BORDER = new RegExp(`^─{3,}.*\\s${ORCHESTRATOR} ─+\\s*$`, 'm')
 
 async function readScreen(run, handle) {
   return (await run(['terminal', 'read', '--terminal', handle, '--screen', '--limit', SCREEN_LINES, '--json'])).result.terminal.tail.join('\n')

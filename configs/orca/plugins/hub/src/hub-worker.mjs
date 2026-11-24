@@ -422,6 +422,23 @@ export function createHubWorker({
     return signalling
   }
 
+  /**
+   * Tells the orchestrator of a kept answer now, without waiting for the next try (the desk's
+   * button). Resolves { ok: true } once it is told, else { ok: false, reason } with why not.
+   */
+  async function resignalNow(id) {
+    if (!unsignaled.has(id)) return { ok: true }
+    if (!signalling) signalledAt = -Infinity
+    await resignal()
+    // A try already running may have started before this answer was kept: one more.
+    if (unsignaled.has(id) && !signalling) {
+      signalledAt = -Infinity
+      await resignal()
+    }
+    const left = unsignaled.get(id)
+    return left ? { ok: false, reason: left.reason } : { ok: true }
+  }
+
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
   async function refresh(focusChanged = false) {
     pendingFocus ||= focusChanged
@@ -797,5 +814,5 @@ export function createHubWorker({
     if (JSON.stringify(counts) !== before) schedule()
   }
 
-  return { start, refresh, resignal, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
+  return { start, refresh, resignal, resignalNow, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
 }

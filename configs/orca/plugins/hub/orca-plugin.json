@@ -5,7 +5,7 @@
   "id": "hub-local",
   "publisher": "lettuce222",
   "name": "Hub (local)",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "The hub's desk (its items, served on 127.0.0.1 to Orca's browser) and every Claude Code session of this computer, background ones included, with its goal and progress. Adapted from andoshin11/orca-milestone.",
   "license": "MIT",
   "engines": {

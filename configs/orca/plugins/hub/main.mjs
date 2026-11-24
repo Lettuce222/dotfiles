@@ -104,6 +104,7 @@ export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
         openFile: (path) => worker.openFile(path),
         focusWorker: (summary) => worker.focusWorker(summary),
         answerAsk: (request) => worker.answerAsk(request),
+        resignalNow: (id) => worker.resignalNow(id),
         log: (line) => orca.log(line),
         onChange: () => void showCounts()
       })

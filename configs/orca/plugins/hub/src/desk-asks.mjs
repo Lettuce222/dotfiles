@@ -9,6 +9,7 @@
 // rules: no allow for a call that reaches past this machine, and a dangerous one is pressed twice.
 import { ASK_ID, PERMISSION_CHOICES, SHA256 } from './asks.mjs'
 import { DeskError } from './desk-server.mjs'
+import { signalLine } from './orchestrator.mjs'
 import { CHECK_NOTES, FAILURES, ORCHESTRATOR_FAILURES, PERMISSION_NOTES, RISK_LABELS } from './hub-render.mjs'
 
 const WRITTEN_MAX = 2000
@@ -26,6 +27,8 @@ function deskCard(card) {
       kind: 'kept',
       question: String(card.question ?? ''),
       label: String(card.label ?? ''),
+      // The line the Hub types into the orchestrator's terminal; the user can paste it there.
+      line: signalLine(card.id),
       note: `まだ窓口に知らせられていません: ${ORCHESTRATOR_FAILURES[card.reason] ?? ORCHESTRATOR_FAILURES.failed} 窓口が受け取れるようになったら、自動で知らせます。`
     }
   }
@@ -91,6 +94,12 @@ export function orchestratorAnswer(body, cards) {
   }
   if (!Number.isInteger(body.choice) || body.choice < 1 || body.choice > card.options.length) throw new DeskError(400, '答えの番号が違う')
   return { id: card.id, sha: card.sha, choice: body.choice }
+}
+
+/** What the page is told of a try to tell the orchestrator of a kept answer now. */
+export function resignalResult(result) {
+  if (result?.ok) return {}
+  throw new DeskError(409, `まだ知らせられません: ${ORCHESTRATOR_FAILURES[result?.reason] ?? ORCHESTRATOR_FAILURES.failed}`)
 }
 
 /** What the page is told of answerAsk's result for an orchestrator's card. */

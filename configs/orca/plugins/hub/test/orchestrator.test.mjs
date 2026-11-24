@@ -68,6 +68,18 @@ function orca({ terminals, state = 'done', sessions, agent = {}, screen = PROMPT
 const ORCH = { name: 'orchestrator', kind: 'interactive', alive: true, cwd: HUB, sessionId: 'sess-orch' }
 const TERM = { handle: 'h1', title: 'orchestrator', agentIdentity: 'claude', writable: true, worktreePath: HUB, tabId: 't1', leafId: 'l1' }
 
+test('the input box is told by its border, with or without what Claude Code shows before the name', async () => {
+  const { INPUT_BORDER } = await import('../src/orchestrator.mjs')
+  const effort = '✻ Cooked for 1m 8s · done 4:03 PM\n──────────────── ● high · /effort  orchestrator ─\n❯\n────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle)'
+  assert.match(PROMPT, INPUT_BORDER)
+  assert.match(effort, INPUT_BORDER, 'Claude Code 2.x puts the effort before the name')
+  assert.doesNotMatch('~\n~\n"/private/tmp/claude-prompt-1.md" 3L', INPUT_BORDER, 'an editor')
+  assert.doesNotMatch('窓口（orchestrator ─ の話）を読む', INPUT_BORDER, 'text that only mentions the name')
+  assert.doesNotMatch('──────── orchestrator-2 ─', INPUT_BORDER, 'another session')
+  const ok = orca({ terminals: [TERM], sessions: [ORCH], screen: effort })
+  assert.equal((await findOrchestrator({ ...ok, hubRoot: HUB })).ok, true)
+})
+
 test('the line goes only to the one orchestrator terminal, and only while it waits for a prompt', async () => {
   const ok = orca({ terminals: [TERM, { ...TERM, handle: 'h2', title: 'hub-49', tabId: 't2' }], sessions: [ORCH] })
   assert.deepEqual(await findOrchestrator({ ...ok, hubRoot: HUB }), { ok: true, reason: null, handle: 'h1', since: null })
@@ -290,12 +302,17 @@ test("an answer the orchestrator could not be told of is kept, shown, and told o
   assert.ok(kept.includes(md('- とても長い問い')), 'the question as Markdown')
   assert.deepEqual(sent, [])
 
+  assert.deepEqual(await hub.resignalNow(raw.id), { ok: false, reason: 'not-in-orca' }, 'the desk\'s button tries now and says why not')
+  assert.deepEqual(sent, [])
   conversationName = 'orchestrator'
   await hub.resignal()
   assert.deepEqual(sent, [], 'not again right away')
+  assert.deepEqual(await hub.resignalNow(raw.id), { ok: true }, 'the button does not wait the 30 seconds')
+  assert.deepEqual(sent.filter((line) => line !== '\u0013'), [signalLine(raw.id)])
+  assert.deepEqual(await hub.resignalNow(raw.id), { ok: true }, 'told already')
   clock += 30_000
   await hub.resignal()
-  assert.deepEqual(sent.filter((line) => line !== '\u0013'), [signalLine(raw.id)])
+  assert.deepEqual(sent.filter((line) => line !== '\u0013'), [signalLine(raw.id)], 'told once')
   assert.ok(logs.some((line) => line.includes(`told the orchestrator of the kept answer to ${raw.id}`)))
   await hub.refresh(true)
   assert.ok(!posted.at(-1).includes('kept'), 'the card is gone once told')

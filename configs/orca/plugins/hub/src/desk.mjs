@@ -9,7 +9,8 @@
 import { appendFile, readFile, realpath, stat } from 'node:fs/promises'
 import { watch } from 'node:fs'
 import { isAbsolute, join, normalize, relative, sep } from 'node:path'
-import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, waitingCount } from './desk-asks.mjs'
+import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, resignalResult, waitingCount } from './desk-asks.mjs'
+import { ASK_ID } from './asks.mjs'
 import { DeskError } from './desk-server.mjs'
 import { EXIT_CONFLICT } from './gtd.mjs'
 
@@ -62,8 +63,9 @@ const ASK_MESSAGES = {
  * @param openFile (absolutePath) => Promise<boolean>, in Orca's editor
  * @param focusWorker (worker summary) => Promise<{ focused, reason? }>
  * @param answerAsk ({ id, sha, choice, text?, confirmed? }) => Promise<{ ok, reason?, message? }>
+ * @param resignalNow (askId) => Promise<{ ok, reason? }>: tells the orchestrator of a kept answer now
  */
-export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
+export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, resignalNow = async () => ({ ok: false, reason: 'failed' }), log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
   const gtdRoot = join(hubRoot, 'gtd')
   const itemsDir = join(gtdRoot, 'items')
   const changes = join(gtdRoot, '.log', 'changes.jsonl')
@@ -248,6 +250,12 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     async 'case-project'(body) {
       if (typeof body.slug !== 'string' || !SLUG.test(body.slug)) throw bad('案件の名前が違う')
       return write(['case-project', body.slug])
+    },
+    // A kept answer of the orchestrator's question: tell the orchestrator now.
+    async resignal(body) {
+      const kept = (snapshot()?.orchestrator ?? []).find((card) => card.kept && card.id === body?.askId)
+      if (!ASK_ID.test(body?.askId ?? '') || !kept) throw new DeskError(409, 'もう窓口に知らせてある（読み直してください）')
+      return resignalResult(await resignalNow(kept.id))
     },
     async answer(body) {
       // The orchestrator's card first: its question, approval or permission dialog, answered the
