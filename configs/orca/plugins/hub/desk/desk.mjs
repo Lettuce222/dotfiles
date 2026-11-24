@@ -5,18 +5,25 @@ import { renderMarkdown } from './markdown.mjs'
 import { TAB_KEYS, deskKey } from './keys.mjs'
 
 // ---------------------------------------------------------------- token and small helpers
+// Orca opens the desk with its token in the address (?t=). The page keeps it in localStorage and
+// takes it out of the address, which Orca shows and remembers: Orca loads that address again, with
+// no token, when it shows the tab anew (in a new webview, so sessionStorage would be gone). The
+// token changes at each start of the Hub worker; then opening the desk again from Orca brings the
+// new one.
 const TOKEN_KEY = 'desk-token'
+const STALE = '鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください'
+const storage = (() => { try { return window.localStorage } catch { return null } })()
 {
   const q = new URLSearchParams(location.search)
   const fromUrl = q.get('t')
   if (fromUrl) {
-    sessionStorage.setItem(TOKEN_KEY, fromUrl)
+    storage?.setItem(TOKEN_KEY, fromUrl)
     q.delete('t')
     const rest = q.toString()
     history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash)
   }
 }
-const token = () => sessionStorage.getItem(TOKEN_KEY) ?? ''
+const token = () => storage?.getItem(TOKEN_KEY) ?? ''
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const $ = (id) => document.getElementById(id)
@@ -297,7 +304,7 @@ const UNREACHABLE = 'デスクのサーバーにつながらない。Orca のス
 async function load() {
   let r
   try { r = await api('/api/state') } catch { toast(UNREACHABLE, 1e9); return }
-  if (r.status === 401 || r.status === 403) { toast('トークンが合わない。Orca から開き直してください', 1e9); return }
+  if (r.status === 401 || r.status === 403) { toast(STALE, 1e9); return }
   if (!r.json || !Array.isArray(r.json.items)) { toast('state を読めなかった'); return }
   S = { ...S, ...r.json }
   byId = Object.fromEntries(S.items.map((t) => [t.id, t]))

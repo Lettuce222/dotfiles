@@ -209,46 +209,29 @@ test('no desk server, or no hub workspace in Orca, opens nothing and says so', a
   assert.match(lost.logs.join('\n'), /Orca に hub のワークスペースが見つかりません/)
 })
 
-test('the desk\'s address without the right token shows, in Japanese, what to do, and never the token', async () => {
+test('a page with no token or an old one is told, in Japanese, to open the desk again from Orca', async () => {
   const token = 'tok-' + 'x'.repeat(20)
-  const desk = createDeskServer({ pluginDir: join(import.meta.dirname, '..'), handlers: {}, token })
+  const desk = createDeskServer({ pluginDir: join(import.meta.dirname, '..'), handlers: { state: async () => ({}) }, token })
   const { port } = await desk.start(0)
   try {
-    for (const path of ['/', '/?t=stale-token']) {
-      const res = await fetch(`http://127.0.0.1:${port}${path}`)
-      assert.equal(res.status, 403, path)
-      assert.match(res.headers.get('content-type'), /^text\/html/)
-      assert.match(res.headers.get('content-security-policy'), /script-src 'self'/)
-      const html = await res.text()
-      assert.match(html, /<title>デスク<\/title>/, 'titled like the desk, so that opening the desk finds the tab')
-      assert.match(html, /鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください/)
-      assert.match(html, /<script type="module" src="\/reopen.mjs"><\/script>/)
-      assert.ok(!html.includes(token) && !html.includes('stale-token'), 'no token in the page')
+    for (const given of [undefined, 'old-token']) {
+      const res = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: given ? { 'X-Desk-Token': given } : {} })
+      assert.equal(res.status, 403)
+      const body = await res.json()
+      assert.equal(body.error, '鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください')
+      assert.ok(!JSON.stringify(body).includes(token))
     }
-    const script = await fetch(`http://127.0.0.1:${port}/reopen.mjs`)
-    assert.equal(script.status, 200, 'served without the token, like the other scripts')
-    assert.equal((await fetch(`http://127.0.0.1:${port}/?t=${token}`)).status, 200)
   } finally {
     await desk.close()
   }
+  const page = readFileSync(join(import.meta.dirname, '..', 'desk', 'desk.mjs'), 'utf8')
+  assert.match(page, /const STALE = '鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください'/)
+  assert.match(page, /if \(r\.status === 401 \|\| r\.status === 403\) \{ toast\(STALE, 1e9\)/)
+  assert.match(page, /storage\?\.setItem\(TOKEN_KEY, fromUrl\)/, 'kept in localStorage: Orca shows a tab anew in a new webview')
+  assert.doesNotMatch(page, /sessionStorage\./)
 })
 
-test('a reload asks again once with the token the tab keeps; a refused token is dropped, not retried', () => {
-  const source = readFileSync(join(import.meta.dirname, '..', 'desk', 'reopen.mjs'), 'utf8')
-  const run = (search, kept) => {
-    const storage = new Map(kept ? [['desk-token', kept]] : [])
-    const replaced = []
-    const sessionStorage = { getItem: (k) => storage.get(k) ?? null, removeItem: (k) => storage.delete(k) }
-    const location = { search, hash: '#l=inbox', replace: (to) => replaced.push(to) }
-    new Function('location', 'sessionStorage', 'URLSearchParams', source)(location, sessionStorage, URLSearchParams)
-    return { replaced, kept: storage.get('desk-token') ?? null }
-  }
-  assert.deepEqual(run('', 'abc'), { replaced: ['/?t=abc#l=inbox'], kept: 'abc' }, 'a reload')
-  assert.deepEqual(run('?t=abc', 'abc'), { replaced: [], kept: null }, 'refused with a token: no loop')
-  assert.deepEqual(run('', null), { replaced: [], kept: null }, 'nothing kept: the page says what to do')
-})
-
-test('a desk tab showing that page, on the desk\'s origin, is loaded anew whatever its title', async () => {
+test('a desk tab on the desk\'s origin is loaded anew whatever its title (a page Orca titled by its text)', async () => {
   const { worker, runs } = setup({
     'tab list': { ok: true, result: { tabs: [deskTab({ browserPageId: 'p403', url: 'http://127.0.0.1:54178/', title: 'token' })] } },
     'goto --url': { ok: true },

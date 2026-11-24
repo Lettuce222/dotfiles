@@ -132,13 +132,18 @@ function rawGet(path, host) {
   })
 }
 
-test('the page needs the token and comes with a strict policy; the scripts it loads do not', async () => {
-  assert.equal((await fetch(`${base}/`)).status, 403)
-  const page = await fetch(`${base}/?t=${token}`)
-  assert.equal(page.status, 200)
-  assert.match(page.headers.get('content-security-policy'), /default-src 'none'; script-src 'self'/)
-  assert.match(await page.text(), /<script type="module" src="\/desk.mjs">/)
-  for (const path of ['/desk.mjs', '/keys.mjs', '/reopen.mjs', '/desk.css', '/markdown.mjs']) {
+test('the page and its scripts come with a strict policy and need no token, since they hold no data', async () => {
+  for (const address of ['/', `/?t=${token}`, '/?t=old']) {
+    const page = await fetch(base + address)
+    assert.equal(page.status, 200, 'Orca loads the address the page left, without the token, again')
+    assert.match(page.headers.get('content-security-policy'), /default-src 'none'; script-src 'self'.*frame-ancestors 'none'/)
+    assert.equal(page.headers.get('access-control-allow-origin'), null)
+    const html = await page.text()
+    assert.match(html, /<script type="module" src="\/desk.mjs">/)
+    assert.ok(!html.includes(token), 'the page never holds the token')
+  }
+  assert.equal((await api('/api/state', undefined, { 'X-Desk-Token': '' })).status, 403, 'the data needs it')
+  for (const path of ['/desk.mjs', '/keys.mjs', '/desk.css', '/markdown.mjs']) {
     const res = await fetch(base + path)
     assert.equal(res.status, 200, path)
     assert.equal(res.headers.get('access-control-allow-origin'), null)
@@ -148,8 +153,9 @@ test('the page needs the token and comes with a strict policy; the scripts it lo
 })
 
 test('a request for another host name is refused (DNS rebinding)', async () => {
-  assert.equal(await rawGet(`/?t=${token}`, `evil.example:${server.port}`), 421)
-  assert.equal(await rawGet(`/?t=${token}`, `localhost:${server.port}`), 200)
+  assert.equal(await rawGet('/', `evil.example:${server.port}`), 421)
+  assert.equal(await rawGet(`/api/state`, `evil.example:${server.port}`), 421)
+  assert.equal(await rawGet('/', `localhost:${server.port}`), 200)
 })
 
 test('the API needs the token, POST, JSON and this origin', async () => {

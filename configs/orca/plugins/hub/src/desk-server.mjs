@@ -1,10 +1,11 @@
 // Serves the desk (desk/index.html) to Orca's built-in browser from the plugin's worker, on
-// 127.0.0.1 only, at a port the system picks, with a token made at each start. The HTTP layer only:
+// 127.0.0.1 only, at the port it is given (else one the system picks), with a token made at each start. The HTTP layer only:
 // what each call does is in the handlers (src/desk.mjs).
 //
 // Guards, since any page in any browser on this computer can reach 127.0.0.1:
 // - every API call needs the token (the X-Desk-Token header; the event stream, which cannot send a
-//   header, takes it as ?t=), compared in constant time;
+//   header, takes it as ?t=), compared in constant time; the page and its scripts, which hold no
+//   data, do not;
 // - the Host header must name this server (a DNS rebinding page has its own host name);
 // - a write must be a POST of application/json (a form of another site cannot send that without a
 //   preflight, which this server never answers) and its Origin, when sent, must be this server;
@@ -18,18 +19,8 @@ const BODY_MAX = 64 * 1024
 const HEARTBEAT_MS = 25_000
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8' }
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-// The page for the desk's address without the right token: what to do, and no token. Titled デスク
-// like the desk, so that opening the desk finds this tab and loads it anew (src/desk-tab.mjs).
-// desk/reopen.mjs asks again with the token the tab keeps, which is all a reload needs.
-const STALE_PAGE = `<!doctype html>
-<html lang="ja">
-<head><meta charset="utf-8"><title>デスク</title>
-<style>body{font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;margin:3em auto;max-width:36em;padding:0 1em}</style>
-<script type="module" src="/reopen.mjs"></script>
-</head>
-<body><h1>デスク</h1><p>鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください。</p></body>
-</html>
-`
+// What a page with no token or an old one is told (desk/desk.mjs says the same).
+const STALE = '鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください'
 export const POSTS = ['add', 'move', 'done', 'open', 'focus', 'from-case', 'case-project', 'answer']
 
 export class DeskError extends Error {
@@ -46,7 +37,6 @@ export function deskFiles(pluginDir) {
     '/desk.css': join(pluginDir, 'desk', 'desk.css'),
     '/desk.mjs': join(pluginDir, 'desk', 'desk.mjs'),
     '/keys.mjs': join(pluginDir, 'desk', 'keys.mjs'),
-    '/reopen.mjs': join(pluginDir, 'desk', 'reopen.mjs'),
     '/markdown.mjs': join(pluginDir, 'src', 'markdown.mjs')
   }
 }
@@ -115,10 +105,10 @@ export function createDeskServer({ pluginDir, handlers, token = randomBytes(24).
     const url = new URL(req.url, origin())
     if (!hostOk(req.headers.host)) return send(res, 421, 'misdirected')
     if (req.method === 'GET' && Object.hasOwn(files, url.pathname)) {
-      // The page itself only with the token, so that another page cannot frame or read it.
-      if (url.pathname === '/' && !sameToken(url.searchParams.get('t'), token)) {
-        return send(res, 403, STALE_PAGE, { 'Content-Type': TYPES['.html'], 'Content-Security-Policy': CSP })
-      }
+      // The page and its scripts need no token: they hold no data (only the API gives any), no other
+      // site can frame them (frame-ancestors) or read them (no CORS), and the token is what the page
+      // was opened with. Orca keeps a tab's address as the page leaves it, without the token, and
+      // loads that address again when it shows the tab anew.
       const path = files[url.pathname]
       const type = TYPES[path.slice(path.lastIndexOf('.'))] ?? 'application/octet-stream'
       try {
@@ -136,7 +126,7 @@ export function createDeskServer({ pluginDir, handlers, token = randomBytes(24).
       req.on('close', () => clients.delete(res))
       return
     }
-    if (!sameToken(req.headers['x-desk-token'], token)) return send(res, 403, { ok: false, error: 'トークンが違う（デスクを開き直してください）' })
+    if (!sameToken(req.headers['x-desk-token'], token)) return send(res, 403, { ok: false, error: STALE })
     if (url.pathname === '/api/state' && req.method === 'GET') {
       return send(res, 200, { ok: true, rev, ...(await handlers.state()) })
     }
