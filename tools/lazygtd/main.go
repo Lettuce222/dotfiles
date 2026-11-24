@@ -12,7 +12,7 @@ import (
 	"github.com/Lettuce222/lazygtd/internal/ui"
 )
 
-var version = "0.1.0"
+var version = "0.3.0"
 
 func main() {
 	home := flag.String("gtd-home", "", "the GTD folder (GTD_HOME; by default gtd.py's: ${AGENT_ORCHESTRATOR_HOME:-~/hub}/gtd)")

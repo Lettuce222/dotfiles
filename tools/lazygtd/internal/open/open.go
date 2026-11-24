@@ -75,11 +75,14 @@ func Orca(path string) error {
 	return nil
 }
 
-// Nvim is the command that edits path in nvim on this terminal; the ui suspends the screen while
-// it runs.
+// Nvim is the command that edits path on this terminal: $EDITOR, else nvim (SPEC 6.4). The ui
+// suspends the screen while it runs.
 func Nvim(path string) *exec.Cmd {
-	editor := "nvim"
-	cmd := exec.Command(editor, path)
+	editor := strings.Fields(os.Getenv("EDITOR"))
+	if len(editor) == 0 {
+		editor = []string{"nvim"}
+	}
+	cmd := exec.Command(editor[0], append(editor[1:], path)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd
 }

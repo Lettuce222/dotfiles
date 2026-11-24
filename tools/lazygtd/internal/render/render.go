@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
+	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 
 	"github.com/Lettuce222/lazygtd/internal/desk"
@@ -27,11 +28,15 @@ const (
 	Focus  = "#9ece6a"
 	Blue   = "#7aa2f7"
 	Green  = "#9ece6a"
-	Orange = "#e0af68"
 	Purple = "#bb9af7"
 	Red    = "#f7768e"
 	Cyan   = "#7dcfff"
-	Dim    = "#565f89"
+	// Dim is the faint text. SPEC 5.2 keeps it readable: the same as Muted, never #4e5575.
+	Dim = Muted
+	// Yellow is kept for the orchestrator's questions and approvals (SPEC 5.2); a due date that
+	// comes soon and why an item is the user's turn take TokyoNight's orange.
+	Yellow = "#e0af68"
+	Soon   = "#ff9e64"
 )
 
 // RGB splits "#rrggbb".
@@ -72,7 +77,7 @@ func dueChip(due, today string) string {
 		case days < 0:
 			c = Red
 		case days <= 2:
-			c = Orange
+			c = Soon
 		}
 	}
 	return Color(c, MMDD(due))
@@ -83,7 +88,7 @@ func dueChip(due, today string) string {
 func Chips(it *gtd.Item, box, today string) []string {
 	var out []string
 	if it.Unread() {
-		out = append(out, Color(Cyan, "●窓口の返事"))
+		out = append(out, Color(Blue, "●窓口の返事"))
 	} else if it.Waiting() {
 		out = append(out, Color(Muted, "…答え待ち"))
 	}
@@ -92,7 +97,7 @@ func Chips(it *gtd.Item, box, today string) []string {
 		if label == "" {
 			label = m
 		}
-		out = append(out, Color(Orange, label))
+		out = append(out, Color(Soon, label))
 	}
 	if it.IsAgent() {
 		out = append(out, Color(Purple, "agent"))
@@ -108,14 +113,103 @@ func Chips(it *gtd.Item, box, today string) []string {
 	return out
 }
 
-// Row is the line of an item in a box.
-func Row(it *gtd.Item, box, today string) string {
-	chips := Chips(it, box, today)
-	head := ""
-	if len(chips) > 0 {
-		head = strings.Join(chips, " ") + " "
+// Row is the line of an item in a list, as lazygit's rows of branches and commits: a short date
+// column (the due date in color, else how long ago it came, dim, as a branch's recency), a mark
+// column (● an answer not read, … waiting for one, ◆ an agent's), the title, then dim words (why
+// it is the user's turn, who is waited for, the project). key is the list key the row is in.
+func Row(it *gtd.Item, key, today string) string {
+	var b strings.Builder
+	b.WriteString(dateCol(it, today) + " ")
+	switch {
+	case it.Unread():
+		b.WriteString(Color(Blue, "●"))
+	case it.Waiting():
+		b.WriteString(Color(Muted, "…"))
+	case it.IsAgent() && gtd.S(it.Actor) != "me":
+		b.WriteString(Color(Purple, "◆"))
+	default:
+		b.WriteString(" ")
 	}
-	return head + it.Title
+	b.WriteString(" ")
+	title := it.Title
+	if strings.HasPrefix(key, desk.StepsPrefix) {
+		switch it.List {
+		case "done":
+			title = Color(Dim, "✓ "+title)
+		case "next":
+			title = Color(Green, "▶ ") + title
+		case "waiting":
+			title = Color(Muted, "… ") + title
+		default:
+			title = Color(Dim, "· ") + title
+		}
+	} else if it.List == "done" {
+		title = Color(Dim, title)
+	}
+	b.WriteString(title)
+	var tail []string
+	if m := gtd.S(it.Mine); m != "" && key == "mine" {
+		label := desk.MineLabel[m]
+		if label == "" {
+			label = m
+		}
+		tail = append(tail, Color(Soon, label))
+	}
+	if it.List == "waiting" && gtd.S(it.Who) != "" {
+		tail = append(tail, Color(Muted, gtd.S(it.Who)))
+	}
+	if it.List == "project" && len(it.Steps) > 0 {
+		tail = append(tail, Color(Muted, fmt.Sprintf("%d ステップ", len(it.Steps))))
+	}
+	if w := gtd.S(it.Worker); w != "" && key != "mine" {
+		tail = append(tail, Color(Purple, w))
+	}
+	if len(tail) > 0 {
+		b.WriteString(" " + strings.Join(tail, " "))
+	}
+	return b.String()
+}
+
+// dateCol is the row's first column, five wide.
+func dateCol(it *gtd.Item, today string) string {
+	if d := gtd.S(it.Due); d != "" {
+		return dueChip(d, today)
+	}
+	if it.List == "waiting" && gtd.S(it.FollowUp) != "" {
+		f := gtd.S(it.FollowUp)
+		c := Muted
+		if f < today {
+			c = Red
+		} else if f == today {
+			c = Soon
+		}
+		return Color(c, MMDD(f))
+	}
+	since := gtd.S(it.Since)
+	if it.List == "done" && gtd.S(it.Done) != "" {
+		since = gtd.S(it.Done)
+	}
+	a := age(since, today)
+	return Color(Dim, strings.Repeat(" ", max(5-runewidth.StringWidth(a), 0))+a)
+}
+
+// age is how long ago a date was, as lazygit's recency ("3d", "2w").
+func age(d, today string) string {
+	t1, err1 := time.Parse("2006-01-02", d[:min(10, len(d))])
+	t2, err2 := time.Parse("2006-01-02", today)
+	if err1 != nil || err2 != nil {
+		return ""
+	}
+	days := int(t2.Sub(t1).Hours() / 24)
+	switch {
+	case days <= 0:
+		return "今日"
+	case days < 14:
+		return fmt.Sprintf("%dd", days)
+	case days < 60:
+		return fmt.Sprintf("%dw", days/7)
+	}
+	return fmt.Sprintf("%dm", days/30)
 }
 
 // Detail is the right box's text for an item: its title, its fields, its steps, deliverables and
@@ -123,7 +217,7 @@ func Row(it *gtd.Item, box, today string) string {
 func Detail(it *gtd.Item, m *desk.Model, width int) string {
 	var b strings.Builder
 	b.WriteString(Bold(Fg, it.Title) + "\n")
-	if chips := Chips(it, m.Cur, m.State.Today); len(chips) > 0 {
+	if chips := Chips(it, m.Cur(), m.State.Today); len(chips) > 0 {
 		b.WriteString(strings.Join(chips, " ") + "\n")
 	}
 	b.WriteString("\n")
@@ -165,7 +259,7 @@ func Detail(it *gtd.Item, m *desk.Model, width int) string {
 				case s.List == "waiting":
 					mark = Color(Muted, "待ち")
 				case s.Mine != nil:
-					mark = Color(Orange, "あなたの番")
+					mark = Color(Soon, "あなたの番")
 				default:
 					mark = Color(Green, "次の行動")
 				}
@@ -174,7 +268,7 @@ func Detail(it *gtd.Item, m *desk.Model, width int) string {
 		}
 	}
 	if len(it.Deliverables) > 0 {
-		b.WriteString("\n" + Bold(Blue, "成果物") + Color(Dim, "（d で開く）") + "\n")
+		b.WriteString("\n" + Bold(Blue, "成果物") + Color(Dim, "（o で開く）") + "\n")
 		for _, d := range it.Deliverables {
 			b.WriteString("  " + d + "\n")
 		}
@@ -183,7 +277,9 @@ func Detail(it *gtd.Item, m *desk.Model, width int) string {
 	if strings.TrimSpace(it.Body) == "" {
 		b.WriteString(Color(Dim, "（本文なし）") + "\n")
 	} else {
-		b.WriteString(Markdown(it.Body, width))
+		// The talk with the orchestrator, in the order it was said, after the rest (SPEC 5.5).
+		rest, talk := SplitTalk(it.Body)
+		b.WriteString(Markdown(strings.TrimSpace(rest+"\n\n"+TalkMarkdown(talk)), width))
 	}
 	if it.Waiting() {
 		b.WriteString("\n" + Color(Muted, "窓口の答えを待っています。") + "\n")

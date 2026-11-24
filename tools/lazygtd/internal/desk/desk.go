@@ -1,6 +1,8 @@
-// Package desk is the state of the screen without the screen: the boxes of the left column, the
-// rows of each, which row is selected, and the filters. It follows the browser desk of the Hub
-// (local) Orca plugin (desk/desk.mjs, desk/sections.mjs) so that the two show the same lists.
+// Package desk is the state of the screen without the screen: the panels of the left column and
+// their tabs, the rows of each list, which row is selected, the filters and the project being
+// looked into. It is laid out as lazygit's side panels (five numbered windows, some with tabs:
+// lazygit's "Files - Worktrees - Submodules"), with the lists of the browser desk of the Hub
+// (local) Orca plugin in them.
 package desk
 
 import (
@@ -9,44 +11,52 @@ import (
 	"github.com/Lettuce222/lazygtd/internal/gtd"
 )
 
-// Box is a box of the left column.
-type Box struct {
+// List is a list a tab shows.
+type List struct {
 	ID    string
 	Label string
-	Key   rune // the key that jumps to it
-	G     rune // the initial after g (0 for none)
 	Hint  string
 }
 
-// Boxes are the boxes in the order of the column (h, l and Tab go round them), as on the desk:
-// あなたの番, then the talk with the orchestrator under it, then the lists.
-var Boxes = []Box{
-	{"mine", "あなたの番", 'q', 'y', "承認・要判断・確かめてほしいもの"},
-	{"talk", "窓口", 'o', 0, "窓口の返事（まだ読んでいないもの）と、窓口の答えを待っているもの"},
-	{"inbox", "inbox", 'w', 'i', "1 件ずつ何をするか決めて移す（f）"},
-	{"next", "次の行動", 'e', 'n', "自分とエージェント。プロジェクトの「次」もここに出る"},
-	{"project", "プロジェクト", 'r', 'p', "要る行動を順に"},
-	{"waiting", "連絡待ち", 't', 'w', "相手・渡した日・確かめる日"},
-	{"someday", "いつか／たぶん", 'y', 's', "今はやらない"},
-	{"reference", "資料", 'u', 'r', "資料と成果物"},
+// Lists are every list a tab can show.
+var Lists = map[string]List{
+	"mine":      {"mine", "あなたの番", "承認・要判断・確かめてほしいもの"},
+	"talk":      {"talk", "窓口", "窓口の返事（まだ読んでいないもの）と、窓口の答えを待っているもの"},
+	"inbox":     {"inbox", "inbox", "1 件ずつ何をするか決めて移す（m）。c で足す"},
+	"next":      {"next", "次の行動", "自分とエージェント。プロジェクトの「次」もここに出る"},
+	"project":   {"project", "プロジェクト", "Enter でステップに入る"},
+	"waiting":   {"waiting", "連絡待ち", "相手・渡した日・確かめる日"},
+	"someday":   {"someday", "いつか", "今はやらない"},
+	"reference": {"reference", "資料", "資料と成果物"},
+	"done":      {"done", "完了", "済んだもの。<space> で次の行動に戻す"},
 }
 
-// MigrateKey is the desk's key of the migration of the old cases, which lazygtd leaves to the
-// browser desk.
-const MigrateKey = 'i'
+// Panels are the windows of the left column, top to bottom, with their tabs; 1〜5 jump to them.
+var Panels = [][]string{
+	{"mine", "talk"},
+	{"inbox"},
+	{"next", "project"},
+	{"waiting"},
+	{"someday", "reference", "done"},
+}
 
-// MoveTo are where f moves an item, with the key of each in the menu (desk/desk.mjs MOVE_TO).
+// MoveTo are where m moves an item, with the key of each in the menu.
 var MoveTo = []struct {
 	List, Label string
 	Key         rune
 }{
 	{"inbox", "inbox", 'i'},
 	{"next", "次の行動", 'n'},
-	{"planned", "プロジェクトのステップ（まだ）", 't'},
+	{"planned", "プロジェクトのステップ（まだ）", 'p'},
 	{"waiting", "連絡待ち", 'w'},
 	{"someday", "いつか／たぶん", 's'},
 	{"reference", "資料", 'r'},
+	{"calendar", "カレンダーに入れる（その旨の次の行動にする）", 'c'},
 }
+
+// CalendarPrefix starts the title of an item that is "put it in the calendar" (SPEC 2: lazygtd has
+// no calendar; a dated plan is a next action to put it there).
+const CalendarPrefix = "カレンダーに入れる: "
 
 // MineLabel names why an item is in あなたの番 (gtd.py json's mine).
 var MineLabel = map[string]string{
@@ -54,45 +64,87 @@ var MineLabel = map[string]string{
 	"follow_up": "確かめる日が来た", "due": "締め切り", "conflict": "ぶつかり",
 }
 
-// SmallRows is how many rows a box shows while another one is worked in.
-const SmallRows = 3
+// StepsPrefix is the list key of a project's steps ("steps:<project id>"), the list a project's
+// panel shows after Enter (lazygit's commit files after Enter on a commit).
+const StepsPrefix = "steps:"
 
 // Model is the screen's state.
 type Model struct {
 	State   *gtd.State
-	Cur     string            // the box worked in
-	sel     map[string]string // the selected item's id, by box
-	idx     map[string]int    // the selected row's index, by box (to stay put when the item goes)
-	Filters map[string]string // the filter (/) of each box
+	Panel   int               // the panel worked in
+	Main    bool              // the detail (main view) is worked in
+	tab     []int             // the tab shown, by panel
+	steps   []string          // the project looked into, by panel ("" for none)
+	sel     map[string]string // the selected item's id, by list key
+	idx     map[string]int    // the selected row's index, by list key (to stay put when the item goes)
+	Filters map[string]string // the filter (/) of each list key
 	byID    map[string]*gtd.Item
 }
 
-// New is the model of an empty desk, with あなたの番 worked in.
+// New is the model of an empty desk, with the first panel worked in.
 func New() *Model {
-	return &Model{State: &gtd.State{}, Cur: "mine", sel: map[string]string{}, idx: map[string]int{}, Filters: map[string]string{}, byID: map[string]*gtd.Item{}}
+	return &Model{
+		State: &gtd.State{}, tab: make([]int, len(Panels)), steps: make([]string, len(Panels)),
+		sel: map[string]string{}, idx: map[string]int{}, Filters: map[string]string{}, byID: map[string]*gtd.Item{},
+	}
 }
 
-// SetState takes what gtd.py json read. Each box keeps its selected item, or the row at the same
-// place when the item left the box.
+// Key is the list key a panel shows: its tab's list, or the steps of the project looked into.
+func (m *Model) Key(panel int) string {
+	if p := m.steps[panel]; p != "" {
+		return StepsPrefix + p
+	}
+	return Panels[panel][m.tab[panel]]
+}
+
+// Cur is the list key of the panel worked in.
+func (m *Model) Cur() string { return m.Key(m.Panel) }
+
+// Tab is the tab a panel shows.
+func (m *Model) Tab(panel int) int { return m.tab[panel] }
+
+// Steps is the project a panel looks into, or "".
+func (m *Model) Steps(panel int) string { return m.steps[panel] }
+
+// SetState takes what gtd.py json read. Each list keeps its selected item, or the row at the same
+// place when the item left it. A project that is gone is left.
 func (m *Model) SetState(s *gtd.State) {
 	m.State = s
 	m.byID = make(map[string]*gtd.Item, len(s.Items))
 	for i := range s.Items {
 		m.byID[s.Items[i].ID] = &s.Items[i]
 	}
-	for _, b := range Boxes {
-		rows := m.Rows(b.ID)
-		if id, ok := m.sel[b.ID]; ok && indexOf(rows, id) >= 0 {
-			m.idx[b.ID] = indexOf(rows, id)
-			continue
+	for p := range Panels {
+		if id := m.steps[p]; id != "" && (m.byID[id] == nil || m.byID[id].List != "project") {
+			m.steps[p] = ""
 		}
-		if len(rows) == 0 {
-			delete(m.sel, b.ID)
-			continue
-		}
-		i := min(max(m.idx[b.ID], 0), len(rows)-1)
-		m.sel[b.ID], m.idx[b.ID] = rows[i].ID, i
 	}
+	keys := []string{}
+	for _, tabs := range Panels {
+		keys = append(keys, tabs...)
+	}
+	for _, id := range m.steps {
+		if id != "" {
+			keys = append(keys, StepsPrefix+id)
+		}
+	}
+	for _, k := range keys {
+		m.keep(k)
+	}
+}
+
+func (m *Model) keep(key string) {
+	rows := m.Rows(key)
+	if id, ok := m.sel[key]; ok && indexOf(rows, id) >= 0 {
+		m.idx[key] = indexOf(rows, id)
+		return
+	}
+	if len(rows) == 0 {
+		delete(m.sel, key)
+		return
+	}
+	i := min(max(m.idx[key], 0), len(rows)-1)
+	m.sel[key], m.idx[key] = rows[i].ID, i
 }
 
 // Item is the item of an id, or nil.
@@ -107,12 +159,22 @@ func indexOf(rows []*gtd.Item, id string) int {
 	return -1
 }
 
-// AllRows are the rows of a box before its filter.
-func (m *Model) AllRows(box string) []*gtd.Item {
+// AllRows are the rows of a list key before its filter.
+func (m *Model) AllRows(key string) []*gtd.Item {
 	var out []*gtd.Item
 	items := m.State.Items
 	open := func(it *gtd.Item) bool { return it.List != "done" }
-	switch box {
+	if strings.HasPrefix(key, StepsPrefix) {
+		if p := m.byID[strings.TrimPrefix(key, StepsPrefix)]; p != nil {
+			for _, id := range p.Steps {
+				if s := m.byID[id]; s != nil {
+					out = append(out, s)
+				}
+			}
+		}
+		return out
+	}
+	switch key {
 	case "mine":
 		for i := range items {
 			if items[i].Mine != nil && open(&items[i]) {
@@ -145,9 +207,16 @@ func (m *Model) AllRows(box string) []*gtd.Item {
 			}
 		}
 		out = append(out, agents...)
+	case "done":
+		// The latest first.
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].List == "done" {
+				out = append(out, &items[i])
+			}
+		}
 	default:
 		for i := range items {
-			if items[i].List == box {
+			if items[i].List == key {
 				out = append(out, &items[i])
 			}
 		}
@@ -155,13 +224,10 @@ func (m *Model) AllRows(box string) []*gtd.Item {
 	return out
 }
 
-// Rows are the rows of a box, narrowed by its filter: the rows whose title holds every word of
-// it, case aside (desk/sections.mjs filterRows).
-func (m *Model) Rows(box string) []*gtd.Item {
-	return Filter(m.AllRows(box), m.Filters[box])
-}
+// Rows are the rows of a list key, narrowed by its filter.
+func (m *Model) Rows(key string) []*gtd.Item { return Filter(m.AllRows(key), m.Filters[key]) }
 
-// Filter narrows rows to those whose title holds every word of query.
+// Filter narrows rows to those whose title holds every word of query, case aside.
 func Filter(rows []*gtd.Item, query string) []*gtd.Item {
 	words := strings.Fields(strings.ToLower(query))
 	if len(words) == 0 {
@@ -184,10 +250,10 @@ func Filter(rows []*gtd.Item, query string) []*gtd.Item {
 	return out
 }
 
-// SelectedIn is the selected item of a box, or nil.
-func (m *Model) SelectedIn(box string) *gtd.Item {
-	rows := m.Rows(box)
-	if i := indexOf(rows, m.sel[box]); i >= 0 {
+// SelectedIn is the selected item of a list key, or nil.
+func (m *Model) SelectedIn(key string) *gtd.Item {
+	rows := m.Rows(key)
+	if i := indexOf(rows, m.sel[key]); i >= 0 {
 		return rows[i]
 	}
 	if len(rows) > 0 {
@@ -196,65 +262,102 @@ func (m *Model) SelectedIn(box string) *gtd.Item {
 	return nil
 }
 
-// Selected is the selected item of the box worked in, or nil.
-func (m *Model) Selected() *gtd.Item { return m.SelectedIn(m.Cur) }
+// Selected is the selected item of the panel worked in, or nil.
+func (m *Model) Selected() *gtd.Item { return m.SelectedIn(m.Cur()) }
 
-// SelectedIndex is the index of the selected row in a box's rows, or -1.
-func (m *Model) SelectedIndex(box string) int {
-	rows := m.Rows(box)
+// SelectedIndex is the index of the selected row in a list key's rows, or -1.
+func (m *Model) SelectedIndex(key string) int {
+	rows := m.Rows(key)
 	if len(rows) == 0 {
 		return -1
 	}
-	return max(indexOf(rows, m.SelectedIn(box).ID), 0)
+	return max(indexOf(rows, m.SelectedIn(key).ID), 0)
 }
 
-// Step moves the selection delta rows in the box worked in, kept within it (j, k).
+// Step moves the selection delta rows in the panel worked in: j and k go round, a page (",", ".")
+// and the ends ("<", ">") stop at the ends.
 func (m *Model) Step(delta int) {
-	rows := m.Rows(m.Cur)
+	key := m.Cur()
+	rows := m.Rows(key)
 	if len(rows) == 0 {
 		return
 	}
-	i := indexOf(rows, m.sel[m.Cur])
-	if i < 0 {
+	i := indexOf(rows, m.sel[key])
+	switch {
+	case i < 0:
 		i = 0
-	} else {
-		i += delta
+	case delta == 1 || delta == -1:
+		// j and k go round from one end to the other (SPEC 6.2).
+		i = ((i+delta)%len(rows) + len(rows)) % len(rows)
+	default:
+		i = min(max(i+delta, 0), len(rows)-1)
 	}
-	i = min(max(i, 0), len(rows)-1)
-	m.sel[m.Cur], m.idx[m.Cur] = rows[i].ID, i
+	m.SelectIndex(key, i)
 }
 
-// SelectIndex selects the i-th row of a box (a click).
-func (m *Model) SelectIndex(box string, i int) {
-	rows := m.Rows(box)
+// SelectIndex selects the i-th row of a list key.
+func (m *Model) SelectIndex(key string, i int) {
+	rows := m.Rows(key)
 	if i < 0 || i >= len(rows) {
 		return
 	}
-	m.sel[box], m.idx[box] = rows[i].ID, i
+	m.sel[key], m.idx[key] = rows[i].ID, i
 }
 
-// BoxIndex is the index of a box in Boxes, or -1.
-func BoxIndex(id string) int {
-	for i, b := range Boxes {
-		if b.ID == id {
-			return i
+// Select selects an item in a list key, when it is a row of it.
+func (m *Model) Select(key, id string) {
+	if i := indexOf(m.Rows(key), id); i >= 0 {
+		m.SelectIndex(key, i)
+	}
+}
+
+// MovePanel works in the panel delta panels from the current one, round the column (h, l, Tab).
+func (m *Model) MovePanel(delta int) {
+	n := len(Panels)
+	m.Main = false
+	m.Panel = ((m.Panel+delta)%n + n) % n
+}
+
+// FocusPanel works in panel i (1〜5 give i+1).
+func (m *Model) FocusPanel(i int) {
+	if i >= 0 && i < len(Panels) {
+		m.Panel, m.Main = i, false
+	}
+}
+
+// MoveTab shows the tab delta tabs from the current one in the panel worked in ([ and ]). It
+// leaves the project looked into, as lazygit's tabs leave a commit's files.
+func (m *Model) MoveTab(delta int) {
+	n := len(Panels[m.Panel])
+	m.steps[m.Panel] = ""
+	m.tab[m.Panel] = ((m.tab[m.Panel]+delta)%n + n) % n
+}
+
+// FocusList shows a list in the panel that has it, and works there.
+func (m *Model) FocusList(list string) {
+	for p, tabs := range Panels {
+		for t, l := range tabs {
+			if l == list {
+				m.Panel, m.Main = p, false
+				m.tab[p], m.steps[p] = t, ""
+				return
+			}
 		}
 	}
-	return -1
 }
 
-// MoveBox works in the box delta boxes from the current one, round the column (h, l, Tab).
-func (m *Model) MoveBox(delta int) {
-	n := len(Boxes)
-	i := max(BoxIndex(m.Cur), 0)
-	m.Cur = Boxes[((i+delta)%n+n)%n].ID
-}
+// EnterSteps looks into a project's steps in the panel worked in.
+func (m *Model) EnterSteps(project string) { m.steps[m.Panel] = project }
 
-// Focus works in a box.
-func (m *Model) Focus(box string) {
-	if BoxIndex(box) >= 0 {
-		m.Cur = box
+// LeaveSteps goes back from a project's steps to the projects, with the project selected.
+func (m *Model) LeaveSteps() bool {
+	p := m.steps[m.Panel]
+	if p == "" {
+		return false
 	}
+	m.steps[m.Panel] = ""
+	m.Select(m.Cur(), p)
+	return true
 }
 
 // ProjectShort is the short name of a project, or its id.
@@ -263,4 +366,12 @@ func (m *Model) ProjectShort(id string) string {
 		return gtd.S(p.Short)
 	}
 	return id
+}
+
+// Label is a list key's name.
+func Label(key string) string {
+	if l, ok := Lists[key]; ok {
+		return l.Label
+	}
+	return key
 }

@@ -137,8 +137,43 @@ func (c *Client) write(args ...string) error {
 	return err
 }
 
-// Add puts a new item into inbox.
-func (c *Client) Add(title string) error { return c.write("add", "--title="+title) }
+// Add makes a new item in a list ("" for inbox), with a body ("" for none). An item of next is the
+// user's own (actor: me), as the desk's.
+func (c *Client) Add(list, title, body string) error {
+	args := []string{"add", "--title=" + title}
+	if list != "" {
+		args = append(args, "--list="+list)
+	}
+	if list == "next" {
+		args = append(args, "--actor=me")
+	}
+	if body != "" {
+		args = append(args, "--body="+body)
+	}
+	return c.write(args...)
+}
+
+// Ask hands an item to the orchestrator: an agent's item in next with no worker yet, which the Hub
+// tells the orchestrator of (src/agent-items.mjs), and the orchestrator starts a worker for.
+func (c *Client) Ask(id, hash string) error {
+	return c.write(append([]string{"set", id, "actor=agent", "list=next"}, hashArg(hash)...)...)
+}
+
+// ToCalendar makes an item the next action of putting it in the calendar: the user's own, in next,
+// its title led by prefix.
+func (c *Client) ToCalendar(id, title, hash string) error {
+	return c.write(append([]string{"set", id, "title=" + title, "list=next", "actor=me"}, hashArg(hash)...)...)
+}
+
+// StepAdd adds a new step at the end of a project.
+func (c *Client) StepAdd(project, title string) error {
+	return c.write("step", "add", project, "--title="+title)
+}
+
+// StepMove puts a step at position pos (from 1) of its project.
+func (c *Client) StepMove(project, id string, pos int) error {
+	return c.write("step", "move", project, id, fmt.Sprint(pos))
+}
 
 // Move moves an item to another list.
 func (c *Client) Move(id, list, hash string) error {

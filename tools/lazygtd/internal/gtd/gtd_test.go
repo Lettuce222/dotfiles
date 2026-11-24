@@ -23,7 +23,7 @@ func TestWritesAreByUserWithTheHash(t *testing.T) {
 	_ = c.Move("x1", "next", "0123456789abcdef")
 	_ = c.Done("x1", "")
 	_ = c.Say("x1", "--list done")
-	_ = c.Add("-x")
+	_ = c.Add("", "-x", "")
 	_ = c.Read("x1")
 	want := [][]string{
 		{"gtd.py", "move", "x1", "next", "--hash=0123456789abcdef", "--by", "user"},
