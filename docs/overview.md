@@ -101,7 +101,7 @@ dotfiles/
 1. Ghostty（`configs/ghostty/`）を開くと、fish（`configs/fish/`）が起動する。`conf.d/00-init.fish`がmise・direnv・zoxideを有効にし、miseが`configs/mise/config.local.toml`のツール（fzf、rg、gh、tmux、lazygitなど）をPATHに載せる。
 2. tmux（`configs/tmux/`）はprefixが`Ctrl-Space`。Ghosttyで押すとKarabiner（`configs/karabiner/`）が英数キーも送り、IMEをオフにする。`prefix g`でlazygit、`prefix e`でnvim、`prefix p`でPRのURLからworktreeを開く。
 3. Claude Codeは`configs/claude/settings.json`で動きが決まる。tmuxのウィンドウ名に状態の印（🟡作業中、🔴確認待ち、🟢終わった）を付けるhook、外に出る文面を止めるhook、textlintのhookがここで配線される。hookの本体は`configs/agent/hooks/`にある。
-4. `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）でtmux session `orchestrator`を開く。左が窓口（`claude -n orchestrator`）、右が案件の一覧（`cases.py board`）。窓口は依頼ごとにbackgroundのworker（`claude --bg`）を起こし、見張りのworker`chore-hub-watch`が30分ごとにGitHubとSlackを読む。リポジトリを変えるworkerはそのリポジトリのworktreeで、ほかは`~/hub/workers/<worker名>/`で動く。決まりは`configs/agent/skills/`の`agents-orchestrator`・`agents-worker`・`agents-watch`の3つのskill。
+4. `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）で、今のターミナルに窓口（`claude -n orchestrator`）を開く。窓口は依頼ごとにbackgroundのworker（`claude --bg`）を起こし、見張りのworker`chore-hub-watch`が30分ごとにGitHubとSlackを読む。リポジトリを変えるworkerはそのリポジトリのworktreeで、ほかは`~/hub/workers/<worker名>/`で動く。決まりは`configs/agent/skills/`の`agents-orchestrator`・`agents-worker`・`agents-watch`の3つのskill。
    Codexを選んだマシンでは`orchestrator-codex`にCodexと同じ案件ボードが開く。委任はCodexのサブエージェントを使う。
 5. 画面に出たリンク（OSC 8）をtmuxでクリックすると`configs/tmux/scripts/open-link.sh`が開く。`.md`はpopupのleaf、ほかのテキストはpopupのnvim、フォルダはFinder。
 6. ウィンドウの配置はHammerspoon（`configs/hammerspoon/`）が`Alt`系のキーで行う。
@@ -180,7 +180,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/tests/test_asks.py` | `asks.py` |
 | `configs/agent/tests/test_agents_watch.py` | `watch.py` |
 | `configs/agent/tests/test_md_to_gdocs.py` | `md_to_gdocs.py` |
-| `configs/agent/tests/test_orchestrator.py` | `orchestrator`のペインの構成、workerがAskUserQuestionを使わないこと、workerのコミットの決まり、`agents-thread`が`agents-worker`に回すこと |
+| `configs/agent/tests/test_orchestrator.py` | `orchestrator`が開くCLIと引数・ディレクトリ、workerがAskUserQuestionを使わないこと、workerのコミットの決まり、`agents-thread`が`agents-worker`に回すこと |
 
 `~/hub/`（窓口の作業場所、リポジトリに紐づかないworkerの作業場所`~/hub/workers/`、案件の中身、承認の記録、見張りの状態）はdotfilesの外にあり、追跡しない。前の窓口（hub、hub-dash）は消してあり、中身はtag `hub-v1-20261104`で見られる。
 
@@ -220,7 +220,7 @@ Claude Code本体の設定。skillやhookの本体は`configs/agent/`に置く�
 | 関数 | 何をするか |
 | --- | --- |
 | `configs/fish/functions/agent.fish` | 選択中のCLIを起動する。`agent --which`で選択を表示 |
-| `configs/fish/functions/orchestrator.fish` | 窓口と案件の一覧のtmux sessionを開く（[普段の使われ方](#普段の使われ方)の4） |
+| `configs/fish/functions/orchestrator.fish` | 窓口を今のターミナルで開く（[普段の使われ方](#普段の使われ方)の4） |
 | `configs/fish/functions/cd.fish`、`configs/fish/functions/code.fish` | 引数なしなら`ghq list`をfzfで選んで移る、VS Codeで開く |
 | `configs/fish/functions/cw.fish` | ghqのリポジトリを`--add-dir`で足して Claude または Codex を起動 |
 | `configs/fish/functions/td.fish` | 今のフォルダ名でtmux sessionを作って移る |

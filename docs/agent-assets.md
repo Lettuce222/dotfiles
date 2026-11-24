@@ -14,10 +14,9 @@ Claude Code と Codex の共通の指示とスキルは `configs/agent/` に置�
 共通ツールは `~/.config/dotfiles-agent` 経由でどちらからも使える。
 Codex のスキル配置からは、Claude のバックグラウンド worker と hooks を使う
 `agents-orchestrator`、`agents-worker`、`agents-thread`、`agents-watch` を除く。
-Codex の `orchestrator` は別の tmux セッション `orchestrator-codex` に、
-`codex-orchestrator.md` を渡した Codex と案件ボードを開く。ボードの worker 欄や
-定期見張り、承認用 hooks は下記の Claude 構成の機能。Codex では内蔵のサブエージェントと権限設定を使う。
-「その他」を選んだ CLI は、専用の引数や hooks を付けずに別の tmux セッションで開き、案件ボードを表示する。
+Codex の `orchestrator` は、`codex-orchestrator.md` を渡した Codex を今のターミナルで開く。
+定期見張りや承認用 hooks は下記の Claude 構成の機能。Codex では内蔵のサブエージェントと権限設定を使う。
+「その他」を選んだ CLI は、専用の引数や hooks を付けずに今のターミナルで開く。
 
 `settings.json`などClaude Code本体の設定ファイルは`configs/claude/`に置く。`settings.json`だけはsymlinkせず、`install.sh`が`settings.local.json`と合成して書き出す（[`configuration.md`](configuration.md)を参照）。
 
@@ -170,7 +169,7 @@ Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを�
 
 自前のコードをできるだけ持たずに、Claude Codeの`claude --bg`と`claude agents`だけで窓口を組む構成。
 
-- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: tmux session `orchestrator`を開く。無ければ作る。左のペインで窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で起動し、右のペインに案件の一覧（下の「案件の一覧」を参照）を開く。案件の一覧の上には、workerの節（いまどのworkerが何をしているか）も出す。窓口はauto modeで起動する。workerとのやりとりは窓口に集約するので、`claude agents`のペインは置かない。案件の一覧のペインは、前からあるsessionでも、無ければ`orchestrator`を実行したときに足す（pane optionの`@orchestrator_role`が`cases`のペインを探す）。前の構成の`claude agents`のペイン（起動コマンドに`claude agents`を含むもの）が残っていれば、`orchestrator`を実行したときに閉じる。起動前に `configs/fish/agent-env.fish` を読み、mise と direnv（allow 済みの `.envrc`）の環境を取り込む。必要なら `AGENT_GH_WRAPPER_DIR` で独自の `gh` を指定できる。
+- `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）: 窓口（`claude -n orchestrator`）を`~/hub`（`AGENT_ORCHESTRATOR_HOME`で変更可）で、今のターミナル（Orcaのターミナルなど）に開く。tmuxと案件の一覧のペインは使わない（hub v2でデスクとOrcaの組み込みに移った）。窓口はauto modeで起動する。呼んだシェルのディレクトリと環境を変えないよう、子のfish（`--no-config`）で起動し、窓口のディレクトリに移ってから `configs/fish/agent-env.fish` を読み、mise と direnv（allow 済みの `.envrc`）の環境を取り込む。必要なら `AGENT_GH_WRAPPER_DIR` で独自の `gh` を指定できる。
 - `agents-orchestrator`（skill）: 窓口の決まり。起動時に`/agents-orchestrator`で読み込む。窓口は自分では作業せず、依頼ごとに`claude --bg -n <分類>-<対象>-<名前>`でworkerを起動する。リポジトリを変える作業は、ghqで探したリポジトリで`--worktree <worker名>`を付けて起動する（`<repo>/.claude/worktrees/<名前>`、ブランチ`worktree-<名前>`）。リポジトリに紐づかない作業は`~/hub/workers/<worker名>/`で起動する。依頼は「ゴール」「完了の条件」「やってよい範囲」で書き、1つのゴールは1人のworkerに調査から検証まで通しで任せる。起動したら`notify_when_idle`のSendMessageを送り、終わったworkerの続きは`--resume`で頼む。急ぎでないworkerの完了や見張りの知らせは案件のファイルに`未報告`で入れるだけにし、「どうなった？」と聞かれたときに案件ごとにまとめて渡す。すぐに伝えるのは、期日がその日のもの、ユーザーの判断が無いとworkerが止まったままのもの、外に出す操作の承認待ちだけ
 - `agents-worker`（skill）: workerの決まり。窓口が依頼の先頭に`/agents-worker`を付けて読み込ませる。報告は窓口宛てに3行（1行目は「完了」「要判断」「送信の確認待ち」「ブロック」、2行目は「あなたの番:」、3行目は「資料:」のリンク）、workerはAskUserQuestionを使わない。人に判断を求めるときは、問いと選択肢（推奨を先頭に、選んだら何をするか）と資料のリンクを付けた「要判断」を窓口に送って止まる。承認が要る実行をhookやauto modeに止められたときも、コマンドの全文と目的を付けた「要判断」を送り、承認が届いたら同じコマンドを実行し直す。それ以外で進めなくなったときは「ブロック」を送って止まる。取り消せる判断は推奨を選んで続け、`report.md`と完了の報告の「決めたこと」にまとめる。「要判断」で止まるのは、外に出す操作、取り消せない操作、依頼の前提が崩れたときだけ
 - `agents-thread`（skill）: `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために残し、読み込んだら`agents-worker`を読み込ませる。動いているworkerが片付いたら消す

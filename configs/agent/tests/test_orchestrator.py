@@ -3,8 +3,8 @@
 実行: python3 -m unittest configs/agent/tests/test_orchestrator.py
 
 - worker は AskUserQuestion を使わず、やりとりを窓口に集約する。
-- orchestrator コマンドは claude agents のペインを開かず、窓口とケースボードの 2 枚にする。
-  レイアウトは専用の tmux ソケット（-L）で確かめる。fish か tmux が無ければ飛ばす。
+- orchestrator コマンドは tmux を使わず、選んだ CLI を窓口のディレクトリで今のターミナルに開く。
+  fish が無ければ飛ばす。
 """
 
 import os
@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -223,103 +222,58 @@ class SkillRulesTest(unittest.TestCase):
         self.assertIn("- 急ぎでない: ", text)
 
 
-HARNESS = r"""
-set -l sock $argv[1]
-set -l fn $argv[2]
-set -l mode $argv[3]
-set -l provider $argv[4]
-set -l session orchestrator
-if test "$provider" != claude
-    set session orchestrator-$provider
-end
-function tmux --inherit-variable sock; command tmux -f /dev/null -L $sock $argv; end
-source (dirname "$fn")/agent.fish
-source $fn
-set -x TMUX dummy
-if test "$mode" = old
-    tmux new-session -d -x 200 -y 50 -s orchestrator -n orchestrator 'sleep 600'
-    set -l right (tmux split-window -h -d -l 45% -P -F '#{pane_id}' -t orchestrator 'fish -c "claude agents --permission-mode auto"')
-    tmux split-window -v -b -d -l 50% -t $right 'sleep 600'
-    tmux set-option -p -t (tmux list-panes -t orchestrator -F '#{pane_id}')[2] @orchestrator_role cases
-end
-orchestrator >/dev/null
-orchestrator >/dev/null
-tmux list-panes -t "=$session:^" -F '#{pane_left} #{@orchestrator_role} #{pane_active} #{pane_start_command}'
-"""
+@unittest.skipUnless(shutil.which("fish"), "fish が要る")
+class LaunchTest(unittest.TestCase):
+    """orchestrator は tmux を使わず、選んだ CLI を窓口のディレクトリで今のターミナルに開く。"""
 
-
-@unittest.skipUnless(shutil.which("fish") and shutil.which("tmux"), "fish と tmux が要る")
-class LayoutTest(unittest.TestCase):
-    def run_layout(self, mode, provider="claude"):
-        sock = f"orchtest-{uuid.uuid4().hex[:8]}"
+    def launch(self, provider):
         with tempfile.TemporaryDirectory() as home:
-            harness = Path(home) / "harness.fish"
-            harness.write_text(HARNESS, encoding="utf-8")
             assets = Path(home) / ".config/dotfiles-agent"
-            scripts = assets / "skills/agents-orchestrator/scripts"
-            scripts.mkdir(parents=True)
-            (scripts / "cases.py").write_text("import time; time.sleep(600)\n")
+            assets.mkdir(parents=True)
             for filename in ("select-cli.sh", "codex-orchestrator.md"):
                 shutil.copy(ROOT / "configs/agent" / filename, assets)
+            # agent-env.fish は窓口のディレクトリに移ってから読む（direnv がそこの .envrc を読むため）。
+            fish_conf = Path(home) / ".config/fish"
+            fish_conf.mkdir(parents=True)
+            (fish_conf / "agent-env.fish").write_text("set -gx ORCH_ENV_DIR (pwd)\n")
             bin_dir = Path(home) / "bin"
             bin_dir.mkdir()
-            for cli in ("claude", "codex", "aider"):
+            for cli in ("claude", "codex", "aider", "tmux"):
                 executable = bin_dir / cli
-                executable.write_text("#!/bin/sh\nexec sleep 600\n")
+                executable.write_text('#!/bin/sh\nprintf "%s\\n" "$ORCH_ENV_DIR" "$(pwd)" "$(basename "$0")" "$@"\n')
                 executable.chmod(0o755)
+            hub = Path(home) / "hub with spaces"
             env = {
                 **os.environ,
                 "HOME": home,
                 "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                 "DOTFILES_AGENT": provider,
-                "AGENT_ORCHESTRATOR_HOME": str(Path(home) / "hub with spaces"),
+                "AGENT_ORCHESTRATOR_HOME": str(hub),
             }
-            try:
-                result = subprocess.run(
-                    ["fish", "--no-config", str(harness), sock, str(FISH_FN), mode, provider],
-                    env=env, capture_output=True, text=True, timeout=30,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-            finally:
-                subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
-        panes = []
-        for line in result.stdout.splitlines():
-            left, role, active, cmd = (line.split(" ", 3) + [""])[:4]
-            panes.append({"left": int(left), "role": role, "active": active == "1", "cmd": cmd})
-        return sorted(panes, key=lambda p: p["left"])
+            script = "source $argv[1]/agent.fish; source $argv[1]/orchestrator.fish; orchestrator"
+            result = subprocess.run(
+                ["fish", "--no-config", "-c", script, str(FISH_FN.parent)],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(hub.is_dir())
+            lines = result.stdout.splitlines()
+            self.assertEqual([Path(line).resolve() for line in lines[:2]], [hub.resolve()] * 2)
+            return lines[2:]
 
-    def assert_two_panes(self, panes):
-        self.assertEqual(len(panes), 2, panes)
-        main, board = panes
-        self.assertEqual(board["role"], "cases")
-        self.assertIn("cases.py", board["cmd"])
-        self.assertGreater(board["left"], main["left"])
-        self.assertTrue(main["active"])
-        for p in panes:
-            self.assertNotIn("claude agents", p["cmd"])
+    def test_claude_opens_the_orchestrator_skill(self):
+        self.assertEqual(
+            self.launch("claude"), ["claude", "-n", "orchestrator", "--permission-mode", "auto", "/agents-orchestrator"]
+        )
 
-    def test_new_session(self):
-        panes = self.run_layout("new")
-        self.assert_two_panes(panes)
-        self.assertIn("/agents-orchestrator", panes[0]["cmd"])
+    def test_codex_gets_the_orchestrator_prompt(self):
+        out = self.launch("codex")
+        self.assertEqual(out[0], "codex")
+        prompt = (ROOT / "configs/agent/codex-orchestrator.md").read_text(encoding="utf-8").rstrip("\n")
+        self.assertEqual("\n".join(out[1:]), prompt)
 
-    def test_codex_uses_a_separate_session_with_case_board(self):
-        panes = self.run_layout("old", "codex")
-        self.assert_two_panes(panes)
-        self.assertIn("codex", panes[0]["cmd"])
-        self.assertIn("--no-workers", panes[1]["cmd"])
-
-    def test_custom_cli_launches_as_is_with_case_board(self):
-        panes = self.run_layout("new", "aider")
-        self.assert_two_panes(panes)
-        self.assertIn("command aider", panes[0]["cmd"])
-        self.assertIn("--no-workers", panes[1]["cmd"])
-
-    def test_old_session_drops_agents_pane(self):
-        panes = [p for p in self.run_layout("old")]
-        self.assertEqual(len(panes), 2, panes)
-        self.assertNotIn("claude agents", " ".join(p["cmd"] for p in panes))
-        self.assertEqual(panes[1]["role"], "cases")
+    def test_custom_cli_launches_as_is(self):
+        self.assertEqual(self.launch("aider"), ["aider"])
 
 
 if __name__ == "__main__":

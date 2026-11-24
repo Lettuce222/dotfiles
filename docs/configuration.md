@@ -28,7 +28,7 @@ CLI の導入も必要なら `./install.sh` を実行する。
 fish では `agent --which` で確認し、`agent` で起動する。CLI 固有の引数は
 `agent` にそのまま渡せる。`cw <ghqのリポジトリ名>` は見つけたディレクトリを
 `--add-dir` で追加する。Codex の `--add-dir` は追加の書き込み範囲も指定する。
-`orchestrator` は選択中の CLI と案件ボードを tmux で開く。
+`orchestrator` は選択中の CLI を窓口として今のターミナルで開く。
 「その他」のコマンドは `install.sh` では導入しないので、別途インストールして PATH に追加する。
 `agent` と `orchestrator` から起動できる。追加のリポジトリが必要な場合はそのリポジトリで `agent` を起動する。
 
