@@ -37,6 +37,7 @@ import { actionText, latestAction } from './case-actions.mjs'
 import { createOrchestratorChannel } from './orchestrator.mjs'
 import { buildHubModel, isInside, sessionSummaries } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
+import { deskMessage, failureOf, findDeskTab, pageIdOf, redact } from './desk-tab.mjs'
 import { ORCHESTRATOR_FAILURES, renderHub, renderLoading } from './hub-render.mjs'
 
 const TASK_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -699,29 +700,65 @@ export function createHubWorker({
     }
   }
 
-  /** Opens the desk in a browser tab of the hub's workspace, or shows the tab already open. */
+  /**
+   * Opens the desk in a browser tab of the hub's workspace, or shows the tab already open, in front.
+   * `tab switch --focus` brings a tab forward only in the workspace Orca shows, so the hub's
+   * workspace is shown first. `tab create` opens its tab behind the others and takes no --focus, so
+   * a new tab is switched to as well; `--split right` puts it in the pane beside the one in use (one
+   * that already shows a browser tab, else a new one on the right).
+   * @returns {{ opened: boolean, reused?: boolean, reason?: string, detail?: string }}
+   */
   async function openDesk(url) {
-    if (!url) return { opened: false, reason: 'no-desk' }
+    const fail = (reason, detail) => {
+      orca.log(`hub: could not open the desk: ${deskMessage({ opened: false, reason, detail })}`)
+      return detail ? { opened: false, reason, detail } : { opened: false, reason }
+    }
+    if (!url) return fail('no-desk')
     try {
       const response = await runArgs(['worktree', 'ps', '--limit', '1000', '--json'])
       const hub = (response?.result?.worktrees ?? [])
         .filter((entry) => entry.path === hubRoot && !entry.isArchived)
         .toSorted((a, b) => Number(b.isMainWorktree) - Number(a.isMainWorktree) || Number(b.isActive) - Number(a.isActive))[0]
       const selector = hub?.address?.worktree ?? null
-      const where = selector ? ['--worktree', selector] : []
-      const origin = new URL(url).origin
-      const tabs = await runArgs(['tab', 'list', ...where, '--json']).catch(() => null)
-      const open = (tabs?.result?.tabs ?? []).find((tab) => typeof tab.url === 'string' && tab.url.startsWith(origin))
-      const page = open?.pageId ?? open?.id ?? null
-      if (page) {
-        const shown = await runArgs(['tab', 'switch', '--page', String(page), ...where, '--focus', '--json']).catch(() => null)
-        if (shown?.ok) return { opened: true, reused: true }
+      if (!selector) return fail('no-hub')
+      const where = ['--worktree', selector]
+      if (hub.worktreeId) {
+        await orca.host.call('workspace.open', { workspaceId: hub.worktreeId }).catch((error) => {
+          orca.log(`hub: could not show the hub's workspace for the desk: ${redact(error.code ?? error.message)}`)
+        })
       }
-      const created = await runArgs(['tab', 'create', '--url', url, ...where, '--json'])
-      return created?.ok ? { opened: true, reused: false } : { opened: false, reason: created?.error?.message ?? 'failed' }
+      const show = async (page) => {
+        try {
+          const shown = await runArgs(['tab', 'switch', '--page', page, ...where, '--focus', '--json'])
+          return shown?.ok ? null : failureOf(shown)
+        } catch (error) {
+          return failureOf(error)
+        }
+      }
+      const origin = new URL(url).origin
+      const tabs = await runArgs(['tab', 'list', ...where, '--json']).catch((error) => {
+        orca.log(`hub: could not list the hub's tabs: ${failureOf(error)}`)
+        return null
+      })
+      const open = pageIdOf(findDeskTab(tabs?.result?.tabs, origin))
+      if (open) {
+        const why = await show(open)
+        if (!why) return { opened: true, reused: true }
+        orca.log(`hub: could not show the desk's tab, opening another: ${why}`)
+      }
+      let created
+      try {
+        created = await runArgs(['tab', 'create', '--url', url, ...where, '--split', 'right', '--json'], 60_000)
+      } catch (error) {
+        return fail('create-failed', failureOf(error))
+      }
+      if (!created?.ok) return fail('create-failed', failureOf(created))
+      const page = pageIdOf(created.result)
+      if (!page) return fail('focus-failed', 'tab create の応答に browserPageId がありません')
+      const why = await show(page)
+      return why ? fail('focus-failed', why) : { opened: true, reused: false }
     } catch (error) {
-      orca.log(`hub: could not open the desk: ${error.message}`)
-      return { opened: false, reason: 'failed' }
+      return fail('failed', failureOf(error))
     }
   }
 

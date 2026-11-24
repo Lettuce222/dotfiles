@@ -32,6 +32,12 @@ export function runOrca(cli, args, timeout = 10_000) {
   return new Promise((resolve, reject) => {
     execFile(cli, args, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
       if (error) {
+        // With --json, a failed command still prints `{ ok: false, error: { code, message } }`.
+        try {
+          error.response = JSON.parse(stdout)
+        } catch {
+          // No JSON: the error alone says what failed.
+        }
         reject(error)
         return
       }

@@ -16,6 +16,7 @@ import { resolveClaudeCli } from './src/claude-agents.mjs'
 import { resolvePython } from './src/deliver.mjs'
 import { createDesk } from './src/desk.mjs'
 import { createDeskServer } from './src/desk-server.mjs'
+import { deskMessage } from './src/desk-tab.mjs'
 import { createGtd, gtdScriptOf } from './src/gtd.mjs'
 import { createHubWorker } from './src/hub-worker.mjs'
 import { createLaunchHook } from './src/launch-hook.mjs'
@@ -103,10 +104,12 @@ export default function activate(orca) {
     void startDesk()
   }
 
+  /** Opens the desk, with the text the panel's notice and Orca's toast show for the result. */
   async function openDesk() {
     await start()
     await startDesk()
-    return worker.openDesk(deskServer?.url ?? null)
+    const result = await worker.openDesk(deskServer?.url ?? null)
+    return { ...result, message: deskMessage(result) }
   }
 
   orca.hooks.on('agent.launch.before', createLaunchHook())
@@ -127,8 +130,8 @@ export default function activate(orca) {
     return 'Hub refreshed'
   })
   orca.commands.register('hub.desk.open', async () => {
-    const result = await openDesk()
-    return result.opened ? 'デスクを開きました' : `デスクを開けませんでした（${result.reason}）`
+    // Orca shows a command's string result as it is: the toast of the status bar's デスク.
+    return (await openDesk()).message
   })
   orca.events.on('agent.status.changed', async (event) => {
     await start()

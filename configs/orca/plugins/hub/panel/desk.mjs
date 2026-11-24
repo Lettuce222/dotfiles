@@ -36,7 +36,7 @@ export function setUpDesk({ view, notice, request }) {
     try {
       const result = await request('desk.open')
       if (!result?.opened) {
-        notice.textContent = `デスクを開けませんでした（${result?.reason ?? '不明'}）。`
+        notice.textContent = `${result?.message ?? `デスクを開けませんでした（${result?.reason ?? '不明'}）`}。`
         notice.hidden = false
       }
     } catch (error) {
