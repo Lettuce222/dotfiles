@@ -708,6 +708,8 @@ create_hammerspoon_symlinks
 
 echo ""
 echo "=== Phase 2: Running remaining setup in fish ==="
+DOTFILES_DIR=$(cd "$(dirname "$0")" && pwd)
+export DOTFILES_DIR
 
 fish -c '
     function install_udev_gothic_nf
@@ -740,6 +742,15 @@ fish -c '
         pushd ~/.config/textlint
         mise exec -- npm ci
         popd
+    end
+
+    function install_lazygtd
+        # The hub desk in a terminal (tools/lazygtd). Builds from this checkout into ~/.local/bin;
+        # a failed build only warns, so the rest of the setup goes on.
+        echo "Building lazygtd..."
+        mkdir -p "$HOME/.local/bin"
+        mise exec -- go build -C "$DOTFILES_DIR/tools/lazygtd" -o "$HOME/.local/bin/lazygtd" .
+        or echo "Could not build lazygtd. Run it again: go build -C $DOTFILES_DIR/tools/lazygtd -o ~/.local/bin/lazygtd ." >&2
     end
 
     function install_agent_cli
@@ -861,6 +872,7 @@ fish -c '
     install_mise
     install_agent_cli; or exit 1
     install_textlint
+    install_lazygtd
     if test "$platform" = Darwin
         install_apps
         configure_macos
