@@ -225,7 +225,7 @@ function openHelp() {
   const rows = [
     ['h / l、Tab / ⇧Tab', '左の箱を移る'], ['q w e r t y u', 'リストの箱へ'], ['i', '移し替え（右に出す。Esc で戻る）'],
     ['j / k', '箱の中を上下'], ['/', '箱の中を絞り込む（Enter で決める、Esc でやめる）'], ['Enter', '右の箱へ（返事、窓口の問いには書いて答える）'],
-    ['⇧Enter', '返事の欄で改行'], ['Esc', '欄やメニューから抜ける'], ['a', 'inbox に足す'], ['s', 'Orca のエディタで開く'], ['d', '成果物を開く'],
+    ['Ctrl+J、⇧Enter', '書く欄で改行（1 行の欄では何もしない）'], ['Esc', '欄やメニューから抜ける'], ['a', 'inbox に足す'], ['s', 'Orca のエディタで開く'], ['d', '成果物を開く'],
     ['f', '移す（メニュー）'], ['x', '完了'], ['v', 'エージェントの画面に切り替え'], ['⇧Q 〜 ⇧R', '窓口の問い・worker の問いに答える（許可の確認は 許可・拒否・理由・ターミナル）'],
     ['g + y i n p w s r m', 'リストの頭文字で箱へ'], ['?', 'この一覧を閉じる']
   ]
@@ -306,7 +306,7 @@ function renderAskDetail(d, card) {
 // orchestrator is told there is one. What is being written stays through a redraw.
 function replyBox(t) {
   if (t.list === 'done') return ''
-  return `<div class="reply written"><label class="note" for="reply-text">返事（本文の「あなたの番への返事」に足し、窓口に知らせます。<kbd>Enter</kbd> で送る、<kbd>⇧</kbd>+<kbd>Enter</kbd> で改行、<kbd>Esc</kbd> で抜ける）</label><textarea id="reply-text" data-reply="${esc(t.id)}" rows="3" placeholder="この項目への返事"></textarea><button class="btn" data-reply-send>送る</button></div>`
+  return `<div class="reply written"><label class="note" for="reply-text">返事（本文の「あなたの番への返事」に足し、窓口に知らせます。<kbd>Enter</kbd> で送る、<kbd>Ctrl</kbd>+<kbd>J</kbd> か <kbd>⇧</kbd>+<kbd>Enter</kbd> で改行、<kbd>Esc</kbd> で抜ける）</label><textarea id="reply-text" data-reply="${esc(t.id)}" rows="3" placeholder="この項目への返事"></textarea><button class="btn" data-reply-send>送る</button></div>`
 }
 function keptReply(d) {
   const area = d.querySelector('[data-reply]')
@@ -740,6 +740,20 @@ document.addEventListener('keydown', (e) => {
     }
   }
 })
+
+// Ctrl+J starts a new line in every box written in, as everywhere else the user writes (Enter
+// sends); Shift+Enter still does. In a one-line box (adding to the inbox, the filter) a new line
+// cannot be, and Ctrl+J does nothing: a new line meant there never sends by mistake.
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || (e.key !== 'j' && e.code !== 'KeyJ')) return
+  const box = e.target
+  if (box.tagName !== 'TEXTAREA' && box.tagName !== 'INPUT') return
+  e.preventDefault()
+  if (box.tagName === 'TEXTAREA' && !box.disabled) {
+    box.setRangeText('\n', box.selectionStart, box.selectionEnd, 'end')
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+}, true)
 
 // In the reply box and the written answer: Enter sends, Shift+Enter starts a new line. Not while
 // a Japanese word is being converted (isComposing, keyCode 229), and not when the box is empty.

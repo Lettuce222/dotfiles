@@ -104,5 +104,7 @@ test('Enter goes into the box under the item, and v shows its worker', () => {
   const page = readFileSync(join(root, 'desk', 'desk.mjs'), 'utf8')
   assert.match(page, /if \(e\.isComposing \|\| e\.keyCode === 229 \|\| e\.shiftKey \|\| e\.altKey\) return/, 'no send while converting, and Shift+Enter is a new line')
   assert.match(page, /if \(!box\.value\.trim\(\)\) return/, 'an empty box sends nothing')
+  assert.match(page, /if \(!e\.ctrlKey \|\| e\.metaKey \|\| e\.altKey \|\| e\.shiftKey \|\| e\.isComposing \|\| \(e\.key !== 'j' && e\.code !== 'KeyJ'\)\) return/, 'Ctrl+J')
+  assert.match(page, /if \(box\.tagName === 'TEXTAREA' && !box\.disabled\) \{\n    box\.setRangeText\('\\n'/, 'a new line in a box of many lines, nothing in a one-line box')
   assert.match(page, /if \(e\.target\.tagName === 'TEXTAREA'\) \{\n    if \(e\.key === 'Escape'\) e\.target\.blur\(\)\n    return\n  \}/, 'no desk key while writing; Esc leaves the box')
 })
