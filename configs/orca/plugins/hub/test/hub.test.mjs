@@ -165,7 +165,26 @@ test('a project shows its TODO with dates and marks, what it waits for, and link
   assert.ok(html.includes('<span class="due today">今日 11/19</span><span class="bang">!</span>出す'))
   assert.ok(html.includes('レビュー待ち<span class="then"> → 直す</span>'))
   assert.ok(html.includes('<p class="quiet">TODO も待ちもありません</p>'))
-  assert.ok(!html.includes('あなたの番（プロジェクトの外）'), 'the worker is under its project')
+  // 0.9.0: the worker of a case is in the group in view, not inside the folded case list.
+  const [inView, folded] = html.split('<div class="legacy" id="legacy">')
+  assert.ok(inView.includes('<h2>あなたの番</h2>') || inView.includes('あなたの番'), 'the group in view')
+  assert.ok(inView.includes('impl-a'), 'the worker shows in view')
+  assert.ok(!folded.includes('impl-a'), 'and not again in the case list')
+})
+
+test('0.9.0 keeps every card and line in view and folds only the case list', () => {
+  const card = { id: '20261124-100000-aaaaaaaa', sha: 'a'.repeat(64), kind: 'decide', worker: 'impl-a', sessionId: 'a', question: '決めますか', options: [{ label: 'はい', description: 'x' }, { label: 'いいえ', description: 'y' }], recommended: 1, check: { ok: true } }
+  const projects = [{ slug: 'p', title: '案件', short: 'P', path: null, todo: [{ text: 'やる', due: null, bang: false, overdue: false, today: false }], waiting: [], later: 0, workers: ['impl-a', 'impl-b'] }]
+  const agents = [
+    agent({ sessionId: 'a', name: 'impl-a', kind: 'background', state: 'blocked' }),
+    agent({ sessionId: 'b', name: 'impl-b', kind: 'background', state: 'done', alive: true, status: 'idle' })
+  ]
+  const html = renderHub(buildHubModel(agents, [], [], { projects, cards: [card] }))
+  const [inView, folded] = html.split('<div class="legacy" id="legacy">')
+  assert.ok(inView.includes('決めますか'), "a worker's ask is in view")
+  assert.ok(inView.includes('data-say') || inView.includes('✎'), 'the line to a worker is in view')
+  assert.ok(folded.includes('案件'), 'the case list is folded')
+  assert.ok(!folded.includes('決めますか'), 'no card in the folded part')
 })
 
 test('the render escapes what sessions write and links a row to its workspace or report', () => {

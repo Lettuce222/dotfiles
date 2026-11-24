@@ -145,7 +145,7 @@ function renderLatest(project, action) {
 
 /** A project: its name, its latest action in full, the rest folded, and the workers on it. */
 function renderProject(project) {
-  const attention = project.rows.filter((row) => row.state === 'attention').length
+  const attention = project.attentionCount ?? project.rows.filter((row) => row.state === 'attention').length
   const badge = attention > 0 ? `<span class="badge">あなたの番 ${attention}</span>` : ''
   const open = project.path ? ` role="button" tabindex="0" data-report="${escape(project.path)}"` : ''
   const head = `<div class="project-head"${open}><span class="name">${escape(project.short)}</span><span class="title">${escape(project.title)}</span>${badge}</div>`
@@ -521,20 +521,25 @@ function renderDesk(desk) {
 }
 
 export function renderHub(model) {
-  // The orchestrator's permission dialogs and questions stay here: approval-gate.py waits on them.
+  // Everything that asks the user or takes a line from them stays in view as before 0.9.0: the
+  // orchestrator's permission dialogs and questions (approval-gate.py and asks.py wait on them),
+  // the focused workspace's cards, the workers' asks and every session row with its ✎. Only the
+  // case list is folded away, since the cases move to the desk.
   const asks = [...(model.orchestratorAsks ?? []).map(renderOrchestratorAsk), renderOrchestratorQuestion(model.orchestratorQuestion)].join('')
-  // The panel before hub v2, shown on demand while the cases move to the desk.
-  const legacy = [
+  const projects = model.projects ?? []
+  // A worker of a case shows in the groups below with the others; the folded case list keeps none.
+  const inCases = (state) => projects.flatMap((project) => project.rows.filter((row) => row.state === state))
+  const sessions = [
     renderFocused(model.focused),
     renderCards(model.cards),
-    renderProjects(model.projects),
-    renderGroup('あなたの番（プロジェクトの外）', model.attention, 'attention'),
-    renderGroup('動いている（プロジェクトの外）', model.working, 'working'),
-    renderGroup('待っている', model.idle, 'idle')
+    renderGroup('あなたの番', [...inCases('attention'), ...(model.attention ?? [])], 'attention'),
+    renderGroup('動いている', [...inCases('working'), ...(model.working ?? [])], 'working'),
+    renderGroup('待っている', [...inCases('idle'), ...(model.idle ?? [])], 'idle')
   ].join('')
-  const old = legacy || '<p class="empty">Claude Code のセッションはありません。</p>'
-  const toggle = `<button type="button" class="legacy-toggle" data-legacy-toggle aria-controls="legacy">今までの表示（案件・セッション）</button>`
-  return `<main>${asks}${renderDesk(model.desk)}${toggle}<div class="legacy" id="legacy">${old}</div>${renderWatcher(model.watcher)}</main>`
+  const cases = renderProjects(projects.map((project) => ({ ...project, rows: [], attentionCount: project.rows.filter((row) => row.state === 'attention').length })))
+  const toggle = cases ? `<button type="button" class="legacy-toggle" data-legacy-toggle aria-controls="legacy">案件の一覧（移し替えのあいだ）</button><div class="legacy" id="legacy">${cases}</div>` : ''
+  const empty = sessions ? '' : '<p class="empty">Claude Code のセッションはありません。</p>'
+  return `<main>${asks}${renderDesk(model.desk)}${sessions}${empty}${toggle}${renderWatcher(model.watcher)}</main>`
 }
 
 export function renderLoading() {
