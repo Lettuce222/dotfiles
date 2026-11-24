@@ -11,6 +11,7 @@ import { watch } from 'node:fs'
 import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, resignalResult, waitingCount } from './desk-asks.mjs'
 import { ASK_ID } from './asks.mjs'
+import { unassignedAgentItems } from './agent-items.mjs'
 import { DeskError } from './desk-server.mjs'
 import { EXIT_CONFLICT } from './gtd.mjs'
 
@@ -347,7 +348,8 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     const shown = await state()
     // `orchestrator`: the orchestrator's cards that wait on the user (a permission lapses to the
     // terminal in a few minutes, so the status bar shows them first).
-    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents, orchestrator: waitingCount(snapshot()?.orchestrator ?? []) }
+    // `agentItems`: the items in next by an agent with no worker, which the orchestrator is told of.
+    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents, orchestrator: waitingCount(snapshot()?.orchestrator ?? []), agentItems: unassignedAgentItems(shown.items) }
   }
 
   return { handlers, state, counts, start, stop, changed, recordOnce, fileOf }

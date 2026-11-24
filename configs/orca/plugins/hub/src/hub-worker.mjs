@@ -9,8 +9,8 @@
 // through src/deliver.mjs. And the orchestrator's permission dialogs, which approval-gate.py writes
 // as asks while it waits: a card answers one in place of the dialog (answerPermission).
 import { watch } from 'node:fs'
-import { mkdir, realpath, stat } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 import { ASK_ID, PERMISSION_CHOICES, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { casesScriptOf, readCases as readCasesJson } from './cases.mjs'
 import { readAgents, readJobState, runClaude } from './claude-agents.mjs'
@@ -37,6 +37,7 @@ import { actionText, latestAction } from './case-actions.mjs'
 import { createOrchestratorChannel } from './orchestrator.mjs'
 import { buildHubModel, isInside, sessionSummaries } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
+import { createAgentItemNotice } from './agent-items.mjs'
 import { deskMessage, failureOf, findDeskTab, pageIdOf, redact } from './desk-tab.mjs'
 import { ORCHESTRATOR_FAILURES, renderHub, renderLoading } from './hub-render.mjs'
 
@@ -422,6 +423,27 @@ export function createHubWorker({
     return signalling
   }
 
+  // Items in next by an agent with no worker: the orchestrator is told once (src/agent-items.mjs).
+  const toldPath = join(hubRoot, 'state', 'hub-told-agent-items.json')
+  const agentItems = createAgentItemNotice({
+    now,
+    readTold: async () => JSON.parse(await readFile(toldPath, 'utf8')),
+    writeTold: async (ids) => {
+      await mkdir(dirname(toldPath), { recursive: true })
+      const temp = `${toldPath}.${process.pid}.tmp`
+      await writeFile(temp, `${JSON.stringify(ids)}\n`)
+      await rename(temp, toldPath)
+    },
+    send: (ids) => orchestrator.send(ids, { notice: true }),
+    log: (line) => orca.log(line)
+  })
+
+  /** The desk's items that wait for a worker (their ids): told to the orchestrator once each. */
+  function noticeAgentItems(ids) {
+    agentItems.update(ids)
+    return agentItems.tell()
+  }
+
   /**
    * Tells the orchestrator of a kept answer now, without waiting for the next try (the desk's
    * button). Resolves { ok: true } once it is told, else { ok: false, reason } with why not.
@@ -454,6 +476,8 @@ export function createHubWorker({
         try {
           await refreshOnce(focus)
           void resignal()
+          // Items past their grace, or a line to try again.
+          void agentItems.tell()
         } catch (error) {
           orca.log(`hub: refresh failed: ${error.message}`)
         }
@@ -814,5 +838,5 @@ export function createHubWorker({
     if (JSON.stringify(counts) !== before) schedule()
   }
 
-  return { start, refresh, resignal, resignalNow, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
+  return { start, refresh, resignal, resignalNow, noticeAgentItems, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
 }

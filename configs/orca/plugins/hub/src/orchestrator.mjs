@@ -22,6 +22,7 @@
 // the same as a person pressing it in the terminal: the card shows the question, every option and
 // every preview in full first (src/hub-render.mjs).
 import { createHash } from 'node:crypto'
+import { agentItemsLine } from './agent-items.mjs'
 import { PREFIX } from './deliver.mjs'
 
 export const ORCHESTRATOR = 'orchestrator'
@@ -195,10 +196,11 @@ export function createOrchestratorChannel({ run, readSessions, hubRoot, readPend
   /**
    * Types a line into the orchestrator. Resolves { sent, reason }. With `signal`, the line goes
    * without the panel's prefix: it only names an answer the orchestrator reads with `asks.py verify`.
+   * With `notice`, body is the ids of items in next that wait for a worker (src/agent-items.mjs).
    */
-  function send(body, { signal = false } = {}) {
+  function send(body, { signal = false, notice = false } = {}) {
     return enqueue(async () => {
-      const line = signal ? signalLine(body) : orchestratorLine(body)
+      const line = signal ? signalLine(body) : notice ? agentItemsLine(body) : orchestratorLine(body)
       if (!line) return { sent: false, reason: 'invalid' }
       const found = await ready()
       if (!found.ok) return { sent: false, reason: found.reason }

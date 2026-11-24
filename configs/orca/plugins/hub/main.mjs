@@ -73,6 +73,8 @@ export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
     try {
       const counts = await desk.counts()
       worker.setDeskCounts(counts)
+      // An item in next by an agent with no worker: the orchestrator starts one (told once).
+      void worker.noticeAgentItems(counts.agentItems ?? [])
       // The orchestrator's cards first: a permission goes back to the terminal in a few minutes.
       const waiting = counts.orchestrator ?? 0
       const text = waiting ? `デスク 窓口が待っている ${waiting}・あなたの番 ${counts.mine}` : `デスク あなたの番 ${counts.mine}・inbox ${counts.inbox}`
