@@ -2,6 +2,7 @@
 // No library. Every piece of text from the API is escaped before it goes into HTML, and the Markdown
 // body goes through renderMarkdown, which escapes its own input.
 import { renderMarkdown } from './markdown.mjs'
+import { TAB_KEYS, deskKey } from './keys.mjs'
 
 // ---------------------------------------------------------------- token and small helpers
 const TOKEN_KEY = 'desk-token'
@@ -123,9 +124,9 @@ function stepsHtml(t, style = '') {
 function renderNav() {
   const tabs = LISTS.map(([k, label], i) => {
     const n = k === 'mine' ? inList('mine').length : (S.counts[k] ?? inList(k).length)
-    return `<button class="tab ${k === cur && pane !== 'migrate' ? 'on' : ''}" data-list="${k}"><kbd>${i + 1}</kbd>${label}<span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span></button>`
+    return `<button class="tab ${k === cur && pane !== 'migrate' ? 'on' : ''}" data-list="${k}"><kbd>${TAB_KEYS[i]}</kbd>${label}<span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span></button>`
   }).join('')
-  $('tabs').innerHTML = `${tabs}<button class="tab ${pane === 'migrate' ? 'on' : ''}" data-pane="migrate"><kbd>8</kbd>移し替え<span class="n">${S.migrate.done}/${S.migrate.total}</span></button>`
+  $('tabs').innerHTML = `${tabs}<button class="tab ${pane === 'migrate' ? 'on' : ''}" data-pane="migrate"><kbd>${TAB_KEYS[LISTS.length]}</kbd>移し替え<span class="n">${S.migrate.done}/${S.migrate.total}</span></button>`
   const a = S.agents ?? {}
   $('agents').textContent = `エージェント: 動いている ${a.working ?? 0}・完了 ${a.done ?? 0}・あなた待ち ${a.attention ?? 0}`
 }
@@ -182,7 +183,7 @@ function fmRows(t) {
 const TASK_MARK = { completed: 'd', in_progress: 'r', pending: 'p' }
 
 function askCard(a) {
-  const opts = (a.options ?? []).map((o, i) => `<button class="opt ${a.recommended === i + 1 ? 'rec' : ''}" data-ask="${esc(a.id)}" data-choice="${i + 1}"><kbd>⇧${i + 1}</kbd><span>${esc(o.label)}${a.recommended === i + 1 ? '（推奨）' : ''}<small>${esc(o.description ?? '')}</small></span></button>`).join('')
+  const opts = (a.options ?? []).map((o, i) => `<button class="opt ${a.recommended === i + 1 ? 'rec' : ''}" data-ask="${esc(a.id)}" data-choice="${i + 1}">${i < 4 ? `<kbd>⇧${TAB_KEYS[i].toUpperCase()}</kbd>` : ''}<span>${esc(o.label)}${a.recommended === i + 1 ? '（推奨）' : ''}<small>${esc(o.description ?? '')}</small></span></button>`).join('')
   return `<div class="card ask"><h3>${esc(a.kind === 'approval' ? '承認' : '要判断')}: ${esc(a.question)}</h3>${opts}<div class="note">押した答えは worker に「承認ではありません」付きで届く。</div></div>`
 }
 
@@ -207,7 +208,7 @@ function renderDetail() {
   left += '</div>'
   d.innerHTML = `<div class="head"><h2>${esc(t.title)}</h2></div>
     <div>${actorChips(t)} ${dueChip(t.due)} <span class="chip c-proj">${esc(t.list)}</span>${t.project && t.list !== 'project' ? ` <span class="chip c-proj">${esc(projShort(t.project))}</span>` : ''}</div>
-    <div class="actions"><button class="btn primary" data-act="open">Orca のエディタで開く <kbd>o</kbd></button>${t.deliverables?.length ? '<button class="btn" data-act="deliv">成果物を開く <kbd>e</kbd></button>' : ''}<button class="btn" data-act="move">移す <kbd>m</kbd></button><button class="btn" data-act="done">完了 <kbd>x</kbd></button></div>
+    <div class="actions"><button class="btn primary" data-act="open">Orca のエディタで開く <kbd>s</kbd></button>${t.deliverables?.length ? '<button class="btn" data-act="deliv">成果物を開く <kbd>d</kbd></button>' : ''}<button class="btn" data-act="move">移す <kbd>f</kbd></button><button class="btn" data-act="done">完了 <kbd>x</kbd></button></div>
     <div class="cols"><div>${left}</div><div style="margin-top:8px"><table class="fm">${fmRows(t)}</table>
     ${t.path ? `<p class="note">ファイル: <code class="path">${esc(t.path)}</code></p>` : ''}</div></div>`
   d.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => act(b.dataset.act) })
@@ -436,54 +437,34 @@ function migMove(delta) {
 let gPending = false
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return
-  const k = e.key
   if (e.target.tagName === 'INPUT') {
-    if (k === 'Enter') { e.preventDefault(); addInbox() } else if (k === 'Escape') e.target.blur()
-    return
-  }
-  if (menuFor) {
-    e.preventDefault()
-    if (k === 'Escape') closeMenu()
-    else { const hit = MOVE_TO.find(([, , key]) => key === k); if (hit) chooseMenu(hit[0]) }
-    return
-  }
-  if (gPending) {
-    gPending = false
-    if (k === 'm') return showMigrate()
-    const hit = LISTS.find((l) => l[2] === k)
-    if (hit) showList(hit[0])
-    return
-  }
-  if (k === 'g') { gPending = true; return }
-  if (k === 'a') { e.preventDefault(); $('add').focus(); return }
-  if (pane === 'migrate') {
-    if (k >= '1' && k <= '7') return showList(LISTS[Number(k) - 1][0])
-    if (k === 'j') return migMove(1)
-    if (k === 'k') return migMove(-1)
-    const hit = CASE_TO.find(([, , key]) => key === k)
-    if (hit && migKey) fromCase(migKey, hit[0])
+    if (e.key === 'Enter') { e.preventDefault(); addInbox() } else if (e.key === 'Escape') e.target.blur()
     return
   }
   const t = byId[sel]
-  // Shift+1-4 answer the first open question of the selected item. The digits alone always switch
-  // the tabs, so that switching a tab never sends an answer by mistake.
-  const digit = /^Digit([1-4])$/.exec(e.code ?? '')?.[1]
-  if (e.shiftKey && digit && t?.asks?.length) {
-    e.preventDefault()
-    const a = t.asks[0]
-    if (a.options?.[Number(digit) - 1]) answer(a.id, Number(digit))
-    return
+  const hit = deskKey(e, { pane: pane === 'migrate' ? 'migrate' : 'list', gPending, menuOpen: Boolean(menuFor), hasItem: Boolean(t), lists: LISTS, moveTo: MOVE_TO, caseTo: CASE_TO })
+  gPending = false
+  if (menuFor) e.preventDefault()
+  if (!hit) return
+  switch (hit.do) {
+    case 'close': return closeMenu()
+    case 'menu': return chooseMenu(hit.to)
+    case 'g': gPending = true; return
+    case 'add': e.preventDefault(); $('add').focus(); return
+    case 'list': return showList(hit.list)
+    case 'migrate': return showMigrate()
+    case 'migMove': return migMove(hit.delta)
+    case 'fromCase': if (migKey) fromCase(migKey, hit.to); return
+    case 'move': return move(hit.delta)
+    case 'focus': if (isAgent(t)) focusWorker(t); return
+    case 'act': return act(hit.act)
+    case 'answer': {
+      e.preventDefault()
+      const a = t.asks?.[0]
+      if (a?.options?.[hit.choice - 1]) answer(a.id, hit.choice)
+      return
+    }
   }
-  if (k >= '1' && k <= '7') return showList(LISTS[Number(k) - 1][0])
-  if (k === '8') return showMigrate()
-  if (k === 'j') return move(1)
-  if (k === 'k') return move(-1)
-  if (k === 'Enter' && t && isAgent(t)) return focusWorker(t)
-  if (!t) return
-  if (k === 'o') act('open')
-  else if (k === 'e') act('deliv')
-  else if (k === 'm') act('move')
-  else if (k === 'x') act('done')
 })
 
 $('tabs').addEventListener('click', (e) => {

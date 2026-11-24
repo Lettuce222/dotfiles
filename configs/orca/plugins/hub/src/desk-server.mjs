@@ -33,6 +33,7 @@ export function deskFiles(pluginDir) {
     '/': join(pluginDir, 'desk', 'index.html'),
     '/desk.css': join(pluginDir, 'desk', 'desk.css'),
     '/desk.mjs': join(pluginDir, 'desk', 'desk.mjs'),
+    '/keys.mjs': join(pluginDir, 'desk', 'keys.mjs'),
     '/markdown.mjs': join(pluginDir, 'src', 'markdown.mjs')
   }
 }
