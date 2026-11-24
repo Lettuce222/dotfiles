@@ -1,6 +1,8 @@
 # lazygtd の仕様
 
-lazygtd に求められていることを、これまでの話し合いから集めた。いま作れているかどうかは [HANDOFF.md](HANDOFF.md) の「いまできていること」「いまできていないこと」にある。ここには、目指す形を書く。
+> 旧 Hub 版の参照資料。現在の dotfiles は lazygtd の実装を含まず、インストールもしない。
+
+lazygtd に求められていることを、これまでの話し合いから集めた。いま作れているかどうかは [当時の HANDOFF.md](https://github.com/Lettuce222/dotfiles/blob/322bea95fea96e491cc1c742e32a92c231c5b61f/tools/lazygtd/HANDOFF.md) の「いまできていること」「いまできていないこと」にある。ここには、目指す形を書く。
 
 仕様の強さは、次の 3 つで書き分ける。
 

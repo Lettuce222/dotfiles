@@ -744,15 +744,6 @@ fish -c '
         popd
     end
 
-    function install_lazygtd
-        # The hub desk in a terminal (tools/lazygtd). Builds from this checkout into ~/.local/bin;
-        # a failed build only warns, so the rest of the setup goes on.
-        echo "Building lazygtd..."
-        mkdir -p "$HOME/.local/bin"
-        mise exec -- go build -C "$DOTFILES_DIR/tools/lazygtd" -o "$HOME/.local/bin/lazygtd" .
-        or echo "Could not build lazygtd. Run it again: go build -C $DOTFILES_DIR/tools/lazygtd -o ~/.local/bin/lazygtd ." >&2
-    end
-
     function install_agent_cli
         fish_add_path --path "$HOME/.local/bin"
         if command -q $DOTFILES_AGENT
@@ -872,7 +863,6 @@ fish -c '
     install_mise
     install_agent_cli; or exit 1
     install_textlint
-    install_lazygtd
     if test "$platform" = Darwin
         install_apps
         configure_macos

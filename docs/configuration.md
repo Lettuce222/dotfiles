@@ -94,14 +94,6 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
 
 テスト: `python3 -m unittest tests/test_open_link.py`
 
-## dotfilesで作るコマンド
-
-自前のコマンドのソースは`tools/<name>/`に置く。`configs/`の下はフォルダごと`~/.config`へsymlinkされるので、設定でないソースは置かない。
-
-- 引数なしの`install.sh`が、miseのgoで`~/.local/bin/<name>`にビルドする（`install_lazygtd`）。ビルドに失敗しても警告だけを出し、ほかのセットアップを続ける。
-- `--links-only`と`--dry-run`はビルドしない。コードを変えたら、`go build -C tools/<name> -o ~/.local/bin/<name> .`か引数なしの`./install.sh`で作り直す。
-- 実行ファイルはコミットしない。
-
 ## 新しいアプリ設定
 
 1. `configs/{app}/`に設定を置く。
