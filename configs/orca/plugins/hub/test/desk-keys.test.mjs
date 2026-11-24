@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { TAB_KEYS, deskKey } from '../desk/keys.mjs'
+import { BIG, isFolded, stepRow, visibleRows, withFold } from '../desk/sections.mjs'
 
 const root = join(import.meta.dirname, '..')
 const page = readFileSync(join(root, 'desk', 'desk.mjs'), 'utf8')
@@ -74,4 +75,47 @@ test('the page and its help show the keys it takes', () => {
   assert.ok(html.includes(TAB_KEYS.map((k) => `<kbd>${k}</kbd>`).join('')), 'the help line of the tabs')
   assert.match(html, /<kbd>s<\/kbd> エディタ<\/span><span><kbd>d<\/kbd> 成果物<\/span><span><kbd>f<\/kbd> 移す/)
   assert.doesNotMatch(html, /<kbd>1<\/kbd>〜<kbd>8<\/kbd>/)
+})
+
+test('Esc on the migration goes back to the item', () => {
+  assert.deepEqual(onMigrate(key('Escape')), { do: 'back' })
+})
+
+test('one screen: いつか and 資料 are folded unless the selection is in them; a pressed heading is kept', () => {
+  assert.deepEqual([...BIG], ['someday', 'reference'])
+  const at = { cur: 'inbox', sel: 'a', folds: {} }
+  assert.equal(isFolded('someday', at), true)
+  assert.equal(isFolded('reference', at), true)
+  assert.equal(isFolded('next', at), false)
+  assert.equal(isFolded('someday', { cur: 'someday', sel: 's1', folds: {} }), false, 'open while selected in it')
+  assert.equal(isFolded('someday', { cur: 'someday', sel: null, folds: {} }), true, 'nothing selected in it: folded')
+  const shut = withFold({}, 'next', true, at)
+  assert.deepEqual(shut, { next: true })
+  assert.equal(isFolded('next', { ...at, folds: shut }), true)
+  assert.deepEqual(withFold(shut, 'next', false, at), {}, 'back to the default: nothing kept')
+  assert.deepEqual(withFold({}, 'someday', false, at), { someday: false }, 'a big section opened for good')
+})
+
+test('j and k go through the rows of the open sections, across them, and stop at the ends', () => {
+  const items = { mine: [{ id: 'm1' }], inbox: [{ id: 'i1' }, { id: 'i2' }], next: [], project: [{ id: 'p1' }], waiting: [], someday: [{ id: 's1' }], reference: [{ id: 'r1' }] }
+  const at = { cur: 'inbox', sel: 'i2', folds: { project: true } }
+  const rows = visibleRows(LISTS, (k) => items[k], at)
+  const name = (r) => `${r.sec}:${r.t.id}`
+  assert.deepEqual(rows.map(name), ['mine:m1', 'inbox:i1', 'inbox:i2'], 'a folded project, いつか and 資料 are passed over')
+  assert.equal(name(stepRow(rows, at, -1)), 'inbox:i1')
+  assert.equal(name(stepRow(rows, at, 1)), 'inbox:i2', 'stops at the last row')
+  const top = { cur: 'mine', sel: 'm1' }
+  assert.equal(name(stepRow(rows, top, -1)), 'mine:m1', 'stops at the first row')
+  assert.equal(name(stepRow(rows, top, 1)), 'inbox:i1', 'crosses from あなたの番 into inbox')
+  assert.equal(name(stepRow(rows, { cur: 'next', sel: null }, 1)), 'mine:m1', 'nothing selected: the first row')
+  assert.equal(stepRow([], top, 1), null)
+})
+
+test('the page draws every list as a section of one screen, with no tabs', () => {
+  const html = readFileSync(join(root, 'desk', 'index.html'), 'utf8')
+  assert.doesNotMatch(html, /id="tabs"/)
+  assert.doesNotMatch(page, /\$\('tabs'\)/)
+  assert.match(page, /LISTS\.map\(\(\[k, label\], i\) => sectionHtml\(k, label, i\)\)/)
+  assert.match(page, /data-fold="\$\{k\}"/, 'a heading folds or opens its section')
+  assert.match(page, /data-pane="migrate"/, 'the migration has a heading of its own, last')
 })

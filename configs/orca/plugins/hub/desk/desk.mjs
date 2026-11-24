@@ -3,6 +3,7 @@
 // body goes through renderMarkdown, which escapes its own input.
 import { renderMarkdown } from './markdown.mjs'
 import { TAB_KEYS, deskKey } from './keys.mjs'
+import { isFolded, stepRow, visibleRows as openRows, withFold } from './sections.mjs'
 
 // ---------------------------------------------------------------- token and small helpers
 // Orca opens the desk with its token in the address (?t=). The page keeps it in localStorage and
@@ -42,7 +43,7 @@ async function api(path, body) {
 // ---------------------------------------------------------------- state
 const LISTS = [['mine', 'あなたの番', 'y'], ['inbox', 'inbox', 'i'], ['next', '次の行動', 'n'], ['project', 'プロジェクト', 'p'],
   ['waiting', '連絡待ち', 'w'], ['someday', 'いつか／たぶん', 's'], ['reference', '資料', 'r']]
-const HINTS = { mine: '承認・要判断・確かめてほしいもの', inbox: '1 件ずつ何をするか決めて移す（m）', next: '自分とエージェント。プロジェクトの「次」もここに出る',
+const HINTS = { mine: '承認・要判断・確かめてほしいもの', inbox: '1 件ずつ何をするか決めて移す（f）', next: '自分とエージェント。プロジェクトの「次」もここに出る',
   project: '要る行動を順に。次の行動に出ているものに印', waiting: '相手・渡した日・確かめる日', someday: '今はやらない', reference: '資料と成果物' }
 const MINE_LABEL = { handback: 'あなたに戻った', ask: '問いがある', agent_done: '完了・確かめて', follow_up: '確かめる日が来た', due: '締め切り', conflict: 'ぶつかり' }
 const AGENT_STATE = { working: ['c-run', '動いている'], attention: ['c-ask', 'あなた待ち'], idle: ['c-me', '待機'], done: ['c-done', '完了・確かめて'] }
@@ -51,6 +52,9 @@ const CASE_TO = [['inbox', 'inbox', 'i'], ['next', '次の行動', 'n'], ['step'
 
 let S = { today: '', rev: 0, counts: {}, migrate: { done: 0, total: 0 }, agents: {}, items: [], cases: [] }
 let byId = {}
+// The desk is one screen: every list is a section of the left column, one under the other, and
+// the right column shows the selected item, or the migration. `cur` is the section of the selected
+// row (an item of あなたの番 is in its own list too, so the same item can be two rows).
 let cur = 'mine'
 let sel = null
 let pane = 'list'
@@ -60,8 +64,7 @@ let menuFor = null // the item id the move menu is open for
 
 function parseHash() {
   const p = new URLSearchParams(location.hash.slice(1))
-  if (p.get('pane') === 'migrate') { pane = 'migrate'; return }
-  pane = 'list'
+  pane = p.get('pane') === 'migrate' ? 'migrate' : 'list'
   const l = p.get('list')
   if (l && LISTS.some(([k]) => k === l)) cur = l
   sel = p.get('item') || null
@@ -69,7 +72,8 @@ function parseHash() {
 function writeHash() {
   const p = new URLSearchParams()
   if (pane === 'migrate') p.set('pane', 'migrate')
-  else { p.set('list', cur); if (sel) p.set('item', sel) }
+  p.set('list', cur)
+  if (sel) p.set('item', sel)
   const next = `#${p}`
   if (location.hash !== next) history.replaceState(null, '', location.pathname + location.search + next)
 }
@@ -86,6 +90,16 @@ function ordered(name) {
   if (name !== 'next') return rows
   return [...rows.filter((t) => !isAgent(t) || t.actor === 'me'), ...rows.filter((t) => isAgent(t) && t.actor !== 'me')]
 }
+// Sections folded to their heading, to keep the desk on one screen (desk/sections.mjs decides).
+const FOLD_KEY = 'desk-folds'
+let folds = (() => { try { return JSON.parse(storage?.getItem(FOLD_KEY) ?? '{}') ?? {} } catch { return {} } })()
+const folded = (name) => isFolded(name, { cur, sel, folds })
+function setFold(name, on) {
+  folds = withFold(folds, name, on, { cur, sel })
+  try { storage?.setItem(FOLD_KEY, JSON.stringify(folds)) } catch { /* kept until the page closes */ }
+}
+/** The rows j and k go through: those of the open sections, in order. */
+const visibleRows = () => openRows(LISTS, ordered, { cur, sel, folds })
 const projShort = (id) => (id ? (byId[id]?.short ?? id) : '')
 
 function dueChip(d) {
@@ -94,10 +108,10 @@ function dueChip(d) {
   const cls = days < 0 ? 'c-due' : days <= 2 ? 'c-soon' : 'c-me'
   return `<span class="chip ${cls}">${esc(mmdd(d))}</span>`
 }
-function actorChips(t) {
+function actorChips(t, sec = cur) {
   const out = []
-  if (t.mine && cur === 'mine') out.push(`<span class="chip c-ask">${esc(MINE_LABEL[t.mine] ?? t.mine)}</span>`)
-  if (t.asks?.length && !(t.mine && cur === 'mine')) out.push('<span class="chip c-ask">要判断</span>')
+  if (t.mine && sec === 'mine') out.push(`<span class="chip c-ask">${esc(MINE_LABEL[t.mine] ?? t.mine)}</span>`)
+  if (t.asks?.length && !(t.mine && sec === 'mine')) out.push('<span class="chip c-ask">要判断</span>')
   if (isAgent(t)) {
     out.push('<span class="chip c-agent">agent</span>')
     const st = AGENT_STATE[t.agent?.state]
@@ -129,16 +143,11 @@ function stepsHtml(t, style = '') {
 
 // ---------------------------------------------------------------- render: chrome and list
 function renderNav() {
-  const tabs = LISTS.map(([k, label], i) => {
-    const n = k === 'mine' ? inList('mine').length : (S.counts[k] ?? inList(k).length)
-    return `<button class="tab ${k === cur && pane !== 'migrate' ? 'on' : ''}" data-list="${k}"><kbd>${TAB_KEYS[i]}</kbd>${label}<span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span></button>`
-  }).join('')
-  $('tabs').innerHTML = `${tabs}<button class="tab ${pane === 'migrate' ? 'on' : ''}" data-pane="migrate"><kbd>${TAB_KEYS[LISTS.length]}</kbd>移し替え<span class="n">${S.migrate.done}/${S.migrate.total}</span></button>`
   const a = S.agents ?? {}
   $('agents').textContent = `エージェント: 動いている ${a.working ?? 0}・完了 ${a.done ?? 0}・あなた待ち ${a.attention ?? 0}`
 }
 
-function rowHtml(t) {
+function rowHtml(t, sec) {
   const meta = []
   if (t.list === 'waiting') {
     meta.push(`相手: ${esc(t.who ?? '')}`, `渡した日: ${esc(mmdd(t.since ?? ''))}`)
@@ -148,27 +157,37 @@ function rowHtml(t) {
   if (t.worker) meta.push(`<code>${esc(t.worker)}</code> ${bar(t)}${t.agent?.inOrca ? ' <span class="goto">↘ 切り替え</span>' : ''}`)
   if (t.project && t.list !== 'project') meta.push(`<span class="chip c-proj">${esc(projShort(t.project))}</span>`)
   if (t.list === 'project' && t.outcome) meta.push(`望む結果: ${esc(t.outcome)}`)
-  return `<div class="row ${t.id === sel ? 'sel' : ''}" data-id="${esc(t.id)}"><span class="check"></span>
-    <div><div class="title">${esc(t.title)}</div><div class="meta">${meta.map((m) => `<span>${m}</span>`).join('')}</div>${t.list === 'project' ? stepsHtml(t) : ''}</div>
-    <div class="chips">${actorChips(t)} ${dueChip(t.due)}</div></div>`
+  const on = t.id === sel && sec === cur && pane === 'list'
+  return `<div class="row ${on ? 'sel' : ''}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
+    <div><div class="title">${esc(t.title)}</div>${meta.length ? `<div class="meta">${meta.map((m) => `<span>${m}</span>`).join('')}</div>` : ''}${t.list === 'project' ? stepsHtml(t) : ''}</div>
+    <div class="chips">${actorChips(t, sec)} ${dueChip(t.due)}</div></div>`
+}
+
+function sectionHtml(k, label, i) {
+  const rows = ordered(k)
+  const shut = folded(k)
+  const n = rows.length
+  const head = `<button class="sec-head ${shut ? 'shut' : ''} ${k === cur && pane === 'list' ? 'cur' : ''}" data-fold="${k}"><span class="tw">${n ? (shut ? '▸' : '▾') : ''}</span><kbd>${TAB_KEYS[i]}</kbd><b>${label}</b><span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span>${n && !shut ? `<span class="hint">${HINTS[k]}</span>` : ''}</button>`
+  if (shut || !n) return `<section class="sec ${n ? '' : 'is-empty'}" data-sec="${k}">${head}</section>`
+  let body
+  if (k === 'next') {
+    const mineRows = rows.filter((t) => !isAgent(t) || t.actor === 'me')
+    const ag = rows.filter((t) => isAgent(t) && t.actor !== 'me')
+    body = `${mineRows.length ? `<div class="group">自分（${mineRows.length}）</div>${mineRows.map((t) => rowHtml(t, k)).join('')}` : ''}${ag.length ? `<div class="group">エージェント（${ag.length}）・押すと Orca のエージェントの画面も切り替わる</div>${ag.map((t) => rowHtml(t, k)).join('')}` : ''}`
+  } else body = rows.map((t) => rowHtml(t, k)).join('')
+  return `<section class="sec" data-sec="${k}">${head}${body}</section>`
 }
 
 function renderItems() {
-  const label = LISTS.find(([k]) => k === cur)[1]
-  let html = `<div class="head"><h2>${label}</h2><span class="hint">${HINTS[cur]}</span></div>`
-  const rows = inList(cur)
-  if (!rows.length) html += '<div class="empty">空です</div>'
-  else if (cur === 'next') {
-    const ord = ordered('next')
-    const mineRows = ord.filter((t) => !isAgent(t) || t.actor === 'me')
-    const ag = ord.filter((t) => isAgent(t) && t.actor !== 'me')
-    html += `<div class="group">自分（${mineRows.length}）</div>${mineRows.map(rowHtml).join('')}<div class="group">エージェント（${ag.length}）・押すと Orca のエージェントの画面も切り替わる</div>${ag.map(rowHtml).join('')}`
-  } else html += rows.map(rowHtml).join('')
+  const m = S.migrate ?? { done: 0, total: 0 }
+  const migrateHead = `<section class="sec" data-sec="migrate"><button class="sec-head ${pane === 'migrate' ? 'cur' : ''}" data-pane="migrate"><span class="tw">→</span><kbd>${TAB_KEYS[LISTS.length]}</kbd><b>移し替え</b><span class="n">${m.done}/${m.total}</span><span class="hint">旧案件を 1 行ずつ（右に出す）</span></button></section>`
   const el = $('items')
   const top = el.scrollTop
-  el.innerHTML = html
+  el.innerHTML = LISTS.map(([k, label], i) => sectionHtml(k, label, i)).join('') + migrateHead
   el.scrollTop = top
-  el.querySelectorAll('.row').forEach((r) => { r.onclick = () => choose(r.dataset.id, true) })
+  el.querySelectorAll('.row').forEach((r) => { r.onclick = () => choose(r.dataset.id, true, r.dataset.sec) })
+  el.querySelectorAll('[data-fold]').forEach((b) => { b.onclick = () => toggleFold(b.dataset.fold) })
+  el.querySelectorAll('[data-pane]').forEach((b) => { b.onclick = () => showMigrate() })
   el.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' })
 }
 
@@ -214,7 +233,7 @@ function renderDetail() {
   }
   left += '</div>'
   d.innerHTML = `<div class="head"><h2>${esc(t.title)}</h2></div>
-    <div>${actorChips(t)} ${dueChip(t.due)} <span class="chip c-proj">${esc(t.list)}</span>${t.project && t.list !== 'project' ? ` <span class="chip c-proj">${esc(projShort(t.project))}</span>` : ''}</div>
+    <div>${actorChips(t, cur)} ${dueChip(t.due)} <span class="chip c-proj">${esc(t.list)}</span>${t.project && t.list !== 'project' ? ` <span class="chip c-proj">${esc(projShort(t.project))}</span>` : ''}</div>
     <div class="actions"><button class="btn primary" data-act="open">Orca のエディタで開く <kbd>s</kbd></button>${t.deliverables?.length ? '<button class="btn" data-act="deliv">成果物を開く <kbd>d</kbd></button>' : ''}<button class="btn" data-act="move">移す <kbd>f</kbd></button><button class="btn" data-act="done">完了 <kbd>x</kbd></button></div>
     <div class="cols"><div>${left}</div><div style="margin-top:8px"><table class="fm">${fmRows(t)}</table>
     ${t.path ? `<p class="note">ファイル: <code class="path">${esc(t.path)}</code></p>` : ''}</div></div>`
@@ -267,24 +286,47 @@ function renderMigrate() {
 
 // ---------------------------------------------------------------- screens
 function render() {
-  const lst = pane !== 'migrate'
-  $('items').classList.toggle('on', lst)
-  $('detail').classList.toggle('on', lst)
-  $('migrate').classList.toggle('on', !lst)
-  if (lst) {
-    const rows = ordered(cur)
-    if (!byId[sel] || !rows.some((t) => t.id === sel)) {
-      // keep the place in the list when the selected item left it
-      sel = rows.length ? rows[Math.min(lastIdx, rows.length - 1)].id : null
+  const migrating = pane === 'migrate'
+  $('detail').classList.toggle('on', !migrating)
+  $('migrate').classList.toggle('on', migrating)
+  if (!migrating) {
+    const rows = folded(cur) ? [] : ordered(cur)
+    if (!rows.some((t) => t.id === sel)) {
+      // Keep the place in the section when the selected item left it. A section folded away hands
+      // the selection to the first open row; an empty one stays current with nothing selected.
+      const at = rows[Math.min(lastIdx, rows.length - 1)]
+      const first = at ? { sec: cur, t: at } : folded(cur) ? visibleRows()[0] : null
+      cur = first?.sec ?? cur
+      sel = first?.t.id ?? null
     }
-    lastIdx = Math.max(0, rows.findIndex((t) => t.id === sel))
+    lastIdx = Math.max(0, ordered(cur).findIndex((t) => t.id === sel))
   }
   renderNav()
-  if (lst) { renderItems(); renderDetail() } else renderMigrate()
+  renderItems()
+  if (migrating) renderMigrate()
+  else renderDetail()
   writeHash()
 }
-function showList(name) { cur = name; pane = 'list'; sel = null; lastIdx = 0; render() }
+/** A section's key: open it and select its first item. */
+function showList(name) {
+  if (folds[name] === true) setFold(name, false)
+  cur = name
+  pane = 'list'
+  sel = ordered(name)[0]?.id ?? null
+  lastIdx = 0
+  render()
+  document.querySelector(`#items [data-sec="${name}"]`)?.scrollIntoView({ block: 'nearest' })
+}
 function showMigrate() { pane = 'migrate'; render() }
+/** Esc on the migration: back to the item that was selected. */
+function backToList() { pane = 'list'; render() }
+function toggleFold(name) {
+  const shut = !folded(name)
+  setFold(name, shut)
+  if (shut && cur === name) sel = null
+  pane = 'list'
+  render()
+}
 
 // ---------------------------------------------------------------- toast
 let toastTimer
@@ -324,8 +366,10 @@ async function write(path, body, { quiet = false } = {}) {
   return r.json
 }
 
-async function choose(id, fromClick) {
+async function choose(id, fromClick, sec = cur) {
   sel = id
+  cur = sec
+  pane = 'list'
   lastIdx = Math.max(0, ordered(cur).findIndex((t) => t.id === id))
   render()
   const t = byId[id]
@@ -340,13 +384,13 @@ async function focusWorker(t) {
   else if (r.json.reason === 'not-in-orca') toast(`<b>${w}</b> は Orca のターミナルの外（claude --bg）なので切り替えられない。進み具合は右に出す`)
   else toast(`切り替えなかった${r.json.reason ? `（${esc(r.json.reason)}）` : ''}`)
 }
+// j and k go through the rows of every open section, across the sections.
 function move(delta) {
-  const rows = ordered(cur)
-  if (!rows.length) return
-  const i = rows.findIndex((t) => t.id === sel)
-  const next = rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i + delta)))]
-  sel = next.id
-  lastIdx = rows.indexOf(next)
+  const next = stepRow(visibleRows(), { cur, sel }, delta)
+  if (!next) return
+  cur = next.sec
+  sel = next.t.id
+  lastIdx = ordered(cur).indexOf(next.t)
   render()
 }
 async function openItem(id, path) {
@@ -460,6 +504,7 @@ document.addEventListener('keydown', (e) => {
     case 'add': e.preventDefault(); $('add').focus(); return
     case 'list': return showList(hit.list)
     case 'migrate': return showMigrate()
+    case 'back': return backToList()
     case 'migMove': return migMove(hit.delta)
     case 'fromCase': if (migKey) fromCase(migKey, hit.to); return
     case 'move': return move(hit.delta)
@@ -474,12 +519,6 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
-$('tabs').addEventListener('click', (e) => {
-  const b = e.target.closest('button')
-  if (!b) return
-  if (b.dataset.list) showList(b.dataset.list)
-  else if (b.dataset.pane) showMigrate()
-})
 window.addEventListener('hashchange', () => {
   parseHash()
   render()

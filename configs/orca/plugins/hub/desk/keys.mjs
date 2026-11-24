@@ -1,16 +1,19 @@
 // The desk's keys, as a function of the key pressed and where the page is: desk/desk.mjs does
 // what it returns. Kept apart from the page so that the tests can run it without a browser.
 //
-// The lists and the migration are on the row q w e r t y u i, which a keyboard whose digits need a
-// layer key can press alone. Where a key means something else, the more specific place wins:
+// The desk is one screen: the lists are sections of the left column, one under the other. The keys
+// q w e r t y u jump to a section (opening it if folded), and i shows the migration in the right
+// column; a keyboard whose digits need a layer key can press them alone. Where a key means
+// something else, the more specific place wins:
 // - the menu of where to move an item (MOVE_TO's keys) takes every key while it is open;
 // - after g, the letters are the lists' initials (y i n p w s r, and m for the migration);
 // - on the migration, the keys of where to move a line (CASE_TO's: i n t w s r c -) win over the
-//   tabs; the other keys of the row (q e y u) still switch, and g + an initial reaches every list.
+//   sections; the other keys of the row (q e y u) still jump, Esc goes back to the item, and g + an
+//   initial reaches every list.
 // The acts on the selected item are on the home row from the left: a adds, s opens it in the
 // editor, d its deliverables, f moves it; x (done) stays on the row below, away from the keys
-// pressed most; j and k go up and down. The keys do not follow the words' initials: a key easy to
-// reach comes first.
+// pressed most; j and k go up and down through the open sections. The keys do not follow the
+// words' initials: a key easy to reach comes first.
 // Shift with the first four keys of the row (or Shift with 1-4) answers the selected item's first
 // question; by e.code, so that Caps Lock does not turn a tab key into an answer.
 
@@ -47,6 +50,7 @@ export function deskKey(e, { pane, gPending = false, menuOpen = false, hasItem =
   if (k === 'g') return { do: 'g' }
   if (k === 'a') return { do: 'add' }
   if (pane === 'migrate') {
+    if (k === 'Escape') return { do: 'back' }
     if (k === 'j') return { do: 'migMove', delta: 1 }
     if (k === 'k') return { do: 'migMove', delta: -1 }
     const hit = caseTo.find(([, , key]) => key === k)
