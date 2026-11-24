@@ -24,7 +24,7 @@ test('registers the commands and events declared in the manifest, and starts not
   })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
-  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send', 'case.act'], 'no handler that writes an approval')
+  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send', 'case.act', 'desk.open'], 'no handler that writes an approval')
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
 })
 
@@ -82,7 +82,7 @@ function sources() {
 const CODE_ONLY = (text) => text.replace(/^\s*(\/\/|\*|\/\*).*$/gm, '')
 
 const FORBIDDEN = [
-  [/['"]create['"]/, 'orca terminal create'],
+  [/['"]terminal['"],\s*['"]create['"]|terminal\.create/, 'orca terminal create'],
   [/PermissionRequest/, 'a permission decision'],
   [/behavior\s*:/, 'a permission decision'],
   [/--settings/, 'settings on the command line'],
@@ -119,9 +119,50 @@ test('no code answers a permission through a hook, approves, adds settings or re
   for (const [file, text] of sources()) {
     // src/risk.mjs names gh and git to tell what a waiting command does; it runs nothing (see the
     // test of which files spawn).
-    const found = findForbidden(text).filter((what) => !(file === join('src', 'risk.mjs') && ['gh', 'git'].includes(what)))
+    // src/desk-server.mjs serves the desk on 127.0.0.1 (the test below holds it to that).
+    const found = findForbidden(text)
+      .filter((what) => !(file === join('src', 'risk.mjs') && ['gh', 'git'].includes(what)))
+      .filter((what) => !(file === join('src', 'desk-server.mjs') && what === 'the network'))
     assert.deepEqual(found, [], file)
   }
+})
+
+test('only src/desk-server.mjs opens a socket: an HTTP server on 127.0.0.1, and nothing that calls out', () => {
+  const serving = sources()
+    .filter(([, source]) => /node:(https?|net|dgram|tls)\b/.test(CODE_ONLY(source)))
+    .map(([file]) => file)
+  assert.deepEqual(serving, [join('src', 'desk-server.mjs')])
+  const text = CODE_ONLY(readFileSync(join(root, 'src', 'desk-server.mjs'), 'utf8'))
+  assert.deepEqual([...text.matchAll(/from 'node:(https?|net|dgram|tls)'/g)].map((match) => match[1]), ['http'])
+  assert.match(text, /import \{ createServer \} from 'node:http'/, 'the server only, not request or get')
+  assert.deepEqual([...text.matchAll(/\.listen\(([^)]*)\)/g)].map((match) => match[1].split(',')[1]?.trim()), ["'127.0.0.1'"])
+  assert.doesNotMatch(text, /\bfetch\(|Access-Control-Allow/, 'no call out and no CORS')
+  assert.match(text, /timingSafeEqual/, 'the token is compared in constant time')
+})
+
+test('the Orca CLI runs the worker asks for outside src/orca-cli.mjs are reads, terminal switch and the desk tab', () => {
+  const text = CODE_ONLY(readFileSync(join(root, 'src', 'hub-worker.mjs'), 'utf8'))
+  const calls = [...text.matchAll(/runArgs\(\[([^\]]*)\]/g)].map((match) => match[1])
+  assert.deepEqual(calls, [
+    "'worktree', 'ps', '--limit', '1000', '--json'",
+    "'terminal', 'switch', '--terminal', terminal, '--json'",
+    "'worktree', 'ps', '--limit', '1000', '--json'",
+    "'tab', 'list', ...where, '--json'",
+    "'tab', 'switch', '--page', String(page), ...where, '--focus', '--json'",
+    "'tab', 'create', '--url', url, ...where, '--json'"
+  ])
+})
+
+test('the desk writes only through gtd.py, with --by user, and these commands', () => {
+  const runner = CODE_ONLY(readFileSync(join(root, 'src', 'gtd.mjs'), 'utf8'))
+  assert.deepEqual([...runner.matchAll(/exec\(([^)]*?)\{/g)].map((match) => match[1].trim()), ['python, [script, ...args],'])
+  assert.match(runner, /join\(home, '\.claude', 'skills', 'agents-orchestrator', 'scripts', 'gtd\.py'\)/)
+  const desk = CODE_ONLY(readFileSync(join(root, 'src', 'desk.mjs'), 'utf8'))
+  const reads = [...desk.matchAll(/\bgtd\(\[([^\]]*)\]/g)].map((match) => match[1])
+  assert.deepEqual(reads, ["'json'", "'cases'", "...args, '--by', 'user'", "'record', '--quiet', String(QUIET_S), '--by', 'user'"])
+  const writes = [...desk.matchAll(/\bwrite\(\[([^,\]]*)/g)].map((match) => match[1])
+  assert.deepEqual(writes, ["'add'", "'move'", "'done'", "'from-case'", "'case-project'"])
+  assert.doesNotMatch(desk, /writeFile|rename\(|unlink|rm\(/, 'the desk writes no item itself (only a line of the change log)')
 })
 
 test('only src/next-actions.mjs and src/orchestrator.mjs type into an Orca terminal, and only 1, Esc, an answer or a prompt', () => {
@@ -152,7 +193,7 @@ test('the claude CLI is only asked to list the sessions, and nothing else runs a
     .filter(([, source]) => /node:child_process/.test(CODE_ONLY(source)))
     .map(([file]) => file)
     .sort()
-  assert.deepEqual(spawning, [join('src', 'cases.mjs'), join('src', 'claude-agents.mjs'), join('src', 'deliver.mjs'), join('src', 'orca-cli.mjs')])
+  assert.deepEqual(spawning, [join('src', 'cases.mjs'), join('src', 'claude-agents.mjs'), join('src', 'deliver.mjs'), join('src', 'gtd.mjs'), join('src', 'orca-cli.mjs')])
   // The cases are read with `cases.py json` and nothing else.
   const cases = CODE_ONLY(readFileSync(join(root, 'src', 'cases.mjs'), 'utf8'))
   assert.deepEqual([...cases.matchAll(/execFile\(([^)]*?)\{/g)].map((match) => match[1].trim()), ["python, [script, 'json'],"])
@@ -171,7 +212,7 @@ test('what the panel runs to act is the short list of src/deliver.mjs', () => {
   assert.match(text, /casesScript = join\(home, '\.claude', 'skills', 'agents-orchestrator', 'scripts', 'cases\.py'\)/)
   // Every other run(...) in the plugin is a read of src/claude-agents.mjs or src/orca-cli.mjs.
   for (const [file, source] of sources()) {
-    if ([join('src', 'deliver.mjs'), join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs'), join('src', 'cases.mjs')].includes(file)) continue
+    if ([join('src', 'deliver.mjs'), join('src', 'claude-agents.mjs'), join('src', 'orca-cli.mjs'), join('src', 'cases.mjs'), join('src', 'gtd.mjs')].includes(file)) continue
     assert.doesNotMatch(CODE_ONLY(source), /execFile|spawn\(/, file)
   }
 })

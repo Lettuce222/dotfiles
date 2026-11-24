@@ -5,8 +5,8 @@
   "id": "hub-local",
   "publisher": "lettuce222",
   "name": "Hub (local)",
-  "version": "0.8.0",
-  "description": "Shows every Claude Code session of this computer, background ones included, with its goal and progress. Adapted from andoshin11/orca-milestone.",
+  "version": "0.9.0",
+  "description": "The hub's desk (its items, served on 127.0.0.1 to Orca's browser) and every Claude Code session of this computer, background ones included, with its goal and progress. Adapted from andoshin11/orca-milestone.",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.248"
@@ -26,6 +26,19 @@
       {
         "id": "hub.refresh",
         "title": "Hub: Refresh"
+      },
+      {
+        "id": "hub.desk.open",
+        "title": "Hub: Open the desk"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "hub-desk",
+        "text": "デスク",
+        "icon": "flag",
+        "tooltip": "hub のデスクを開く",
+        "command": "hub.desk.open"
       }
     ],
     "events": [

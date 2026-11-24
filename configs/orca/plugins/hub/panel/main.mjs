@@ -7,6 +7,7 @@
 // Added: a row of a hub worker opens its report, and the cards of the asks workers write
 // (panel/act.mjs).
 import { setUpActions } from './act.mjs'
+import { setUpDesk } from './desk.mjs'
 import { scrollExpandedRows } from './expand.mjs'
 import { sendOnPress } from './next.mjs'
 import { openOnPress } from './open.mjs'
@@ -56,6 +57,7 @@ const acts = setUpActions({
   composer: document.getElementById('composer'),
   request: (name, params) => plugin.request(name, params)
 })
+setUpDesk({ view, notice: document.getElementById('notice'), request: (name, params) => plugin.request(name, params) })
 openOnPress(view, ({ kind, path }) => {
   const name = kind === 'workspace' ? 'workspace.open' : 'report.open'
   plugin.request(name, { path }).catch((error) => {

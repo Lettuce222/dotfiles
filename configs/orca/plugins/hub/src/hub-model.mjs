@@ -178,6 +178,33 @@ function watcherLine(agents) {
  *   workspace ({ path, displayName, agentStates, background }) and offers what Orca's agents offer
  *   (src/next-actions.mjs)
  */
+/**
+ * Each named Claude session with its state and progress, for the desk: an item's worker is found by
+ * its name. `orcaPath` is the Orca workspace an interactive session runs in, or null.
+ */
+export function sessionSummaries(agents, lists, orcaAgents = []) {
+  const { paired } = pairOrca(agents, orcaAgents)
+  return agents
+    .filter((agent) => agent.name)
+    .map((agent) => {
+      const orcaAgent = paired.get(agent.sessionId) ?? null
+      const { goal, done, total, tasks, step } = progress(listOf(agent.sessionId, lists))
+      return {
+        name: agent.name,
+        sessionId: agent.sessionId,
+        kind: agent.kind,
+        state: stateOf(agent, orcaAgent),
+        goal,
+        done,
+        total,
+        step,
+        tasks: tasks.map((task) => ({ subject: task.subject, status: task.status })),
+        orcaPath: orcaAgent ? orcaAgent.path : null,
+        cwd: agent.cwd ?? null
+      }
+    })
+}
+
 export function buildHubModel(agents, lists, orcaAgents = [], { home = null, focusedPath = null, now = 0, cards = [], focused = null, offers = [], projects = [], orchestratorQuestion = null, orchestratorAsks = [] } = {}) {
   const { paired, rest } = pairOrca(agents, orcaAgents)
   // A worker's ask shows in its row, which then waits for the user whatever the session says.

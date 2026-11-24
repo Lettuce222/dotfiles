@@ -499,10 +499,32 @@ function renderWatcher(watcher) {
   return `<p class="watcher">見張り（chore-hub-watch）: ${WATCHER_LABELS[watcher.state] ?? ''}${detail}</p>`
 }
 
+const DESK_REASONS = {
+  starting: 'デスクを用意しています…',
+  'no-gtd': 'gtd.py が見つかりません（dotfiles を反映すると使えます）'
+}
+
+/** The way into the desk, with how many items wait in each list. */
+function renderDesk(desk) {
+  if (!desk) return `<section class="desk" data-key="desk"><p class="empty">${DESK_REASONS.starting}</p></section>`
+  if (desk.error) return `<section class="desk" data-key="desk"><p class="empty">${escape(DESK_REASONS[desk.error] ?? `デスクを開けません: ${desk.error}`)}</p></section>`
+  const count = (label, n, hot = false) => `<span class="${hot && n ? 'hot' : ''}">${escape(label)} <b>${Number(n) || 0}</b></span>`
+  const agents = desk.agents ?? {}
+  const migrate = desk.migrate?.total ? count(`移し替え ${desk.migrate.done}/`, desk.migrate.total) : ''
+  return (
+    `<section class="desk" data-key="desk">` +
+    `<button type="button" class="desk-open" data-desk-open>デスクを開く</button>` +
+    `<p class="desk-counts">${count('あなたの番', desk.mine, true)}${count('inbox', desk.inbox)}${count('次の行動', desk.next)}${count('連絡待ち', desk.waiting)}${migrate}</p>` +
+    `<p class="desk-agents">エージェント: 動いている ${Number(agents.working) || 0}・完了 ${Number(agents.done) || 0}・あなた待ち ${Number(agents.attention) || 0}</p>` +
+    `</section>`
+  )
+}
+
 export function renderHub(model) {
-  const groups = [
-    ...(model.orchestratorAsks ?? []).map(renderOrchestratorAsk),
-    renderOrchestratorQuestion(model.orchestratorQuestion),
+  // The orchestrator's permission dialogs and questions stay here: approval-gate.py waits on them.
+  const asks = [...(model.orchestratorAsks ?? []).map(renderOrchestratorAsk), renderOrchestratorQuestion(model.orchestratorQuestion)].join('')
+  // The panel before hub v2, shown on demand while the cases move to the desk.
+  const legacy = [
     renderFocused(model.focused),
     renderCards(model.cards),
     renderProjects(model.projects),
@@ -510,8 +532,9 @@ export function renderHub(model) {
     renderGroup('動いている（プロジェクトの外）', model.working, 'working'),
     renderGroup('待っている', model.idle, 'idle')
   ].join('')
-  const body = groups || '<p class="empty">Claude Code のセッションはありません。</p>'
-  return `<main>${body}${renderWatcher(model.watcher)}</main>`
+  const old = legacy || '<p class="empty">Claude Code のセッションはありません。</p>'
+  const toggle = `<button type="button" class="legacy-toggle" data-legacy-toggle aria-controls="legacy">今までの表示（案件・セッション）</button>`
+  return `<main>${asks}${renderDesk(model.desk)}${toggle}<div class="legacy" id="legacy">${old}</div>${renderWatcher(model.watcher)}</main>`
 }
 
 export function renderLoading() {

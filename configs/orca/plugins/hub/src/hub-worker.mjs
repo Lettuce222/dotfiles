@@ -9,7 +9,7 @@
 // through src/deliver.mjs. And the orchestrator's permission dialogs, which approval-gate.py writes
 // as asks while it waits: a card answers one in place of the dialog (answerPermission).
 import { watch } from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, realpath, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { ASK_ID, PERMISSION_CHOICES, SHA256, asksDirOf, checkAsk, readAsk, readAsks } from './asks.mjs'
 import { casesScriptOf, readCases as readCasesJson } from './cases.mjs'
@@ -35,7 +35,7 @@ import {
 import { createNextSender, readPaneScreen } from './next-actions.mjs'
 import { actionText, latestAction } from './case-actions.mjs'
 import { createOrchestratorChannel } from './orchestrator.mjs'
-import { buildHubModel, isInside } from './hub-model.mjs'
+import { buildHubModel, isInside, sessionSummaries } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { ORCHESTRATOR_FAILURES, renderHub, renderLoading } from './hub-render.mjs'
 
@@ -117,6 +117,10 @@ export function createHubWorker({
   let sessions = []
   let sessionsAt = 0
   let offers = []
+  // What the desk reads between refreshes: the named sessions and the asks of the last refresh.
+  let summaries = []
+  // The panel's counts from the desk (src/desk.mjs), or null while there is no desk.
+  let deskCounts = null
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
   // A question or a call waiting for permission is read from the transcript of Claude's session.
   const readers = {
@@ -350,6 +354,7 @@ export function createHubWorker({
       }
     }
     asks = await readAsks(asksDir)
+    summaries = sessionSummaries(sessions, lists, agents)
     const shownAsk = (ask) => ({ ...ask, check: checkAsk(ask, sessions, now()), pressed: pressed.get(ask.id) ?? null, failure: failures.get(ask.id) ?? null })
     const forOrchestrator = (ask) => ask.kind === 'question' || ask.kind === 'permission'
     const cards = asks.filter((ask) => !forOrchestrator(ask)).map(shownAsk)
@@ -362,7 +367,11 @@ export function createHubWorker({
     ]
     // While the orchestrator waits on the panel, its menu is not up: no card that types into it.
     const shownOffers = permissions.length > 0 ? offers.filter((offer) => !(offer.kind === 'permission' && resolve(offer.path ?? '') === resolve(hubRoot))) : offers
-    publish(renderHub(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers: shownOffers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) })))
+    publish(renderHub(withDesk(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers: shownOffers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) }))))
+  }
+
+  function withDesk(model) {
+    return { ...model, desk: deskCounts }
   }
 
   async function exists(name) {
@@ -628,5 +637,100 @@ export function createHubWorker({
     return started
   }
 
-  return { start, refresh, resignal, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase }
+  /** The sessions and asks the desk shows beside the items (src/desk.mjs). */
+  function snapshot() {
+    return { workers: summaries, asks }
+  }
+
+  /** Opens a file of the hub (an item or its deliverable) in Orca's editor, in the workspace that holds it. */
+  async function openFile(path) {
+    const target = resolve(path)
+    const real = await realpath(target).catch(() => null)
+    const items = await realpath(join(hubRoot, 'gtd', 'items')).catch(() => null)
+    if (!isInside(target, join(hubRoot, 'gtd', 'items')) || !real || !items || !isInside(real, items)) return false
+    try {
+      const { workspaces } = await orca.host.call('workspace.list')
+      const holder = workspaces
+        .filter((candidate) => isInside(target, candidate.path))
+        // The innermost; of two with the same path (hub has two), the one with the shorter id.
+        .toSorted((a, b) => b.path.length - a.path.length || String(a.id).length - String(b.id).length)[0]
+      if (!holder) {
+        orca.log(`hub: no workspace holds ${target}`)
+        return false
+      }
+      await orca.host.call('workspace.open', { workspaceId: holder.id })
+      await orca.host.call('editor.open', { workspaceId: holder.id, path: relative(holder.path, target) })
+      return true
+    } catch (error) {
+      orca.log(`hub: could not open ${target}: ${error.message}`)
+      return false
+    }
+  }
+
+  /**
+   * Shows the Orca terminal a worker runs in. Orca's `worktree ps` names each agent's Claude session
+   * (conversationName) and its terminal (address); the host's terminal.focus shows it, else the
+   * CLI's `terminal switch`.
+   */
+  async function focusWorker(worker) {
+    try {
+      const response = await runArgs(['worktree', 'ps', '--limit', '1000', '--json'])
+      const listed = response?.result?.worktrees ?? []
+      const candidates = listed.flatMap((entry) => (entry.agents ?? []).map((agent) => ({ entry, agent })))
+      const found =
+        candidates.find(({ agent }) => agent.conversationName === worker.name) ??
+        candidates.find(({ entry, agent }) => entry.path === worker.orcaPath && agent.agentType === 'claude' && !agent.parentPaneKey)
+      const terminal = typeof found?.agent?.address === 'string' ? found.agent.address : null
+      if (!terminal) return { focused: false, reason: 'no-terminal' }
+      // terminal.focus needs Orca 1.4.259 (host API 1.7); an older Orca goes straight to the CLI.
+      if (orca.host.has?.('terminal.focus')) {
+        try {
+          const { focused } = await orca.host.call('terminal.focus', { terminalId: terminal })
+          if (focused) return { focused: true }
+        } catch (error) {
+          orca.log(`hub: terminal.focus ${terminal} failed: ${error.code ?? error.message}; trying the CLI`)
+        }
+      }
+      const switched = await runArgs(['terminal', 'switch', '--terminal', terminal, '--json'])
+      return switched?.ok ? { focused: true } : { focused: false, reason: 'focus-failed' }
+    } catch (error) {
+      orca.log(`hub: could not show ${worker.name}: ${error.message}`)
+      return { focused: false, reason: 'focus-failed' }
+    }
+  }
+
+  /** Opens the desk in a browser tab of the hub's workspace, or shows the tab already open. */
+  async function openDesk(url) {
+    if (!url) return { opened: false, reason: 'no-desk' }
+    try {
+      const response = await runArgs(['worktree', 'ps', '--limit', '1000', '--json'])
+      const hub = (response?.result?.worktrees ?? [])
+        .filter((entry) => entry.path === hubRoot && !entry.isArchived)
+        .toSorted((a, b) => Number(b.isMainWorktree) - Number(a.isMainWorktree) || Number(b.isActive) - Number(a.isActive))[0]
+      const selector = hub?.address?.worktree ?? null
+      const where = selector ? ['--worktree', selector] : []
+      const origin = new URL(url).origin
+      const tabs = await runArgs(['tab', 'list', ...where, '--json']).catch(() => null)
+      const open = (tabs?.result?.tabs ?? []).find((tab) => typeof tab.url === 'string' && tab.url.startsWith(origin))
+      const page = open?.pageId ?? open?.id ?? null
+      if (page) {
+        const shown = await runArgs(['tab', 'switch', '--page', String(page), ...where, '--focus', '--json']).catch(() => null)
+        if (shown?.ok) return { opened: true, reused: true }
+      }
+      const created = await runArgs(['tab', 'create', '--url', url, ...where, '--json'])
+      return created?.ok ? { opened: true, reused: false } : { opened: false, reason: created?.error?.message ?? 'failed' }
+    } catch (error) {
+      orca.log(`hub: could not open the desk: ${error.message}`)
+      return { opened: false, reason: 'failed' }
+    }
+  }
+
+  /** The desk's counts for the panel's top line; the panel is drawn again when they change. */
+  function setDeskCounts(counts) {
+    const before = JSON.stringify(deskCounts)
+    deskCounts = counts
+    if (JSON.stringify(counts) !== before) schedule()
+  }
+
+  return { start, refresh, resignal, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
 }
