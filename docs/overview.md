@@ -133,7 +133,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
-| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`）、資料に1行足す（`log`）、全案件のJSON（`json`、Hub (local)が読む） |
+| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`）、資料に1行足す（`log`）、全案件のJSON（`json`、Hub (local)が読む）。`scripts/gtd.py`: hub v2の項目（`~/hub/gtd/items/<id>.md`、1項目1ファイルのfrontmatter付きMarkdown）の読み書き。`add`・`move`・`done`・`set`（読んだときのhash付き）・`assign`・`handback`・`note`・`step`（プロジェクトのステップと、済んだら次のplannedをnextにする繰り上げ）・`json`（デスクが読む）・`cases`と`from-case`・`case-project`（旧案件の1行を項目にし、元の行に「〔移した→id〕」を足す）・`sweep`・`lint`（本文の正規形）・`record`（記録係。人の変更は10分静かになってからまとめてコミットし、エージェントの書き込みは書く前に人の変更をまとめてからすぐコミットする） |
 | `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。ゴールを通しで進め、取り消せる判断は推奨で決めて「決めたこと」にまとめること、報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの決まり（署名を外さず、止まったら報告する）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
 | `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを、急ぎかどうかを付けて窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
@@ -153,6 +153,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/hooks/clear-tmux-window-title.sh` | セッションの終了 | 同じウィンドウにほかのClaudeがいなければ印を消す |
 | `configs/agent/hooks/clear-green-tmux-window-title.sh` | tmuxでウィンドウを移ったとき（`tmux.conf`のhook） | 🟢だけを消す |
 | `configs/agent/hooks/textlint-markdown.sh` | `.md`を書いた直後 | textlintにかけ、指摘があれば書き直させる |
+| `configs/agent/hooks/gtd-lint.py` | hub v2の項目（`~/hub/gtd/items/<id>.md`）を書く前と書いた直後 | 書く前に、まだコミットしていない人の変更をuserのコミットにまとめる。書いたあとは`gtd.py`のlintでfrontmatterの必須項目・値・壊れた参照と本文の正規形（Rich Markdownの形）を確かめ、`agent:<worker名>`のコミットにする。違えば指摘を返して書き直させる。末尾の改行とfrontmatterのあとの空行は問わない |
 | `configs/agent/hooks/textlint-mcp.sh` | MCPのtoolを呼ぶ前 | 送る本文の日本語をtextlintにかけ、指摘があれば止める |
 | `configs/agent/hooks/external-post-guard.py` | MCPのtoolと、ghの書き込みの前 | リンクになっていないチケットID・PR番号、曜日のない日付を止める。通れば、承認の記録があれば通し、無ければ送り先と本文を見せて確認を出す |
 | `configs/agent/hooks/approvals.py` | 窓口がユーザーの承認の直後に呼ぶ | 承認した操作を1回だけ通す記録を`~/hub/state/approvals/`に書く（30分で切れる）。workerに向けた記録は`--worker <worker名>`で書く（古い`--thread`も受け付ける） |
@@ -174,6 +175,8 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 | `configs/agent/tests/test_agent_ui_guard.py` | `agent-ui-guard.py`（`--panel`で先にパネルで待つことも）と、`approval-gate.py`がその呼び出しの記録を使わないこと |
 | `configs/agent/tests/test_ask_preview_guard.py` | `ask-preview-guard.py` |
 | `configs/agent/tests/test_cases.py` | `cases.py` |
+| `configs/agent/tests/test_gtd.py` | `gtd.py`（形・操作・ステップの繰り上げ・旧案件からの移し替え・記録係） |
+| `configs/agent/tests/test_gtd_lint.py` | 本文の正規形の規則と、`gtd-lint.py`のhook |
 | `configs/agent/tests/test_asks.py` | `asks.py` |
 | `configs/agent/tests/test_agents_watch.py` | `watch.py` |
 | `configs/agent/tests/test_md_to_gdocs.py` | `md_to_gdocs.py` |
@@ -339,7 +342,7 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 | ファイル | 役割 |
 | --- | --- |
-| `configs/orca/plugins/hub/` | Hub (local)。hub v2のデスク（`desk/`の1ページ）をworkerが`127.0.0.1`の空いたポートで、起動ごとのトークン付きで配り（`src/desk-server.mjs`、`src/desk.mjs`）、パネルの「デスクを開く」かステータスバーからOrcaの組み込みのブラウザのタブに開く。デスクは上のタブにリスト（件数つき）と移し替え、その下に左の項目・右の詳細。書き込みはすべて`gtd.py --by user`、項目と成果物はOrcaのエディタ（`editor.open`）で開き、Orcaのターミナルで動くworkerはエージェントの画面を切り替える（`terminal.focus`）。記録係として1分ごとに`gtd.py record`を呼び、エディタからの保存を`.log/changes.jsonl`に残す。パネルは、窓口の許可の確認と質問のカード、デスクの入口と件数に縮め、以下の今までの表示は「今までの表示」を押したときだけ出す。今までの表示では、上に、開いているワークスペースのゴールとマイルストーンと、そのエージェントへのカード（次の作業・質問・許可。orca-milestoneと同じ）を出す。許可のカードはターミナルの確認のメニューに1かEscを送るだけで、外に出る呼び出しには「許可」を出さない。その下に、窓口の案件（`cases.py json`）をプロジェクトとして、TODO（期日と`!`）・Waiting・結びつくworkerの行とともに出し、どの案件にも結びつかないセッションを「あなたの番」「動いている」「待っている」に分けて出す。済んだworkerは出さない。workerには行の✎から指示を送れ（`claude --bg --resume`）、`asks.py`の依頼はカードになる。窓口の確認ダイアログを`approval-gate.py --panel`が待たせているあいだは、いちばん上に「許可の確認」のカードを出し、押された答え（許可・拒否・ターミナルで確かめる）を答えのファイルに書く。承認の記録は書かない。orca-milestoneのコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
+| `configs/orca/plugins/hub/` | Hub (local)。hub v2のデスク（`desk/`の1ページ）をworkerが`127.0.0.1`の空いたポートで、起動ごとのトークン付きで配り（`src/desk-server.mjs`、`src/desk.mjs`）、パネルの「デスクを開く」かステータスバーからOrcaの組み込みのブラウザのタブに開く。デスクは上のタブにリスト（件数つき）と移し替え、その下に左の項目・右の詳細。書き込みはすべて`gtd.py --by user`、項目と成果物はOrcaのエディタ（`editor.open`）で開き、Orcaのターミナルで動くworkerはエージェントの画面を切り替える（`terminal.focus`）。記録係として1分ごとに`gtd.py record`を呼び、エディタからの保存を`.log/changes.jsonl`に残す。パネルは、窓口の許可の確認と質問のカード、デスクを開くボタンと件数を上に足し、案件の一覧だけを「案件の一覧（移し替えのあいだ）」を押したときに出す。その下は今までどおりで、開いているワークスペースのゴールとマイルストーンと、そのエージェントへのカード（次の作業・質問・許可。orca-milestoneと同じ）を出す。許可のカードはターミナルの確認のメニューに1かEscを送るだけで、外に出る呼び出しには「許可」を出さない。その下に、セッションを「あなたの番」「動いている」「待っている」に分けて出す。折りたたんだ案件の一覧は、窓口の案件（`cases.py json`）をプロジェクトとして、TODO（期日と`!`）・Waitingとともに出す。済んだworkerは出さない。workerには行の✎から指示を送れ（`claude --bg --resume`）、`asks.py`の依頼はカードになる。窓口の確認ダイアログを`approval-gate.py --panel`が待たせているあいだは、いちばん上に「許可の確認」のカードを出し、押された答え（許可・拒否・ターミナルで確かめる）を答えのファイルに書く。承認の記録は書かない。orca-milestoneのコードをもとにした。フォルダーからインストールして使う（`orca plugin install ~/.config/orca/plugins/hub`）。出典は`NOTICE.md`、テストは`node --test test/` |
 | `configs/orca/plugins/milestone/` | Milestone (local)。Orcaのターミナルで起動したClaude Codeにゴール付きのタスクを書かせ、フォーカス中のワークスペースのゴールとマイルストーンを右サイドバーに出す。見るだけで、セッションへの送信も許可の返答もしない。[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone)（MIT）から表示の部分だけを持ってきた。出典と除いた部分は`NOTICE.md`、テストは`node --test test/` |
 
 ### `docs/`

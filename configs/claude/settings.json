@@ -117,6 +117,16 @@
         ]
       },
       {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/gtd-lint.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
@@ -147,6 +157,16 @@
             "type": "command",
             "command": "~/.claude/hooks/textlint-markdown.sh",
             "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/gtd-lint.py",
+            "timeout": 30
           }
         ]
       }
