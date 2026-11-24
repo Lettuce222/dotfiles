@@ -148,8 +148,22 @@ export function createDeskServer({ pluginDir, handlers, token = randomBytes(24).
     for (const res of clients) res.write(`event: change\ndata: ${JSON.stringify({ rev })}\n\n`)
   }
 
-  function start(listenPort = 0) {
-    if (server) return Promise.resolve({ port, url: `${origin()}/?t=${token}` })
+  /**
+   * Listens on 127.0.0.1 at listenPort, or at a port the system picks when it is 0 or taken. A port
+   * that stays the same from one start to the next keeps an open desk tab pointed at this server.
+   */
+  async function start(listenPort = 0) {
+    if (server) return { port, url: `${origin()}/?t=${token}` }
+    try {
+      return await listenOn(listenPort)
+    } catch (error) {
+      if (listenPort === 0 || error?.code !== 'EADDRINUSE') throw error
+      log(`desk: 127.0.0.1:${listenPort} is taken; serving on a port the system picks`)
+      return listenOn(0)
+    }
+  }
+
+  function listenOn(listenPort) {
     return new Promise((resolve, reject) => {
       const created = createServer(onRequest)
       created.on('error', reject)

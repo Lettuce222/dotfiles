@@ -289,8 +289,13 @@ function toast(html, ms = 3500) {
 }
 
 // ---------------------------------------------------------------- actions
+// fetch throws when nothing answers: the server of this page stopped (the Hub worker started again
+// on another port, or Orca closed it). Only Orca can give the page the current address and token.
+const UNREACHABLE = 'デスクのサーバーにつながらない。Orca のステータスバーの「デスク」から開き直してください'
+
 async function load() {
-  const r = await api('/api/state')
+  let r
+  try { r = await api('/api/state') } catch { toast(UNREACHABLE, 1e9); return }
   if (r.status === 401 || r.status === 403) { toast('トークンが合わない。Orca から開き直してください', 1e9); return }
   if (!r.json || !Array.isArray(r.json.items)) { toast('state を読めなかった'); return }
   S = { ...S, ...r.json }
@@ -301,7 +306,7 @@ async function load() {
 // A write: toast the error and reload the state when it did not go through (409 is a clash).
 async function write(path, body, { quiet = false } = {}) {
   let r
-  try { r = await api(path, body) } catch { toast('書き込めなかった（つながらない）'); return null }
+  try { r = await api(path, body) } catch { toast(`書き込めなかった。${UNREACHABLE}`, 1e9); return null }
   if (!r.ok) {
     toast(`${r.status === 409 ? 'ぶつかった: ' : ''}${esc(r.json.error ?? `失敗した（${r.status}）`)}`)
     await load()
@@ -319,7 +324,8 @@ async function choose(id, fromClick) {
   if (fromClick && t && isAgent(t)) await focusWorker(t)
 }
 async function focusWorker(t) {
-  const r = await api('/api/focus', { id: t.id })
+  let r
+  try { r = await api('/api/focus', { id: t.id }) } catch { toast(UNREACHABLE, 1e9); return }
   if (!r.ok) { toast(esc(r.json.error ?? '切り替えに失敗した')); return }
   const w = esc(t.worker ?? t.agent?.name ?? '')
   if (r.json.focused) toast(`Orca のエージェントの画面を <b>${w}</b> に切り替えた`)
@@ -336,7 +342,8 @@ function move(delta) {
   render()
 }
 async function openItem(id, path) {
-  const r = await api('/api/open', path ? { id, path } : { id })
+  let r
+  try { r = await api('/api/open', path ? { id, path } : { id }) } catch { toast(UNREACHABLE, 1e9); return }
   if (!r.ok) toast(esc(r.json.error ?? '開けなかった'))
 }
 async function addInbox() {

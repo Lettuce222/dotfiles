@@ -703,7 +703,7 @@ export function createHubWorker({
   /**
    * Opens the desk in a browser tab of the hub's workspace, or shows the tab already open, in front.
    * `tab switch --focus` brings a tab forward only in the workspace Orca shows, so the hub's
-   * workspace is shown first. `tab create` opens its tab behind the others and takes no --focus, so
+   * workspace is shown first. An open desk tab is loaded again at the current URL (`goto`). `tab create` opens its tab behind the others and takes no --focus, so
    * a new tab is switched to as well; `--split right` puts it in the pane beside the one in use (one
    * that already shows a browser tab, else a new one on the right).
    * @returns {{ opened: boolean, reused?: boolean, reason?: string, detail?: string }}
@@ -740,9 +740,17 @@ export function createHubWorker({
         orca.log(`hub: could not list the hub's tabs: ${failureOf(error)}`)
         return null
       })
+      // An open desk tab is loaded anew: the page keeps the token of the start that served it, and a
+      // tab of an earlier start may point at a port nobody serves now.
       const open = pageIdOf(findDeskTab(tabs?.result?.tabs, origin))
       if (open) {
-        const why = await show(open)
+        let why
+        try {
+          const loaded = await runArgs(['goto', '--url', url, '--page', open, ...where, '--json'], 60_000)
+          why = loaded?.ok ? await show(open) : failureOf(loaded)
+        } catch (error) {
+          why = failureOf(error)
+        }
         if (!why) return { opened: true, reused: true }
         orca.log(`hub: could not show the desk's tab, opening another: ${why}`)
       }

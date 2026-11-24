@@ -25,6 +25,9 @@ import { resolveOrcaCli } from './src/orca-cli.mjs'
 const STATUS_ID = 'hub-desk'
 // The workers' progress changes without a file of the gtd folder changing; looked at this often.
 const COUNTS_MS = 10_000
+// The desk's port, tried first at each start: a desk tab left open (Orca keeps it across restarts
+// and plugin updates) then still reaches the server, and opening the desk again loads it anew.
+const DESK_PORT = 47615
 
 export default function activate(orca) {
   const home = homedir()
@@ -84,7 +87,7 @@ export default function activate(orca) {
         onChange: () => void showCounts()
       })
       deskServer = createDeskServer({ pluginDir: dirname(fileURLToPath(import.meta.url)), handlers: desk.handlers, log: (line) => orca.log(line) })
-      const { port } = await deskServer.start()
+      const { port } = await deskServer.start(DESK_PORT)
       desk.start(deskServer)
       orca.log(`hub: the desk is served on 127.0.0.1:${port}`)
       await showCounts()

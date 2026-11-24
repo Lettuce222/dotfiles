@@ -15,13 +15,19 @@ export function pageIdOf(tab) {
   return typeof page === 'string' && page.length > 0 ? page : null
 }
 
+const DESK_TITLE = 'デスク'
+const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d+\//
+
 /**
  * The desk's tab among the tabs of `orca tab list --json`: one whose URL is on the desk's origin, the
- * active one if several are open, else the last opened.
+ * active one if several are open, else the last opened. Failing that, a desk served before the
+ * worker started again (another port of 127.0.0.1, titled デスク): its server is gone, so the page
+ * cannot write until it is loaded anew.
  */
 export function findDeskTab(tabs, origin) {
-  const desks = (Array.isArray(tabs) ? tabs : []).filter((tab) => typeof tab?.url === 'string' && tab.url.startsWith(`${origin}/`) && pageIdOf(tab))
-  return desks.find((tab) => tab.active) ?? desks.at(-1) ?? null
+  const listed = (Array.isArray(tabs) ? tabs : []).filter((tab) => typeof tab?.url === 'string' && pageIdOf(tab))
+  const pick = (desks) => desks.find((tab) => tab.active) ?? desks.at(-1) ?? null
+  return pick(listed.filter((tab) => tab.url.startsWith(`${origin}/`))) ?? pick(listed.filter((tab) => LOOPBACK.test(tab.url) && tab.title === DESK_TITLE))
 }
 
 /** Why a CLI call failed, in one line: the CLI's own error when it printed one, else the process's. */

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { deskMessage, failureOf, findDeskTab, pageIdOf, redact } from '../src/desk-tab.mjs'
 import { createHubWorker } from '../src/hub-worker.mjs'
+import { createDeskServer } from '../src/desk-server.mjs'
+import { createServer } from 'node:http'
 
 const HOME = '/Users/me'
 const HUB = `${HOME}/hub`
@@ -62,7 +64,7 @@ test('a page id is the tab list\'s browserPageId, and the older names still read
 test('the desk\'s tab is one on its origin: the active one, else the last opened', () => {
   const origin = 'http://127.0.0.1:54178'
   const other = { browserPageId: 'x', url: 'http://127.0.0.1:5417/?t=1' }
-  assert.equal(findDeskTab([other], origin), null, 'a port that only starts the same is another server')
+  assert.equal(findDeskTab([other], origin), null, 'a port that only starts the same is another server, and not titled デスク')
   assert.equal(findDeskTab([deskTab({ browserPageId: 'a' }), deskTab({ browserPageId: 'b' })], origin).browserPageId, 'b')
   assert.equal(findDeskTab([deskTab({ browserPageId: 'a', active: true }), deskTab({ browserPageId: 'b' })], origin).browserPageId, 'a')
   assert.equal(findDeskTab(undefined, origin), null)
@@ -84,17 +86,65 @@ test('the message names what failed and why', () => {
   assert.equal(deskMessage({ opened: false, reason: 'unknown' }), 'デスクを開く途中で失敗しました')
 })
 
-test('an open desk tab is switched to with --focus by its browserPageId, after the hub\'s workspace is shown', async () => {
+test('an open desk tab is loaded anew at the current URL and switched to with --focus by its browserPageId, after the hub\'s workspace is shown', async () => {
   const { worker, runs, hostCalls } = setup({
     'tab list': { ok: true, result: { tabs: [deskTab({ browserPageId: 'page-1' })] } },
+    'goto --url': { ok: true, result: { url: URL_ } },
     'tab switch': { ok: true, result: { switched: 0, browserPageId: 'page-1' } }
   })
   assert.deepEqual(await worker.openDesk(URL_), { opened: true, reused: true })
   assert.deepEqual(hostCalls, [{ method: 'workspace.open', params: { workspaceId: `repo::${HUB}` } }], 'the main hub workspace, where the desk lives')
   assert.deepEqual(runs.slice(1), [
     ['tab', 'list', '--worktree', SELECTOR, '--json'],
+    ['goto', '--url', URL_, '--page', 'page-1', '--worktree', SELECTOR, '--json'],
     ['tab', 'switch', '--page', 'page-1', '--worktree', SELECTOR, '--focus', '--json']
   ], 'no new tab')
+})
+
+test('a desk tab of an earlier start, on a port nobody serves now, is loaded at the current URL', async () => {
+  const stale = deskTab({ browserPageId: 'old', url: 'http://127.0.0.1:54178/' })
+  const { worker, runs } = setup({
+    'tab list': { ok: true, result: { tabs: [{ browserPageId: 'x', url: 'http://127.0.0.1:3000/', title: 'something else' }, stale] } },
+    'goto --url': { ok: true },
+    'tab switch': { ok: true }
+  })
+  assert.deepEqual(await worker.openDesk(URL_), { opened: true, reused: true })
+  assert.deepEqual(runs.find((args) => args[0] === 'goto'), ['goto', '--url', URL_, '--page', 'old', '--worktree', SELECTOR, '--json'])
+  assert.equal(runs.filter((args) => args[1] === 'create').length, 0)
+})
+
+test('a tab that cannot be loaded anew is replaced by a new one', async () => {
+  const { worker, runs, logs } = setup({
+    'tab list': { ok: true, result: { tabs: [deskTab()] } },
+    'goto --url': cliError('browser_tab_not_found', 'gone'),
+    'tab create': { ok: true, result: { browserPageId: 'page-new' } },
+    'tab switch': { ok: true }
+  })
+  assert.deepEqual(await worker.openDesk(URL_), { opened: true, reused: false })
+  assert.equal(runs.filter((args) => args[1] === 'create').length, 1)
+  assert.match(logs.join('\n'), /opening another: browser_tab_not_found: gone/)
+})
+
+test('the desk server takes the port it is given, and another when that one is taken', async () => {
+  const taken = createServer()
+  await new Promise((resolve) => taken.listen(0, '127.0.0.1', resolve))
+  const busy = taken.address().port
+  const logs = []
+  const desk = createDeskServer({ pluginDir: '/nowhere', handlers: {}, log: (line) => logs.push(line) })
+  try {
+    const { port } = await desk.start(busy)
+    assert.notEqual(port, busy)
+    assert.match(logs.join('\n'), new RegExp(`127.0.0.1:${busy} is taken`))
+  } finally {
+    await desk.close()
+  }
+  await new Promise((resolve) => taken.close(resolve))
+  const again = createDeskServer({ pluginDir: '/nowhere', handlers: {} })
+  try {
+    assert.equal((await again.start(busy)).port, busy, 'a free port is used as given')
+  } finally {
+    await again.close()
+  }
 })
 
 test('a new desk tab opens in the pane on the right and is switched to, since tab create leaves it behind', async () => {
@@ -113,6 +163,7 @@ test('a new desk tab opens in the pane on the right and is switched to, since ta
 test('a tab that cannot be switched to is replaced by a new one', async () => {
   const { worker, runs, logs } = setup({
     'tab list': { ok: true, result: { tabs: [deskTab({ browserPageId: 'gone' })] } },
+    'goto --url': { ok: true },
     'tab switch': (args) => {
       if (args[3] === 'gone') throw cliError('browser_tab_not_found', 'Browser page gone out of range (0-0)')
       return { ok: true }

@@ -149,6 +149,7 @@ test('the Orca CLI runs the worker asks for outside src/orca-cli.mjs are reads, 
     "'worktree', 'ps', '--limit', '1000', '--json'",
     "'tab', 'switch', '--page', page, ...where, '--focus', '--json'",
     "'tab', 'list', ...where, '--json'",
+    "'goto', '--url', url, '--page', open, ...where, '--json'",
     "'tab', 'create', '--url', url, ...where, '--split', 'right', '--json'"
   ])
 })
