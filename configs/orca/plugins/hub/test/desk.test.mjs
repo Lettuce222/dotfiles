@@ -138,7 +138,7 @@ test('the page needs the token and comes with a strict policy; the scripts it lo
   assert.equal(page.status, 200)
   assert.match(page.headers.get('content-security-policy'), /default-src 'none'; script-src 'self'/)
   assert.match(await page.text(), /<script type="module" src="\/desk.mjs">/)
-  for (const path of ['/desk.mjs', '/keys.mjs', '/desk.css', '/markdown.mjs']) {
+  for (const path of ['/desk.mjs', '/keys.mjs', '/reopen.mjs', '/desk.css', '/markdown.mjs']) {
     const res = await fetch(base + path)
     assert.equal(res.status, 200, path)
     assert.equal(res.headers.get('access-control-allow-origin'), null)

@@ -18,6 +18,18 @@ const BODY_MAX = 64 * 1024
 const HEARTBEAT_MS = 25_000
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8' }
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+// The page for the desk's address without the right token: what to do, and no token. Titled デスク
+// like the desk, so that opening the desk finds this tab and loads it anew (src/desk-tab.mjs).
+// desk/reopen.mjs asks again with the token the tab keeps, which is all a reload needs.
+const STALE_PAGE = `<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>デスク</title>
+<style>body{font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;margin:3em auto;max-width:36em;padding:0 1em}</style>
+<script type="module" src="/reopen.mjs"></script>
+</head>
+<body><h1>デスク</h1><p>鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください。</p></body>
+</html>
+`
 export const POSTS = ['add', 'move', 'done', 'open', 'focus', 'from-case', 'case-project', 'answer']
 
 export class DeskError extends Error {
@@ -34,6 +46,7 @@ export function deskFiles(pluginDir) {
     '/desk.css': join(pluginDir, 'desk', 'desk.css'),
     '/desk.mjs': join(pluginDir, 'desk', 'desk.mjs'),
     '/keys.mjs': join(pluginDir, 'desk', 'keys.mjs'),
+    '/reopen.mjs': join(pluginDir, 'desk', 'reopen.mjs'),
     '/markdown.mjs': join(pluginDir, 'src', 'markdown.mjs')
   }
 }
@@ -103,7 +116,9 @@ export function createDeskServer({ pluginDir, handlers, token = randomBytes(24).
     if (!hostOk(req.headers.host)) return send(res, 421, 'misdirected')
     if (req.method === 'GET' && Object.hasOwn(files, url.pathname)) {
       // The page itself only with the token, so that another page cannot frame or read it.
-      if (url.pathname === '/' && !sameToken(url.searchParams.get('t'), token)) return send(res, 403, 'token')
+      if (url.pathname === '/' && !sameToken(url.searchParams.get('t'), token)) {
+        return send(res, 403, STALE_PAGE, { 'Content-Type': TYPES['.html'], 'Content-Security-Policy': CSP })
+      }
       const path = files[url.pathname]
       const type = TYPES[path.slice(path.lastIndexOf('.'))] ?? 'application/octet-stream'
       try {
