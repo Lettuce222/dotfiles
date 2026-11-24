@@ -173,3 +173,103 @@
   .written textarea { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; resize: vertical; }
   .written .btn { justify-self: start; }
   .hidden-char { color: var(--red); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+
+  /* ---------------------------------------------------------------- dark, monospace, framed boxes (as lazygit) */
+  :root {
+    --bg: #1d1f21; --fg: #c5c8c6; --muted: #8a8f98; --line: #4b5263; --soft: #26292d; --sel: #2c313a;
+    --focus: #98c379; --blue: #61afef; --green: #98c379; --orange: #e5a050; --purple: #c678dd; --red: #e06c75; --yellow: #e5c07b;
+    color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font: 13px/1.5 ui-monospace, "SF Mono", Menlo, "Hiragino Kaku Gothic ProN", "Hiragino Sans", monospace; }
+  kbd { background: var(--soft); color: var(--fg); border-color: var(--line); }
+  a { color: var(--blue); }
+  header { background: var(--bg); border-bottom: 1px solid var(--line); }
+  header h1 { color: var(--focus); }
+  .add { background: var(--soft); border-color: var(--line); color: var(--muted); }
+  .add input { background: transparent; color: var(--fg); }
+  main { gap: 6px; padding: 8px 6px 4px; }
+  #items.pane.on { display: flex; flex-direction: column; gap: 2px; overflow: hidden; padding: 0; flex: 0 0 44%; }
+  .box { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 0 6px 4px; min-width: 0; flex: none; overflow: hidden; background: transparent; }
+  .box legend { color: var(--muted); padding: 0 4px; cursor: pointer; white-space: nowrap; }
+  .box.focused { border-color: var(--focus); flex: 1 1 auto; min-height: 8em; overflow-y: auto; }
+  .box.focused legend { color: var(--focus); font-weight: 700; }
+  .box .filter-on { color: var(--yellow); }
+  .box-hint, .more, .empty-row { color: var(--muted); font-size: 12px; padding: 0 4px; }
+  .group { color: var(--muted); margin: 4px 4px 0; }
+  .row { grid-template-columns: 12px 1fr auto; gap: 6px; padding: 1px 4px; border-radius: 0; border: 0; }
+  .row:hover { background: var(--soft); }
+  .row .check { width: 8px; height: 8px; border-color: var(--muted); margin-top: 6px; }
+  .row .title { font-weight: 400; }
+  .row.picked { background: var(--sel); }
+  .row.sel { background: var(--fg); color: var(--bg); border: 0; }
+  .row.sel .meta, .row.sel .goto, .row.sel code { color: #3b3f45; }
+  .row.sel .check { border-color: var(--bg); }
+  .row.sel .chip:not(.c-ask) { color: var(--bg); border-color: var(--bg); }
+  .row.ask-row.waits.sel .chip { color: #1d1f21; border-color: #1d1f21; background: transparent; }
+  .meta { color: var(--muted); }
+  .steps .n { color: var(--muted); }
+  #detail.pane, #migrate.pane { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 0 12px 10px; }
+  /* The box's name at its top left, kept in view while the box scrolls (a scrolling box cannot draw on its own frame). */
+  #detail::before, #migrate::before { content: "[Enter] " attr(data-title); position: sticky; top: 0; display: block; width: max-content; margin: 0 0 4px -6px; padding: 0 4px; background: var(--bg); color: var(--muted); z-index: 1; }
+  #migrate::before { content: "[i] " attr(data-title); }
+  #detail:focus-within, #migrate.pane.on { border-color: var(--focus); }
+  #detail:focus-within::before, #migrate.pane.on::before { color: var(--focus); font-weight: 700; }
+  .head h2 { font-size: 14px; color: var(--fg); }
+  .btn { background: var(--soft); border-color: var(--line); color: var(--fg); border-radius: 4px; }
+  .btn:hover { background: var(--sel); }
+  .btn.primary { background: var(--soft); border-color: var(--focus); color: var(--focus); }
+  .btn.primary kbd { color: var(--focus); border-color: var(--focus); }
+  #detail .box, .card { background: var(--soft); border-color: var(--line); border-radius: 4px; }
+  .fm td { border-bottom-color: var(--soft); }
+  .fm td:first-child { color: var(--muted); }
+  .opt { background: var(--bg); border-color: var(--line); color: var(--fg); border-radius: 4px; }
+  .opt:hover { background: var(--sel); }
+  .opt small { color: var(--muted); }
+  .note, .hint { color: var(--muted); }
+  .written textarea { background: var(--bg); color: var(--fg); border-color: var(--line); border-radius: 4px; }
+  .written textarea:focus { outline: 1px solid var(--focus); border-color: var(--focus); }
+  .preview { background: var(--bg); border-color: var(--line); color: var(--fg); }
+  /* chips: quiet colors on the dark */
+  .chip { background: transparent; }
+  .c-me { color: var(--fg); border-color: var(--line); }
+  .c-agent { color: var(--purple); border-color: var(--purple); }
+  .c-run { color: var(--blue); border-color: var(--blue); }
+  .c-done { color: var(--green); border-color: var(--green); }
+  .c-due { color: var(--red); border-color: var(--red); }
+  .c-soon { color: var(--yellow); border-color: var(--yellow); }
+  .c-proj { color: var(--muted); border-color: var(--line); }
+  .c-gcal { color: var(--blue); border-color: var(--blue); }
+  .c-ask { color: #1d1f21; background: var(--orange); border-color: var(--orange); }
+  .bar { background: var(--line); }
+  .goto { color: var(--purple); }
+  /* the orchestrator's cards stay loud: the strip, their rows and their card */
+  .alert { background: var(--orange); }
+  .alert-go { color: #1d1f21; }
+  .alert-go kbd { color: #1d1f21; border-color: #1d1f2188; background: none; }
+  .row.ask-row.waits { background: #3a2c17; box-shadow: inset 3px 0 0 var(--orange); }
+  .row.ask-row.waits.sel { background: var(--orange); color: #1d1f21; }
+  .card.ask { border-color: var(--orange); background: #2a2218; }
+  .deadline { color: var(--red); }
+  .status { color: var(--blue); }
+  .opt.armed { border-color: var(--red); background: #3a1d20; }
+  .hidden-char { color: var(--red); }
+  /* the migration on the right */
+  .case { border-color: var(--line); border-radius: 4px; }
+  .case .ch { background: var(--soft); }
+  .mline { border-top-color: var(--soft); }
+  .mline.sel { background: var(--fg); color: var(--bg); }
+  .mb { background: var(--bg); border-color: var(--line); color: var(--fg); }
+  /* the menu in the middle, the key line at the bottom, the toast */
+  .menu-back { background: #0008; }
+  .menu { background: var(--bg); border: 1px solid var(--focus); border-radius: 6px; color: var(--fg); }
+  .menu button { color: var(--fg); }
+  .menu button:hover { background: var(--sel); }
+  .menu.help td { padding: 1px 8px; vertical-align: top; }
+  .menu.help td:first-child { white-space: nowrap; }
+  footer { background: var(--bg); border-top: 1px solid var(--line); color: var(--muted); flex-direction: column; gap: 2px; font-size: 12px; }
+  footer .keys { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  footer .keys kbd { color: var(--blue); border-color: transparent; background: none; padding: 0; font-size: 12px; }
+  .filterbar { color: var(--yellow); }
+  .filterbar[hidden] { display: none; }
+  .filterbar input { background: var(--soft); color: var(--fg); border: 1px solid var(--yellow); font: inherit; width: 40%; }
+  .toast { background: var(--soft); color: var(--fg); border: 1px solid var(--line); }

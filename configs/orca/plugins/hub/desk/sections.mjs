@@ -1,39 +1,39 @@
-// The sections of the desk's left column: which are folded to their heading, and where j and k go.
-// desk/desk.mjs keeps the state and draws; these only decide, so that the tests can run them.
-//
-// いつか and 資料 grow long and are read seldom: folded unless the selection is in them. A heading
-// pressed folds or opens its section for good (`folds`, kept by the page); a section's key opens it.
+// The boxes of the desk's left column, as in lazygit: one per list, then the migration. The box
+// being worked in is large and the others show their first rows only, so that the desk fits one
+// screen. desk/desk.mjs keeps the state and draws; these only decide, so that the tests can run them.
 
-export const BIG = new Set(['someday', 'reference'])
+/** How many rows a box shows while another one is worked in. */
+export const SMALL_ROWS = 3
 
-/** Folded by default: a big section, unless the selection is in it. */
-export function foldedByDefault(name, { cur, sel }) {
-  return BIG.has(name) && !(name === cur && sel)
+/** The boxes in order: the lists, then the migration. */
+export function boxOrder(lists) {
+  return [...lists.map(([id]) => id), 'migrate']
 }
 
-export function isFolded(name, { cur, sel, folds }) {
-  return Object.hasOwn(folds, name) ? folds[name] : foldedByDefault(name, { cur, sel })
+/** The box `delta` boxes from `cur`, round the column (h, l, Tab, Shift+Tab). */
+export function nextBox(order, cur, delta) {
+  const i = Math.max(0, order.indexOf(cur))
+  return order[(((i + delta) % order.length) + order.length) % order.length]
 }
 
-/** The folds after a heading of `name` is pressed to fold (`on`) or open it; the default is not kept. */
-export function withFold(folds, name, on, at) {
-  const next = { ...folds }
-  if (on === foldedByDefault(name, at)) delete next[name]
-  else next[name] = on
-  return next
+/** The rows a box shows: all of them while it is worked in, else its first SMALL_ROWS. */
+export function shownRows(rows, focused) {
+  return focused ? rows : rows.slice(0, SMALL_ROWS)
 }
 
-/**
- * The rows j and k go through, in order: those of every open section.
- * @param lists [id, ...] of the sections in order; rowsOf(id) their items
- */
-export function visibleRows(lists, rowsOf, at) {
-  return lists.flatMap(([k]) => (isFolded(k, at) ? [] : rowsOf(k).map((t) => ({ sec: k, t }))))
+/** The rows whose text holds every word of the query (/ in a box), case aside. */
+export function filterRows(rows, query, textOf = (row) => row.title ?? '') {
+  const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return rows
+  return rows.filter((row) => {
+    const text = String(textOf(row)).toLowerCase()
+    return words.every((word) => text.includes(word))
+  })
 }
 
-/** The row `delta` rows from the selected one (the first when none is), kept within the rows. */
-export function stepRow(rows, { cur, sel }, delta) {
+/** The row `delta` rows from the selected one in a box (the first when none is), kept within it. */
+export function stepRow(rows, sel, delta) {
   if (!rows.length) return null
-  const i = rows.findIndex((r) => r.sec === cur && r.t.id === sel)
+  const i = rows.findIndex((row) => row.id === sel)
   return rows[Math.max(0, Math.min(rows.length - 1, i < 0 ? 0 : i + delta))]
 }

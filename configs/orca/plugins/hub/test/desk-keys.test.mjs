@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { TAB_KEYS, deskKey } from '../desk/keys.mjs'
-import { BIG, isFolded, stepRow, visibleRows, withFold } from '../desk/sections.mjs'
+import { TAB_KEYS, deskKey, keyHints } from '../desk/keys.mjs'
+import { SMALL_ROWS, boxOrder, filterRows, nextBox, shownRows, stepRow } from '../desk/sections.mjs'
 
 const root = join(import.meta.dirname, '..')
 const page = readFileSync(join(root, 'desk', 'desk.mjs'), 'utf8')
@@ -66,56 +66,72 @@ test('on the migration, where to move a line wins over the tabs; the other keys 
   assert.deepEqual(onMigrate(key('w'), { gPending: true }), { do: 'list', list: 'waiting' }, 'g + an initial reaches every list')
 })
 
-test('the page and its help show the keys it takes', () => {
-  assert.match(page, /<kbd>\$\{TAB_KEYS\[i\]\}<\/kbd>/, 'the tabs')
+test('the page shows the keys it takes: on each box, on the buttons, and on the bottom line', () => {
+  assert.match(page, /\[\$\{TAB_KEYS\[i\]\}\] \$\{label\} \(\$\{all\.length\}\)/, 'a box is named [q] あなたの番 (3) on its frame')
   assert.match(page, /成果物を開く <kbd>d<\/kbd>/)
   assert.match(page, /エディタで開く <kbd>s<\/kbd>/)
   assert.match(page, /移す <kbd>f<\/kbd>/)
+  const list = keyHints({ pane: 'list' }).map(([k]) => k)
+  for (const k of ['j/k', 'Enter', 's', 'd', 'f', 'x', 'v', 'a', '/', 'h/l', '?']) assert.ok(list.includes(k), k)
+  assert.deepEqual(keyHints({ pane: 'list', card: true }).slice(0, 2), [['⇧Q〜⇧R', '答える'], ['Enter', '書いて答える']])
+  assert.deepEqual(keyHints({ pane: 'migrate' })[1], ['i n t w s r c -', '移す先'])
+  assert.deepEqual(keyHints({ pane: 'list', filtering: true }), [['Enter', '絞り込んだまま戻る'], ['Esc', '絞り込みをやめる']])
   const html = readFileSync(join(root, 'desk', 'index.html'), 'utf8')
-  assert.ok(html.includes(TAB_KEYS.map((k) => `<kbd>${k}</kbd>`).join('')), 'the help line of the tabs')
-  assert.match(html, /<kbd>s<\/kbd> エディタ<\/span><span><kbd>d<\/kbd> 成果物<\/span><span><kbd>f<\/kbd> 移す/)
-  assert.doesNotMatch(html, /<kbd>1<\/kbd>〜<kbd>8<\/kbd>/)
+  assert.match(html, /<div class="keys" id="keys"><\/div>/, 'the bottom line is drawn by the page')
+  assert.match(html, /<input id="filter"/)
 })
 
 test('Esc on the migration goes back to the item', () => {
   assert.deepEqual(onMigrate(key('Escape')), { do: 'back' })
 })
 
-test('one screen: いつか and 資料 are folded unless the selection is in them; a pressed heading is kept', () => {
-  assert.deepEqual([...BIG], ['someday', 'reference'])
-  const at = { cur: 'inbox', sel: 'a', folds: {} }
-  assert.equal(isFolded('someday', at), true)
-  assert.equal(isFolded('reference', at), true)
-  assert.equal(isFolded('next', at), false)
-  assert.equal(isFolded('someday', { cur: 'someday', sel: 's1', folds: {} }), false, 'open while selected in it')
-  assert.equal(isFolded('someday', { cur: 'someday', sel: null, folds: {} }), true, 'nothing selected in it: folded')
-  const shut = withFold({}, 'next', true, at)
-  assert.deepEqual(shut, { next: true })
-  assert.equal(isFolded('next', { ...at, folds: shut }), true)
-  assert.deepEqual(withFold(shut, 'next', false, at), {}, 'back to the default: nothing kept')
-  assert.deepEqual(withFold({}, 'someday', false, at), { someday: false }, 'a big section opened for good')
+test('h and l (and Tab, Shift+Tab) go to the box above and below; ? shows the keys; / narrows the box', () => {
+  assert.deepEqual(onList(key('l')), { do: 'box', delta: 1 })
+  assert.deepEqual(onList(key('h')), { do: 'box', delta: -1 })
+  assert.deepEqual(onList({ key: 'Tab', code: 'Tab', shiftKey: false }), { do: 'box', delta: 1 })
+  assert.deepEqual(onList({ key: 'Tab', code: 'Tab', shiftKey: true }), { do: 'box', delta: -1 })
+  assert.deepEqual(onMigrate(key('l')), { do: 'box', delta: 1 }, 'from the migration too')
+  assert.deepEqual(onList({ key: '?', code: 'Slash', shiftKey: true }), { do: 'help' })
+  assert.deepEqual(onList({ key: '/', code: 'Slash', shiftKey: false }), { do: 'filter' })
+  assert.deepEqual(onList(key('h'), { menuOpen: true }), { do: 'none' }, 'the menu takes its keys')
+  assert.equal(onList({ key: 'H', code: 'KeyH', shiftKey: true }), null)
+  const taken = ['a', 's', 'd', 'f', 'x', 'v', 'j', 'k', 'g', ...TAB_KEYS]
+  assert.ok(!taken.includes('h') && !taken.includes('l'), 'h and l were free')
 })
 
-test('j and k go through the rows of the open sections, across them, and stop at the ends', () => {
-  const items = { mine: [{ id: 'm1' }], inbox: [{ id: 'i1' }, { id: 'i2' }], next: [], project: [{ id: 'p1' }], waiting: [], someday: [{ id: 's1' }], reference: [{ id: 'r1' }] }
-  const at = { cur: 'inbox', sel: 'i2', folds: { project: true } }
-  const rows = visibleRows(LISTS, (k) => items[k], at)
-  const name = (r) => `${r.sec}:${r.t.id}`
-  assert.deepEqual(rows.map(name), ['mine:m1', 'inbox:i1', 'inbox:i2'], 'a folded project, いつか and 資料 are passed over')
-  assert.equal(name(stepRow(rows, at, -1)), 'inbox:i1')
-  assert.equal(name(stepRow(rows, at, 1)), 'inbox:i2', 'stops at the last row')
-  const top = { cur: 'mine', sel: 'm1' }
-  assert.equal(name(stepRow(rows, top, -1)), 'mine:m1', 'stops at the first row')
-  assert.equal(name(stepRow(rows, top, 1)), 'inbox:i1', 'crosses from あなたの番 into inbox')
-  assert.equal(name(stepRow(rows, { cur: 'next', sel: null }, 1)), 'mine:m1', 'nothing selected: the first row')
-  assert.equal(stepRow([], top, 1), null)
+test('the boxes go round the column, the one worked in shows every row and the others their first', () => {
+  const order = boxOrder(LISTS)
+  assert.deepEqual(order, ['mine', 'inbox', 'next', 'project', 'waiting', 'someday', 'reference', 'migrate'])
+  assert.equal(nextBox(order, 'inbox', 1), 'next')
+  assert.equal(nextBox(order, 'mine', -1), 'migrate', 'round from the top')
+  assert.equal(nextBox(order, 'migrate', 1), 'mine', 'round from the bottom')
+  const rows = Array.from({ length: 7 }, (_, i) => ({ id: `r${i}` }))
+  assert.equal(shownRows(rows, true).length, 7)
+  assert.equal(shownRows(rows, false).length, SMALL_ROWS)
+  assert.equal(SMALL_ROWS, 3)
 })
 
-test('the page draws every list as a section of one screen, with no tabs', () => {
+test('j and k go up and down in the box and stop at its ends; / keeps the rows that hold every word', () => {
+  const rows = [{ id: 'a', title: 'API のテストを足す' }, { id: 'b', title: '週次の振り返り' }, { id: 'c', title: 'api の設計' }]
+  assert.equal(stepRow(rows, 'a', 1).id, 'b')
+  assert.equal(stepRow(rows, 'c', 1).id, 'c', 'stops at the last row')
+  assert.equal(stepRow(rows, 'a', -1).id, 'a', 'stops at the first row')
+  assert.equal(stepRow(rows, null, 1).id, 'a', 'nothing selected: the first row')
+  assert.equal(stepRow([], 'a', 1), null)
+  assert.deepEqual(filterRows(rows, 'api').map((r) => r.id), ['a', 'c'], 'case aside')
+  assert.deepEqual(filterRows(rows, 'api テスト').map((r) => r.id), ['a'], 'every word')
+  assert.deepEqual(filterRows(rows, '  ').map((r) => r.id), ['a', 'b', 'c'])
+})
+
+test('the page draws the boxes in frames, with no tabs and no folding', () => {
   const html = readFileSync(join(root, 'desk', 'index.html'), 'utf8')
   assert.doesNotMatch(html, /id="tabs"/)
-  assert.doesNotMatch(page, /\$\('tabs'\)/)
-  assert.match(page, /LISTS\.map\(\(\[k, label\], i\) => sectionHtml\(k, label, i\)\)/)
-  assert.match(page, /data-fold="\$\{k\}"/, 'a heading folds or opens its section')
-  assert.match(page, /data-pane="migrate"/, 'the migration has a heading of its own, last')
+  assert.doesNotMatch(page, /\$\('tabs'\)|data-fold|setFold/)
+  assert.match(page, /<fieldset class="box \$\{focused \? 'focused' : ''\}"/)
+  assert.match(page, /LISTS\.map\(\(\[k, label\], i\) => boxHtml\(k, label, i\)\)/)
+  assert.match(page, /data-sec="migrate"><legend data-box="migrate">/, 'the migration is the last box')
+  const css = readFileSync(join(root, 'desk', 'desk.css'), 'utf8')
+  assert.match(css, /\.box\.focused \{ border-color: var\(--focus\); flex: 1 1 auto;/, 'the box worked in is the large one, its frame colored')
+  assert.match(css, /\.row\.sel \{ background: var\(--fg\); color: var\(--bg\);/, 'the selected row reversed')
+  assert.match(css, /\.alert \{ background: var\(--orange\); \}/, 'the strip of the orchestrator\'s cards stays loud')
 })

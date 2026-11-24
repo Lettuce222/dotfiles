@@ -2,8 +2,8 @@
 // No library. Every piece of text from the API is escaped before it goes into HTML, and the Markdown
 // body goes through renderMarkdown, which escapes its own input.
 import { renderMarkdown } from './markdown.mjs'
-import { TAB_KEYS, deskKey } from './keys.mjs'
-import { isFolded, stepRow, visibleRows as openRows, withFold } from './sections.mjs'
+import { TAB_KEYS, deskKey, keyHints } from './keys.mjs'
+import { boxOrder, filterRows, nextBox, shownRows, stepRow } from './sections.mjs'
 import { PERMISSION_ORDER, alertHtml, askChips, askDetail, askTitle, askTitleHtml, timeLeft, waits } from './asks.mjs'
 
 // ---------------------------------------------------------------- token and small helpers
@@ -93,16 +93,14 @@ function ordered(name) {
   if (name !== 'next') return rows
   return [...rows.filter((t) => !isAgent(t) || t.actor === 'me'), ...rows.filter((t) => isAgent(t) && t.actor !== 'me')]
 }
-// Sections folded to their heading, to keep the desk on one screen (desk/sections.mjs decides).
-const FOLD_KEY = 'desk-folds'
-let folds = (() => { try { return JSON.parse(storage?.getItem(FOLD_KEY) ?? '{}') ?? {} } catch { return {} } })()
-const folded = (name) => isFolded(name, { cur, sel, folds })
-function setFold(name, on) {
-  folds = withFold(folds, name, on, { cur, sel })
-  try { storage?.setItem(FOLD_KEY, JSON.stringify(folds)) } catch { /* kept until the page closes */ }
-}
-/** The rows j and k go through: those of the open sections, in order. */
-const visibleRows = () => openRows(LISTS, ordered, { cur, sel, folds })
+// The boxes of the left column, as in lazygit (desk/sections.mjs): `cur` is the box worked in (a
+// list, or 'migrate'), and each box keeps the row selected in it and its filter (/).
+const BOXES = boxOrder(LISTS)
+const selByBox = {}
+const filters = {}
+let filtering = false
+let helpOpen = false
+const boxRows = (name) => filterRows(ordered(name), filters[name], (t) => t.title ?? '')
 const projShort = (id) => (id ? (byId[id]?.short ?? id) : '')
 
 function dueChip(d) {
@@ -150,9 +148,15 @@ function renderNav() {
   $('agents').textContent = `エージェント: 動いている ${a.working ?? 0}・完了 ${a.done ?? 0}・あなた待ち ${a.attention ?? 0}`
 }
 
+// The selected row of the box worked in is drawn reversed; the one of another box only marked.
+function rowClass(t, sec) {
+  if (t.id === sel && sec === cur && pane === 'list') return 'sel'
+  return t.id === selByBox[sec] ? 'picked' : ''
+}
+
 function askRowHtml(t, sec) {
-  const on = t.id === sel && sec === cur && pane === 'list'
-  return `<div class="row ask-row ${on ? 'sel' : ''} ${waits(t.card) ? 'waits' : ''}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
+  const on = rowClass(t, sec)
+  return `<div class="row ask-row ${on} ${waits(t.card) ? 'waits' : ''}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
     <div><div class="title">${askTitleHtml(t.card)}</div></div>
     <div class="chips">${askChips(t.card, Date.now())}</div></div>`
 }
@@ -168,43 +172,94 @@ function rowHtml(t, sec) {
   if (t.worker) meta.push(`<code>${esc(t.worker)}</code> ${bar(t)}${t.agent?.inOrca ? ' <span class="goto">↘ 切り替え</span>' : ''}`)
   if (t.project && t.list !== 'project') meta.push(`<span class="chip c-proj">${esc(projShort(t.project))}</span>`)
   if (t.list === 'project' && t.outcome) meta.push(`望む結果: ${esc(t.outcome)}`)
-  const on = t.id === sel && sec === cur && pane === 'list'
-  return `<div class="row ${on ? 'sel' : ''}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
+  const on = rowClass(t, sec)
+  return `<div class="row ${on}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
     <div><div class="title">${esc(t.title)}</div>${meta.length ? `<div class="meta">${meta.map((m) => `<span>${m}</span>`).join('')}</div>` : ''}${t.list === 'project' ? stepsHtml(t) : ''}</div>
     <div class="chips">${actorChips(t, sec)} ${dueChip(t.due)}</div></div>`
 }
 
-function sectionHtml(k, label, i) {
-  const rows = ordered(k)
-  const shut = folded(k)
-  const n = rows.length
-  const head = `<button class="sec-head ${shut ? 'shut' : ''} ${k === cur && pane === 'list' ? 'cur' : ''}" data-fold="${k}"><span class="tw">${n ? (shut ? '▸' : '▾') : ''}</span><kbd>${TAB_KEYS[i]}</kbd><b>${label}</b><span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span>${n && !shut ? `<span class="hint">${HINTS[k]}</span>` : ''}</button>`
-  if (shut || !n) return `<section class="sec ${n ? '' : 'is-empty'}" data-sec="${k}">${head}</section>`
+function groupHtml(label, rows, k) {
+  return rows.length ? `<div class="group">${label}（${rows.length}）</div>${rows.map((t) => rowHtml(t, k)).join('')}` : ''
+}
+
+// A box: its name and count on the top line of its frame, and its rows; while another box is worked
+// in, only its first rows.
+function boxHtml(k, label, i) {
+  const all = boxRows(k)
+  const focused = k === cur && pane === 'list'
+  const rows = shownRows(all, focused)
+  const query = filters[k] ? ` <span class="filter-on">/${esc(filters[k])}</span>` : ''
+  const legend = `<legend data-box="${k}">[${TAB_KEYS[i]}] ${label} (${all.length})${query}</legend>`
   let body
-  if (k === 'mine' && rows.some((t) => t.card)) {
-    const cards = rows.filter((t) => t.card)
-    const items = rows.filter((t) => !t.card)
-    body = `<div class="group">窓口が待っている（${cards.length}）・<kbd>⇧Q</kbd>〜<kbd>⇧R</kbd> で答える</div>${cards.map((t) => rowHtml(t, k)).join('')}${items.length ? `<div class="group">項目（${items.length}）</div>${items.map((t) => rowHtml(t, k)).join('')}` : ''}`
-  } else if (k === 'next') {
-    const mineRows = rows.filter((t) => !isAgent(t) || t.actor === 'me')
-    const ag = rows.filter((t) => isAgent(t) && t.actor !== 'me')
-    body = `${mineRows.length ? `<div class="group">自分（${mineRows.length}）</div>${mineRows.map((t) => rowHtml(t, k)).join('')}` : ''}${ag.length ? `<div class="group">エージェント（${ag.length}）・押すと Orca のエージェントの画面も切り替わる</div>${ag.map((t) => rowHtml(t, k)).join('')}` : ''}`
+  if (!all.length) body = '<div class="empty-row">（なし）</div>'
+  else if (k === 'mine' && rows.some((t) => t.card)) {
+    body = `${groupHtml('窓口が待っている', rows.filter((t) => t.card), k)}${groupHtml('項目', rows.filter((t) => !t.card), k)}`
+  } else if (k === 'next' && focused) {
+    body = `${groupHtml('自分', rows.filter((t) => !isAgent(t) || t.actor === 'me'), k)}${groupHtml('エージェント', rows.filter((t) => isAgent(t) && t.actor !== 'me'), k)}`
   } else body = rows.map((t) => rowHtml(t, k)).join('')
-  return `<section class="sec" data-sec="${k}">${head}${body}</section>`
+  const more = all.length > rows.length ? `<div class="more">… ほか ${all.length - rows.length} 件（<kbd>${TAB_KEYS[i]}</kbd>）</div>` : ''
+  const hint = focused && all.length ? `<div class="box-hint">${HINTS[k]}</div>` : ''
+  return `<fieldset class="box ${focused ? 'focused' : ''}" data-sec="${k}">${legend}${hint}${body}${more}</fieldset>`
 }
 
 function renderItems() {
   const m = S.migrate ?? { done: 0, total: 0 }
-  const migrateHead = `<section class="sec" data-sec="migrate"><button class="sec-head ${pane === 'migrate' ? 'cur' : ''}" data-pane="migrate"><span class="tw">→</span><kbd>${TAB_KEYS[LISTS.length]}</kbd><b>移し替え</b><span class="n">${m.done}/${m.total}</span><span class="hint">旧案件を 1 行ずつ（右に出す）</span></button></section>`
+  const migrate = `<fieldset class="box ${pane === 'migrate' ? 'focused' : ''}" data-sec="migrate"><legend data-box="migrate">[${TAB_KEYS[LISTS.length]}] 移し替え (${m.done}/${m.total})</legend><div class="box-hint">旧案件を 1 行ずつ。開くと右に出す</div></fieldset>`
   const el = $('items')
-  const top = el.scrollTop
-  el.innerHTML = LISTS.map(([k, label], i) => sectionHtml(k, label, i)).join('') + migrateHead
-  el.scrollTop = top
+  el.innerHTML = LISTS.map(([k, label], i) => boxHtml(k, label, i)).join('') + migrate
   el.querySelectorAll('.row').forEach((r) => { r.onclick = () => choose(r.dataset.id, true, r.dataset.sec) })
-  el.querySelectorAll('[data-fold]').forEach((b) => { b.onclick = () => toggleFold(b.dataset.fold) })
-  el.querySelectorAll('[data-pane]').forEach((b) => { b.onclick = () => showMigrate() })
-  el.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' })
+  el.querySelectorAll('[data-box]').forEach((b) => { b.onclick = () => focusBox(b.dataset.box) })
+  el.querySelector('.box.focused .row.sel')?.scrollIntoView({ block: 'nearest' })
 }
+
+/** The key line at the bottom: the keys of the box worked in (lazygit's status line). */
+function renderKeys() {
+  const t = byId[sel]
+  const hints = keyHints({ pane, card: Boolean(t?.card) && pane === 'list', filtering })
+  $('keys').innerHTML = hints.map(([key, what]) => `<span><kbd>${esc(key)}</kbd> ${esc(what)}</span>`).join('')
+}
+
+// ? : every key, in the middle of the screen.
+function openHelp() {
+  helpOpen = true
+  const rows = [
+    ['h / l、Tab / ⇧Tab', '左の箱を移る'], ['q w e r t y u', 'リストの箱へ'], ['i', '移し替え（右に出す。Esc で戻る）'],
+    ['j / k', '箱の中を上下'], ['/', '箱の中を絞り込む（Enter で決める、Esc でやめる）'], ['Enter', '右の箱へ（返事、窓口の問いには書いて答える）'],
+    ['⇧Enter', '返事の欄で改行'], ['Esc', '欄やメニューから抜ける'], ['a', 'inbox に足す'], ['s', 'Orca のエディタで開く'], ['d', '成果物を開く'],
+    ['f', '移す（メニュー）'], ['x', '完了'], ['v', 'エージェントの画面に切り替え'], ['⇧Q 〜 ⇧R', '窓口の問い・worker の問いに答える（許可の確認は 許可・拒否・理由・ターミナル）'],
+    ['g + y i n p w s r m', 'リストの頭文字で箱へ'], ['?', 'この一覧を閉じる']
+  ]
+  $('menu').innerHTML = `<div class="menu help"><h3>キー</h3><table>${rows.map(([k, w]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(w)}</td></tr>`).join('')}</table><div class="note" style="margin:4px 6px 0"><kbd>Esc</kbd> か <kbd>?</kbd> で閉じる</div></div>`
+  $('menu').classList.add('on')
+}
+function closeHelp() {
+  helpOpen = false
+  $('menu').classList.remove('on')
+}
+
+// / : narrow the rows of the box worked in, from the bottom line.
+function openFilter() {
+  if (pane !== 'list') return
+  filtering = true
+  const input = $('filter')
+  input.value = filters[cur] ?? ''
+  $('filterbar').hidden = false
+  renderKeys()
+  input.focus()
+}
+function closeFilter(keep) {
+  filtering = false
+  if (!keep) delete filters[cur]
+  $('filterbar').hidden = true
+  $('filter').blur()
+  render()
+}
+$('filter').addEventListener('input', (e) => {
+  const query = e.target.value.trim()
+  if (query) filters[cur] = query
+  else delete filters[cur]
+  render()
+})
 
 // ---------------------------------------------------------------- render: detail
 const FM_KEYS = ['id', 'list', 'project', 'actor', 'worker', 'due', 'since', 'done', 'who', 'follow_up', 'then', 'outcome', 'short', 'from', 'source']
@@ -374,43 +429,49 @@ function render() {
   $('detail').classList.toggle('on', !migrating)
   $('migrate').classList.toggle('on', migrating)
   if (!migrating) {
-    const rows = folded(cur) ? [] : ordered(cur)
+    const rows = boxRows(cur)
     if (!rows.some((t) => t.id === sel)) {
-      // Keep the place in the section when the selected item left it. A section folded away hands
-      // the selection to the first open row; an empty one stays current with nothing selected.
-      const at = rows[Math.min(lastIdx, rows.length - 1)]
-      const first = at ? { sec: cur, t: at } : folded(cur) ? visibleRows()[0] : null
-      cur = first?.sec ?? cur
-      sel = first?.t.id ?? null
+      // Keep the place in the box when the selected item left it.
+      sel = rows[Math.min(lastIdx, rows.length - 1)]?.id ?? null
     }
-    lastIdx = Math.max(0, ordered(cur).findIndex((t) => t.id === sel))
+    lastIdx = Math.max(0, rows.findIndex((t) => t.id === sel))
+    selByBox[cur] = sel
   }
   renderNav()
   renderAlert()
   renderItems()
   if (migrating) renderMigrate()
   else renderDetail()
+  $('detail').dataset.title = byId[sel]?.card ? '窓口の問い' : '詳細'
+  $('migrate').dataset.title = '移し替え'
+  renderKeys()
   writeHash()
 }
-/** A section's key: open it and select its first item. */
-function showList(name) {
-  if (folds[name] === true) setFold(name, false)
-  cur = name
+/** Works in a box: a list's box, with the row it had selected, or the migration. */
+function focusBox(name) {
+  if (name === 'migrate') { showMigrate(); return }
+  if (cur !== name) {
+    if (filtering) closeFilter(true)
+    cur = name
+    sel = selByBox[name] ?? null
+    lastIdx = Math.max(0, boxRows(name).findIndex((t) => t.id === sel))
+  }
   pane = 'list'
-  sel = ordered(name)[0]?.id ?? null
-  lastIdx = 0
   render()
   document.querySelector(`#items [data-sec="${name}"]`)?.scrollIntoView({ block: 'nearest' })
 }
-function showMigrate() { pane = 'migrate'; render() }
-/** Esc on the migration: back to the item that was selected. */
-function backToList() { pane = 'list'; render() }
-function toggleFold(name) {
-  const shut = !folded(name)
-  setFold(name, shut)
-  if (shut && cur === name) sel = null
-  pane = 'list'
+/** A box's key (q〜u): work in it. */
+function showList(name) { focusBox(name) }
+function showMigrate() {
+  if (filtering) closeFilter(true)
+  pane = 'migrate'
   render()
+}
+/** Esc on the migration: back to the box before. */
+function backToList() { pane = 'list'; render() }
+/** h / l, Tab / Shift+Tab: the box above or below. */
+function stepBox(delta) {
+  focusBox(nextBox(BOXES, pane === 'migrate' ? 'migrate' : cur, delta))
 }
 
 // ---------------------------------------------------------------- toast
@@ -453,10 +514,11 @@ async function write(path, body, { quiet = false } = {}) {
 }
 
 async function choose(id, fromClick, sec = cur) {
+  if (sec !== cur && filtering) closeFilter(true)
   sel = id
   cur = sec
   pane = 'list'
-  lastIdx = Math.max(0, ordered(cur).findIndex((t) => t.id === id))
+  lastIdx = Math.max(0, boxRows(cur).findIndex((t) => t.id === id))
   render()
   const t = byId[id]
   if (fromClick && t && isAgent(t)) await focusWorker(t)
@@ -470,13 +532,13 @@ async function focusWorker(t) {
   else if (r.json.reason === 'not-in-orca') toast(`<b>${w}</b> は Orca のターミナルの外（claude --bg）なので切り替えられない。進み具合は右に出す`)
   else toast(`切り替えなかった${r.json.reason ? `（${esc(r.json.reason)}）` : ''}`)
 }
-// j and k go through the rows of every open section, across the sections.
+// j and k go up and down in the box worked in.
 function move(delta) {
-  const next = stepRow(visibleRows(), { cur, sel }, delta)
+  const rows = boxRows(cur)
+  const next = stepRow(rows, sel, delta)
   if (!next) return
-  cur = next.sec
-  sel = next.t.id
-  lastIdx = ordered(cur).indexOf(next.t)
+  sel = next.id
+  lastIdx = rows.indexOf(next)
   render()
 }
 async function openItem(id, path) {
@@ -578,7 +640,7 @@ function chooseMenu(list) {
   closeMenu()
   if (t) moveItem(t, list)
 }
-$('menu').addEventListener('click', (e) => { if (e.target === $('menu')) closeMenu() })
+$('menu').addEventListener('click', (e) => { if (e.target === $('menu')) { if (helpOpen) closeHelp(); else closeMenu() } })
 
 // migrate
 // Lines being moved: a key held down or pressed twice must not move one line twice.
@@ -624,8 +686,17 @@ function migMove(delta) {
 let gPending = false
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.target.id === 'filter') {
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); closeFilter(true) } else if (e.key === 'Escape') closeFilter(false)
+    return
+  }
   if (e.target.tagName === 'INPUT') {
     if (e.key === 'Enter') { e.preventDefault(); addInbox() } else if (e.key === 'Escape') e.target.blur()
+    return
+  }
+  if (helpOpen) {
+    e.preventDefault()
+    if (e.key === 'Escape' || e.key === '?') closeHelp()
     return
   }
   if (e.target.tagName === 'TEXTAREA') {
@@ -641,6 +712,9 @@ document.addEventListener('keydown', (e) => {
     case 'close': return closeMenu()
     case 'menu': return chooseMenu(hit.to)
     case 'g': gPending = true; return
+    case 'help': e.preventDefault(); openHelp(); return
+    case 'filter': e.preventDefault(); openFilter(); return
+    case 'box': e.preventDefault(); stepBox(hit.delta); return
     case 'add': e.preventDefault(); $('add').focus(); return
     case 'list': return showList(hit.list)
     case 'migrate': return showMigrate()
