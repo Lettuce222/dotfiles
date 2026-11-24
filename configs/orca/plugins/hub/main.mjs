@@ -77,12 +77,14 @@ export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
       void worker.noticeAgentItems(counts.agentItems ?? [])
       // The orchestrator's cards first: a permission goes back to the terminal in a few minutes.
       const waiting = counts.orchestrator ?? 0
-      const text = waiting ? `デスク 窓口が待っている ${waiting}・あなたの番 ${counts.mine}` : `デスク あなたの番 ${counts.mine}・inbox ${counts.inbox}`
-      const tone = waiting ? 'danger' : counts.mine ? 'warning' : 'neutral'
+      // Then the orchestrator's answers not read yet, in a color of their own.
+      const answers = counts.talk ?? 0
+      const text = waiting ? `デスク 窓口が待っている ${waiting}・あなたの番 ${counts.mine}` : answers ? `デスク 窓口の返事 ${answers}・あなたの番 ${counts.mine}` : `デスク あなたの番 ${counts.mine}・inbox ${counts.inbox}`
+      const tone = waiting ? 'danger' : answers ? 'accent' : counts.mine ? 'warning' : 'neutral'
       const status = `${text}\n${tone}`
       if (status !== lastStatus) {
         lastStatus = status
-        const tooltip = waiting ? '窓口が答えを待っています。デスクで答える' : 'hub のデスクを開く'
+        const tooltip = waiting ? '窓口が答えを待っています。デスクで答える' : answers ? '窓口から返事があります。デスクで読む' : 'hub のデスクを開く'
         await orca.host.call('statusBar.update', { id: STATUS_ID, text, tone, tooltip }).catch(() => {})
       }
     } catch (error) {

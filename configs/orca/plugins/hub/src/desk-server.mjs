@@ -21,7 +21,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 // What a page with no token or an old one is told (desk/desk.mjs says the same).
 const STALE = '鍵が古くなりました。Orca のステータスバーの「デスク」を押して開き直してください'
-export const POSTS = ['add', 'move', 'done', 'open', 'focus', 'from-case', 'case-project', 'answer', 'resignal', 'reply']
+export const POSTS = ['add', 'move', 'done', 'open', 'focus', 'from-case', 'case-project', 'answer', 'resignal', 'reply', 'read']
 
 export class DeskError extends Error {
   constructor(status, message) {
@@ -38,6 +38,7 @@ export function deskFiles(pluginDir) {
     '/desk.mjs': join(pluginDir, 'desk', 'desk.mjs'),
     '/keys.mjs': join(pluginDir, 'desk', 'keys.mjs'),
     '/asks.mjs': join(pluginDir, 'desk', 'asks.mjs'),
+    '/talk.mjs': join(pluginDir, 'desk', 'talk.mjs'),
     '/sections.mjs': join(pluginDir, 'desk', 'sections.mjs'),
     '/markdown.mjs': join(pluginDir, 'src', 'markdown.mjs')
   }

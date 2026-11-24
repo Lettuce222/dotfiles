@@ -27,7 +27,12 @@ export const TAB_KEYS = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i']
 const ANSWER_CODES = { KeyQ: 1, KeyW: 2, KeyE: 3, KeyR: 4, Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }
 const ITEM_KEYS = { s: 'open', d: 'deliv', f: 'move', x: 'done' }
 
+// The box of the talk with the orchestrator (desk/talk.mjs), under あなたの番: o, the next free key of
+// the row.
+export const TALK_KEY = 'o'
+
 function tab(key, lists) {
+  if (key === TALK_KEY) return { do: 'list', list: 'talk' }
   const i = TAB_KEYS.indexOf(key)
   if (i < 0) return null
   return i < lists.length ? { do: 'list', list: lists[i][0] } : { do: 'migrate' }
@@ -92,7 +97,7 @@ export function deskKey(e, { pane, gPending = false, menuOpen = false, hasItem =
 /** The keys the bottom line shows for where the page is, as [keys, what]. */
 export function keyHints({ pane, card = false, filtering = false }) {
   if (filtering) return [['Enter', '絞り込んだまま戻る'], ['Esc', '絞り込みをやめる']]
-  const boxes = [['h/l', '箱'], ['q〜i', '箱へ'], ['?', 'キー']]
+  const boxes = [['h/l', '箱'], ['q〜i・o', '箱へ'], ['?', 'キー']]
   if (pane === 'migrate') return [['j/k', '行'], ['i n t w s r c -', '移す先'], ['Esc', '戻る'], ...boxes]
   if (card) return [['⇧Q〜⇧R', '答える'], ['Enter', '書いて答える'], ['j/k', '上下'], ...boxes]
   return [['j/k', '上下'], ['Enter', '返事'], ['s', '開く'], ['d', '成果物'], ['f', '移す'], ['x', '完了'], ['v', '画面'], ['a', '追加'], ['/', '絞り込み'], ...boxes]

@@ -243,8 +243,8 @@
   .bar { background: var(--line); }
   .goto { color: var(--purple); }
   /* the orchestrator's cards stay loud: the strip, their rows and their card */
-  .alert { background: var(--orange); }
-  .alert-go { color: #1d1f21; }
+  .alert { background: none; padding: 0; }
+  .alert-go { display: block; background: var(--orange); color: #1d1f21; padding: 4px 10px; }
   .alert-go kbd { color: #1d1f21; border-color: #1d1f2188; background: none; }
   .row.ask-row.waits { background: #3a2c17; box-shadow: inset 3px 0 0 var(--orange); }
   .row.ask-row.waits.sel { background: var(--orange); color: #1d1f21; }
@@ -319,3 +319,17 @@
   .row.ask-row.waits.sel { background: var(--yellow); color: var(--bg); }
   .card.ask { border-color: var(--yellow); background: #2e2c2f; }
   .c-ask { color: var(--bg); background: var(--yellow); border-color: var(--yellow); }
+||||||| Stash base
+  /* the talk with the orchestrator: blue, apart from the cards' orange */
+  .c-talk { color: #1d1f21; background: var(--blue); border-color: var(--blue); }
+  .alert-talk { display: block; width: 100%; text-align: left; border: 0; background: var(--blue); color: #1d1f21; font-weight: 600; padding: 4px 10px; }
+  .alert-talk kbd { color: #1d1f21; border-color: #1d1f2188; background: none; }
+  .box.talk-new:not(.focused) { border-color: var(--blue); }
+  .box.talk-new legend { color: var(--blue); }
+  .card.talk { border-color: var(--blue); }
+  .msg { border-left: 2px solid var(--line); padding: 2px 8px; margin: 6px 0; }
+  .msg.w-orch { border-left-color: var(--blue); }
+  .msg.w-user { border-left-color: var(--green); margin-left: 24px; }
+  .msg.w-ask { border-left-color: var(--orange); }
+  .msg.fresh { background: #1f2a36; }
+  .msg-head b { color: var(--fg); }

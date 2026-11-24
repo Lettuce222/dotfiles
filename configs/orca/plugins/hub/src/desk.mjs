@@ -12,6 +12,7 @@ import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, resignalResult, waitingCount } from './desk-asks.mjs'
 import { ASK_ID } from './asks.mjs'
 import { unassignedAgentItems } from './agent-items.mjs'
+import { talkState } from '../desk/talk.mjs'
 import { DeskError } from './desk-server.mjs'
 import { EXIT_CONFLICT } from './gtd.mjs'
 
@@ -27,7 +28,8 @@ const QUIET_S = 600
 // A save with no gtd.py line for its item this recently is an edit from Orca's editor.
 const OWN_WRITE_MS = 5_000
 // A reply to an item goes into this section of its body, next to 「あなたの番」 that gtd.py handback
-// writes (and to 「メモ」 and 「メモへの返事」): one line, `MM/DD: <text>`, by user.
+// writes (and to 「メモ」 and 「メモへの返事」): one line, `MM/DD HH:MM: <text>`, by user, with gtd.py
+// say, which also marks that the user waits for the orchestrator's answer (asked).
 export const REPLY_SECTION = 'あなたの番への返事'
 const REPLY_MAX = 2000
 // The levels of information the desk may show, as on the panel (src/asks.mjs): Orca shows up to B.
@@ -147,9 +149,10 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
         if (cards.length || agent?.state === 'attention') mine = 'ask'
         else if (!mine && item.actor === 'agent' && agent?.state === 'done') mine = 'agent_done'
       }
-      return { ...item, mine, agent, asks: cards }
+      return { ...item, mine, agent, asks: cards, talk: talkState(item) }
     })
-    const counts = { ...items.counts, mine: shown.filter((item) => item.mine).length }
+    // talk: the items with an answer of the orchestrator not read yet.
+    const counts = { ...items.counts, mine: shown.filter((item) => item.mine).length, talk: shown.filter((item) => item.list !== 'done' && item.talk.unread).length }
     const live = shown.filter((item) => item.agent && item.list !== 'done')
     return {
       today: items.today,
@@ -223,6 +226,14 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     async done(body) {
       return write(['done', id(body.id), ...hash(body.hash)])
     },
+    // The user opened an item with an answer of the orchestrator not read yet: it is read now.
+    async read(body) {
+      const itemId = id(body.id)
+      const { items } = await read()
+      const item = items.items.find((candidate) => candidate.id === itemId)
+      if (!item || !talkState(item).unread) return { changed: false }
+      return write(['read', itemId])
+    },
     // The user's reply to an item (what it asks in 「あなたの番」): a line of its body, and the
     // orchestrator is told that there is one, never what it says.
     async reply(body) {
@@ -230,10 +241,8 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
       if (typeof body.text !== 'string' || body.text.length > REPLY_MAX) throw bad(`返事は ${REPLY_MAX} 字まで`)
       const said = body.text.replace(/\s+/g, ' ').trim()
       if (!said) throw bad('返事が空')
-      const day = new Date(now())
-      const stamp = `${String(day.getMonth() + 1).padStart(2, '0')}/${String(day.getDate()).padStart(2, '0')}`
-      // One argument that starts with the date: gtd.py reads no flag out of it.
-      const result = await write(['note', itemId, REPLY_SECTION, `${stamp}: ${said}`])
+      // --text=: gtd.py reads no flag out of the text, whatever it starts with.
+      const result = await write(['say', itemId, `--text=${said}`])
       try {
         onReply(itemId)
       } catch (error) {

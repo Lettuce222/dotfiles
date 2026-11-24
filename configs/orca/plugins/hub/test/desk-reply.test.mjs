@@ -34,7 +34,7 @@ test('a reply is one line of the item\'s body, dated, by user, and the orchestra
   const { desk, calls, told } = deskWith()
   assert.equal(REPLY_SECTION, 'あなたの番への返事')
   assert.deepEqual(await desk.handlers.reply({ id: '20261124-a3f2', text: '方針は A 案で。\n期日は来週に --by agent' }), { id: '20261124-a3f2', hash: 'h2' })
-  assert.deepEqual(calls.find((args) => args[0] === 'note'), ['note', '20261124-a3f2', 'あなたの番への返事', '11/24: 方針は A 案で。 期日は来週に --by agent', '--by', 'user'], 'one argument, so nothing in it is read as a flag')
+  assert.deepEqual(calls.find((args) => args[0] === 'say'), ['say', '20261124-a3f2', '--text=方針は A 案で。 期日は来週に --by agent', '--by', 'user'], '--text=, so nothing in it is read as a flag; gtd.py dates it')
   assert.deepEqual(told, ['20261124-a3f2'])
 })
 

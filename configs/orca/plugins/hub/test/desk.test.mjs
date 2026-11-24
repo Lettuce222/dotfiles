@@ -144,7 +144,7 @@ test('the page and its scripts come with a strict policy and need no token, sinc
     assert.ok(!html.includes(token), 'the page never holds the token')
   }
   assert.equal((await api('/api/state', undefined, { 'X-Desk-Token': '' })).status, 403, 'the data needs it')
-  for (const path of ['/desk.mjs', '/keys.mjs', '/sections.mjs', '/asks.mjs', '/desk.css', '/markdown.mjs']) {
+  for (const path of ['/desk.mjs', '/keys.mjs', '/sections.mjs', '/asks.mjs', '/talk.mjs', '/desk.css', '/markdown.mjs']) {
     const res = await fetch(base + path)
     assert.equal(res.status, 200, path)
     assert.equal(res.headers.get('access-control-allow-origin'), null)
@@ -316,7 +316,8 @@ test('a reply goes into the item\'s body under あなたの番への返事, by u
   const { status } = await api('/api/reply', { id, text: 'A 案で。\n来週まで' }, { Origin: base })
   assert.equal(status, 200)
   const body = readFileSync(itemFile(id), 'utf8')
-  assert.match(body, /## あなたの番への返事\n\n- \d\d\/\d\d: A 案で。 来週まで(\n|$)/)
+  assert.match(body, /## あなたの番への返事\n\n- \d\d\/\d\d \d\d:\d\d: A 案で。 来週まで(\n|$)/)
+  assert.match(body, /\nasked: \d{4}-\d\d-\d\dT\d\d:\d\d\n/, 'the user waits for the orchestrator\'s answer')
   assert.deepEqual(calls.filter(([kind]) => kind === 'reply'), [['reply', id]])
   const log = readFileSync(join(hub, 'gtd', '.log', 'changes.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.equal(log.at(-1).by, 'user')

@@ -160,7 +160,7 @@ test('the Orca CLI runs the worker asks for outside src/orca-cli.mjs are reads, 
     "'tab', 'switch', '--page', page, ...where, '--focus', '--json'",
     "'tab', 'list', ...where, '--json'",
     "'goto', '--url', url, '--page', open, ...where, '--json'",
-    "'tab', 'create', '--url', url, ...where, '--split', 'right', '--json'"
+    "'tab', 'create', '--url', url, ...where, '--split', 'up', '--json'"
   ])
 })
 
@@ -172,7 +172,7 @@ test('the desk writes only through gtd.py, with --by user, and these commands', 
   const reads = [...desk.matchAll(/\bgtd\(\[([^\]]*)\]/g)].map((match) => match[1])
   assert.deepEqual(reads, ["'json'", "'cases'", "...args, '--by', 'user'", "'record', '--quiet', String(QUIET_S), '--by', 'user'"])
   const writes = [...desk.matchAll(/\bwrite\(\[([^,\]]*)/g)].map((match) => match[1])
-  assert.deepEqual(writes, ["'add'", "'move'", "'done'", "'note'", "'from-case'", "'case-project'"])
+  assert.deepEqual(writes, ["'add'", "'move'", "'done'", "'read'", "'say'", "'from-case'", "'case-project'"])
   assert.doesNotMatch(desk, /writeFile|rename\(|unlink|rm\(/, 'the desk writes no item itself (only a line of the change log)')
 })
 

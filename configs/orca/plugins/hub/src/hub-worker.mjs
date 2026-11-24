@@ -775,8 +775,9 @@ export function createHubWorker({
    * Opens the desk in a browser tab of the hub's workspace, or shows the tab already open, in front.
    * `tab switch --focus` brings a tab forward only in the workspace Orca shows, so the hub's
    * workspace is shown first. An open desk tab is loaded again at the current URL (`goto`). `tab create` opens its tab behind the others and takes no --focus, so
-   * a new tab is switched to as well; `--split right` puts it in the pane beside the one in use (one
-   * that already shows a browser tab, else a new one on the right).
+   * a new tab is switched to as well; `--split up` puts it in a pane apart from the one in use (one
+   * that already shows a browser tab, else a new one above it: the desk above, the orchestrator's
+   * terminal below, as the user lays the hub out). Orca keeps the sizes the user drags to.
    * @returns {{ opened: boolean, reused?: boolean, reason?: string, detail?: string }}
    */
   async function openDesk(url) {
@@ -827,7 +828,7 @@ export function createHubWorker({
       }
       let created
       try {
-        created = await runArgs(['tab', 'create', '--url', url, ...where, '--split', 'right', '--json'], 60_000)
+        created = await runArgs(['tab', 'create', '--url', url, ...where, '--split', 'up', '--json'], 60_000)
       } catch (error) {
         return fail('create-failed', failureOf(error))
       }

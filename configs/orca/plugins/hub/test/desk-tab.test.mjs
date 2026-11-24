@@ -149,7 +149,7 @@ test('the desk server takes the port it is given, and another when that one is t
   }
 })
 
-test('a new desk tab opens in the pane on the right and is switched to, since tab create leaves it behind', async () => {
+test('a new desk tab opens in a pane above the one in use and is switched to, since tab create leaves it behind', async () => {
   const { worker, runs } = setup({
     'tab list': { ok: true, result: { tabs: [] } },
     'tab create': { ok: true, result: { browserPageId: 'page-new' } },
@@ -157,7 +157,7 @@ test('a new desk tab opens in the pane on the right and is switched to, since ta
   })
   assert.deepEqual(await worker.openDesk(URL_), { opened: true, reused: false })
   assert.deepEqual(runs.slice(2), [
-    ['tab', 'create', '--url', URL_, '--worktree', SELECTOR, '--split', 'right', '--json'],
+    ['tab', 'create', '--url', URL_, '--worktree', SELECTOR, '--split', 'up', '--json'],
     ['tab', 'switch', '--page', 'page-new', '--worktree', SELECTOR, '--focus', '--json']
   ])
 })

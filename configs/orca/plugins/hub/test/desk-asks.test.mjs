@@ -174,7 +174,7 @@ test('the strip at the top counts what waits, with the soonest time left', () =>
 
 test('the desk\'s tab shows how many wait in its title, and opening the desk still finds it', async () => {
   const desk = readFileSync(join(root, 'desk', 'desk.mjs'), 'utf8')
-  assert.match(desk, /document\.title = waiting \? `\(\$\{waiting\}\) デスク` : 'デスク'/)
+  assert.match(desk, /document\.title = count \? `\(\$\{count\}\) デスク` : 'デスク'/, 'the cards that wait and the answers not read')
   const { findDeskTab } = await import('../src/desk-tab.mjs')
   const stale = { browserPageId: 'old', url: 'http://127.0.0.1:5000/', title: '(2) デスク' }
   assert.equal(findDeskTab([stale], 'http://127.0.0.1:47615').browserPageId, 'old')

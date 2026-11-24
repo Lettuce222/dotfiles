@@ -2,7 +2,8 @@
 // No library. Every piece of text from the API is escaped before it goes into HTML, and the Markdown
 // body goes through renderMarkdown, which escapes its own input.
 import { renderMarkdown } from './markdown.mjs'
-import { TAB_KEYS, deskKey, keyHints } from './keys.mjs'
+import { TAB_KEYS, TALK_KEY, deskKey, keyHints } from './keys.mjs'
+import { parseTalk, shortTime } from './talk.mjs'
 import { boxOrder, filterRows, nextBox, shownRows, stepRow } from './sections.mjs'
 import { PERMISSION_ORDER, alertHtml, askChips, askDetail, askTitle, askTitleHtml, timeLeft, waits } from './asks.mjs'
 
@@ -44,7 +45,7 @@ async function api(path, body) {
 // ---------------------------------------------------------------- state
 const LISTS = [['mine', 'あなたの番', 'y'], ['inbox', 'inbox', 'i'], ['next', '次の行動', 'n'], ['project', 'プロジェクト', 'p'],
   ['waiting', '連絡待ち', 'w'], ['someday', 'いつか／たぶん', 's'], ['reference', '資料', 'r']]
-const HINTS = { mine: '承認・要判断・確かめてほしいもの', inbox: '1 件ずつ何をするか決めて移す（f）', next: '自分とエージェント。プロジェクトの「次」もここに出る',
+const HINTS = { talk: '窓口の返事（まだ読んでいないもの）と、窓口の答えを待っているもの', mine: '承認・要判断・確かめてほしいもの', inbox: '1 件ずつ何をするか決めて移す（f）', next: '自分とエージェント。プロジェクトの「次」もここに出る',
   project: '要る行動を順に。次の行動に出ているものに印', waiting: '相手・渡した日・確かめる日', someday: '今はやらない', reference: '資料と成果物' }
 const MINE_LABEL = { handback: 'あなたに戻った', ask: '問いがある', agent_done: '完了・確かめて', follow_up: '確かめる日が来た', due: '締め切り', conflict: 'ぶつかり' }
 const AGENT_STATE = { working: ['c-run', '動いている'], attention: ['c-ask', 'あなた待ち'], idle: ['c-me', '待機'], done: ['c-done', '完了・確かめて'] }
@@ -67,7 +68,7 @@ function parseHash() {
   const p = new URLSearchParams(location.hash.slice(1))
   pane = p.get('pane') === 'migrate' ? 'migrate' : 'list'
   const l = p.get('list')
-  if (l && LISTS.some(([k]) => k === l)) cur = l
+  if (l && (l === 'talk' || LISTS.some(([k]) => k === l))) cur = l
   sel = p.get('item') || null
 }
 function writeHash() {
@@ -84,7 +85,13 @@ const isMine = (t) => t.mine != null
 const isAgent = (t) => t.actor === 'agent' || Boolean(t.worker)
 // The orchestrator's cards (src/desk-asks.mjs) are the first rows of あなたの番.
 const askRows = () => (S.orchestrator ?? []).map((card) => ({ id: `ask-${card.id}`, title: askTitle(card), card }))
+// The talk box: the items with an answer of the orchestrator not read yet, then those that wait for one.
+function talkRows() {
+  const open = S.items.filter((t) => t.list !== 'done')
+  return [...open.filter((t) => t.talk?.unread), ...open.filter((t) => !t.talk?.unread && t.talk?.waiting)]
+}
 function inList(name) {
+  if (name === 'talk') return talkRows()
   if (name === 'mine') return [...askRows(), ...S.items.filter(isMine)]
   return S.items.filter((t) => t.list === name)
 }
@@ -95,7 +102,8 @@ function ordered(name) {
 }
 // The boxes of the left column, as in lazygit (desk/sections.mjs): `cur` is the box worked in (a
 // list, or 'migrate'), and each box keeps the row selected in it and its filter (/).
-const BOXES = boxOrder(LISTS)
+// The talk with the orchestrator (o) sits under あなたの番.
+const BOXES = boxOrder(LISTS).toSpliced(1, 0, 'talk')
 const selByBox = {}
 const filters = {}
 let filtering = false
@@ -111,6 +119,8 @@ function dueChip(d) {
 }
 function actorChips(t, sec = cur) {
   const out = []
+  if (t.talk?.unread) out.push('<span class="chip c-talk">窓口の返事</span>')
+  else if (t.talk?.waiting) out.push('<span class="chip c-me">答え待ち</span>')
   if (t.mine && sec === 'mine') out.push(`<span class="chip c-ask">${esc(MINE_LABEL[t.mine] ?? t.mine)}</span>`)
   if (t.asks?.length && !(t.mine && sec === 'mine')) out.push('<span class="chip c-ask">要判断</span>')
   if (isAgent(t)) {
@@ -184,12 +194,12 @@ function groupHtml(label, rows, k) {
 
 // A box: its name and count on the top line of its frame, and its rows; while another box is worked
 // in, only its first rows.
-function boxHtml(k, label, i) {
+function boxHtml(k, label, key) {
   const all = boxRows(k)
   const focused = k === cur && pane === 'list'
   const rows = shownRows(all, focused)
   const query = filters[k] ? ` <span class="filter-on">/${esc(filters[k])}</span>` : ''
-  const legend = `<legend data-box="${k}">[${TAB_KEYS[i]}] ${label} (${all.length})${query}</legend>`
+  const legend = `<legend data-box="${k}">[${key}] ${label} (${all.length})${query}</legend>`
   let body
   if (!all.length) body = '<div class="empty-row">（なし）</div>'
   else if (k === 'mine' && rows.some((t) => t.card)) {
@@ -197,16 +207,18 @@ function boxHtml(k, label, i) {
   } else if (k === 'next' && focused) {
     body = `${groupHtml('自分', rows.filter((t) => !isAgent(t) || t.actor === 'me'), k)}${groupHtml('エージェント', rows.filter((t) => isAgent(t) && t.actor !== 'me'), k)}`
   } else body = rows.map((t) => rowHtml(t, k)).join('')
-  const more = all.length > rows.length ? `<div class="more">… ほか ${all.length - rows.length} 件（<kbd>${TAB_KEYS[i]}</kbd>）</div>` : ''
+  const more = all.length > rows.length ? `<div class="more">… ほか ${all.length - rows.length} 件（<kbd>${key}</kbd>）</div>` : ''
   const hint = focused && all.length ? `<div class="box-hint">${HINTS[k]}</div>` : ''
-  return `<fieldset class="box ${focused ? 'focused' : ''}" data-sec="${k}">${legend}${hint}${body}${more}</fieldset>`
+  return `<fieldset class="box ${focused ? 'focused' : ''} ${k === 'talk' && all.some((t) => t.talk?.unread) ? 'talk-new' : ''}" data-sec="${k}">${legend}${hint}${body}${more}</fieldset>`
 }
 
 function renderItems() {
   const m = S.migrate ?? { done: 0, total: 0 }
   const migrate = `<fieldset class="box ${pane === 'migrate' ? 'focused' : ''}" data-sec="migrate"><legend data-box="migrate">[${TAB_KEYS[LISTS.length]}] 移し替え (${m.done}/${m.total})</legend><div class="box-hint">旧案件を 1 行ずつ。開くと右に出す</div></fieldset>`
   const el = $('items')
-  el.innerHTML = LISTS.map(([k, label], i) => boxHtml(k, label, i)).join('') + migrate
+  const boxes = LISTS.map(([k, label], i) => boxHtml(k, label, TAB_KEYS[i]))
+  boxes.splice(1, 0, boxHtml('talk', '窓口', TALK_KEY))
+  el.innerHTML = boxes.join('') + migrate
   el.querySelectorAll('.row').forEach((r) => { r.onclick = () => choose(r.dataset.id, true, r.dataset.sec) })
   el.querySelectorAll('[data-box]').forEach((b) => { b.onclick = () => focusBox(b.dataset.box) })
   el.querySelector('.box.focused .row.sel')?.scrollIntoView({ block: 'nearest' })
@@ -223,7 +235,7 @@ function renderKeys() {
 function openHelp() {
   helpOpen = true
   const rows = [
-    ['h / l、Tab / ⇧Tab', '左の箱を移る'], ['q w e r t y u', 'リストの箱へ'], ['i', '移し替え（右に出す。Esc で戻る）'],
+    ['h / l、Tab / ⇧Tab', '左の箱を移る'], ['q w e r t y u', 'リストの箱へ'], ['o', '窓口の箱へ（窓口の返事と、答え待ち）'], ['i', '移し替え（右に出す。Esc で戻る）'],
     ['j / k', '箱の中を上下'], ['/', '箱の中を絞り込む（Enter で決める、Esc でやめる）'], ['Enter', '右の箱へ（返事、窓口の問いには書いて答える）'],
     ['Ctrl+J、⇧Enter', '書く欄で改行（1 行の欄では何もしない）'], ['Esc', '欄やメニューから抜ける'], ['a', 'inbox に足す'], ['s', 'Orca のエディタで開く'], ['d', '成果物を開く'],
     ['f', '移す（メニュー）'], ['x', '完了'], ['v', 'エージェントの画面に切り替え'], ['⇧Q 〜 ⇧R', '窓口の問い・worker の問いに答える（許可の確認は 許可・拒否・理由・ターミナル）'],
@@ -331,6 +343,32 @@ async function sendReply(t) {
   toast('返事を書いた。窓口に知らせます')
 }
 
+// The talk with the orchestrator on the item, as a conversation in time order. The orchestrator's
+// answers after the user last read are marked new.
+const WHO = { ask: ['あなたの番（頼まれたこと）', 'w-ask'], user: ['あなた', 'w-user'], orchestrator: ['窓口', 'w-orch'] }
+function talkHtml(t, entries) {
+  const readAt = shortTime(t.read)
+  const lines = entries.map((e) => {
+    const [who, cls] = WHO[e.who]
+    const fresh = e.who === 'orchestrator' && t.talk?.unread && e.when > readAt
+    return `<div class="msg ${cls} ${fresh ? 'fresh' : ''}"><div class="msg-head"><b>${who}</b> <span class="note">${esc(e.when)}</span>${fresh ? ' <span class="chip c-talk">新しい</span>' : ''}</div><div class="msg-body">${renderMarkdown(e.text)}</div></div>`
+  }).join('')
+  const waiting = t.talk?.waiting ? '<div class="note">窓口の答えを待っています。</div>' : ''
+  return `<div class="card talk"><h3>窓口とのやり取り</h3>${lines}${waiting}</div>`
+}
+
+// An item opened with an answer of the orchestrator not read yet is read now (gtd.py read).
+const reading = new Set()
+async function markRead(t) {
+  if (!t?.talk?.unread || reading.has(t.id)) return
+  reading.add(t.id)
+  try {
+    await write('/api/read', { id: t.id })
+  } finally {
+    reading.delete(t.id)
+  }
+}
+
 function renderDetail() {
   const d = $('detail')
   const t = byId[sel]
@@ -347,7 +385,9 @@ function renderDetail() {
       ${a.inOrca ? '' : '<div class="note">Orca のターミナルの外（claude --bg）なので、画面は切り替えられない。</div>'}</div>`
   }
   if (t.list === 'project') left += `<div class="card"><h3>ステップ（順に）</h3>${stepsHtml(t, 'style="margin-left:0"')}</div>`
-  left += `<div class="box"><h4>本文</h4>${t.body?.trim() ? renderMarkdown(t.body) : '<span class="note">（空）</span>'}`
+  const talk = parseTalk(t.body ?? '')
+  if (talk.entries.length) left += talkHtml(t, talk.entries)
+  left += `<div class="box"><h4>本文</h4>${talk.rest.trim() ? renderMarkdown(talk.rest) : '<span class="note">（空）</span>'}`
   if (t.deliverables?.length) {
     left += `<h4>成果物</h4><ul>${t.deliverables.map((p, i) => `<li><a class="link" data-deliv="${i}">${esc(p)}</a></li>`).join('')}</ul>`
   }
@@ -358,6 +398,7 @@ function renderDetail() {
     <div class="cols"><div>${left}</div><div style="margin-top:8px"><table class="fm">${fmRows(t)}</table>
     ${t.path ? `<p class="note">ファイル: <code class="path">${esc(t.path)}</code></p>` : ''}</div></div>${replyBox(t)}`
   restoreReply(d, t, kept)
+  if (t.talk?.unread) void markRead(t)
   d.querySelectorAll('[data-reply-send]').forEach((b) => { b.onclick = () => sendReply(t) })
   d.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => act(b.dataset.act) })
   d.querySelectorAll('[data-deliv]').forEach((a) => { a.onclick = () => openItem(t.id, t.deliverables[Number(a.dataset.deliv)]) })
@@ -410,11 +451,16 @@ function renderMigrate() {
 /** The tab's title and the strip at the top: how many cards of the orchestrator wait on the user. */
 function renderAlert() {
   const waiting = (S.orchestrator ?? []).filter(waits).length
-  document.title = waiting ? `(${waiting}) デスク` : 'デスク'
+  // The orchestrator's answers not read yet: a strip of its own color, under the cards' one.
+  const answers = talkRows().filter((t) => t.talk?.unread).length
+  const count = waiting + answers
+  document.title = count ? `(${count}) デスク` : 'デスク'
   const el = $('alert')
-  el.innerHTML = alertHtml(S.orchestrator ?? [], Date.now())
-  el.hidden = !waiting
+  const talk = answers ? `<button class="alert-talk" data-talk-alert>窓口から返事が ${answers} 件あります　<kbd>${TALK_KEY}</kbd> で見る</button>` : ''
+  el.innerHTML = alertHtml(S.orchestrator ?? [], Date.now()) + talk
+  el.hidden = !count
   el.querySelector('[data-alert]')?.addEventListener('click', () => showList('mine'))
+  el.querySelector('[data-talk-alert]')?.addEventListener('click', () => showList('talk'))
 }
 // The time left of a permission, every second, without drawing the rest again.
 setInterval(() => {
