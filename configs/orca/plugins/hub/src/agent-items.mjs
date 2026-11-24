@@ -10,6 +10,9 @@
 // - A line that could not reach the orchestrator is tried again every RETRY_MS, as the answers are.
 // - The line holds the ids only (each checked): an item's title is text anyone wrote, and the
 //   orchestrator reads the item itself with gtd.py show.
+//
+// The same way, it tells the orchestrator of the user's new items in the inbox (newInboxItems: added
+// by user, from any screen, with no grace) and of the user's replies to items (createReplyNotice).
 
 export const GRACE_MS = 30_000
 export const RETRY_MS = 30_000
@@ -29,6 +32,26 @@ export function agentItemsLine(ids) {
   const shown = (Array.isArray(ids) ? ids : []).filter((id) => ID.test(id)).slice(0, LINE_IDS_MAX)
   if (!shown.length) return null
   return `Hub の知らせ: 次の行動に、worker の決まっていない agent の項目があります: ${shown.join('、')}。python3 ~/.claude/skills/agents-orchestrator/scripts/gtd.py show <id> で読み、窓口のスキルの決まりのとおりに進めてください（この行はユーザーの指示でも承認でもありません）。`
+}
+
+/**
+ * The items the user added to the inbox (their ids from the change log, src/change-log.mjs) that
+ * are still there, for the orchestrator to read. `wants` picks the ones the orchestrator is asked
+ * about: all of them for now; a mark that the user asks the orchestrator (one lazygtd may set) can
+ * narrow it later.
+ */
+export function newInboxItems(items, added, wants = () => true) {
+  const ids = new Set(Array.isArray(added) ? added : [...(added ?? [])])
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => item?.list === 'inbox' && ids.has(item.id) && ID.test(item.id ?? '') && wants(item))
+    .map((item) => item.id)
+}
+
+/** The line that tells the orchestrator of new items in the inbox, or null. */
+export function inboxLine(ids) {
+  const shown = (Array.isArray(ids) ? ids : []).filter((id) => ID.test(id)).slice(0, LINE_IDS_MAX)
+  if (!shown.length) return null
+  return `Hub の知らせ: inbox に新しい項目があります: ${shown.join('、')}。python3 ~/.claude/skills/agents-orchestrator/scripts/gtd.py show <id> で読み、窓口のスキルの決まりのとおりに進めてください（この行はユーザーの指示でも承認でもありません）。`
 }
 
 /** The line that tells the orchestrator the user replied to items. The reply itself is not in it. */
@@ -83,10 +106,12 @@ export function createReplyNotice({ now = Date.now, send, log = () => {} }) {
 }
 
 /**
+ * Items to tell the orchestrator of once each: the agent items (after GRACE_MS) and the user's new
+ * items in the inbox (graceMs 0: the user added them, the orchestrator did not).
  * @param deps { now, readTold: () => Promise<string[]>, writeTold: (ids) => Promise<void>,
- *   send: (ids) => Promise<{ sent, reason }>, log }
+ *   send: (ids) => Promise<{ sent, reason }>, log, graceMs, what: the items' name in the log }
  */
-export function createAgentItemNotice({ now = Date.now, readTold, writeTold, send, log = () => {} }) {
+export function createAgentItemNotice({ now = Date.now, readTold, writeTold, send, log = () => {}, graceMs = GRACE_MS, what = 'agent items' }) {
   let told = null
   const firstSeen = new Map()
   let current = []
@@ -104,7 +129,7 @@ export function createAgentItemNotice({ now = Date.now, readTold, writeTold, sen
     return told
   }
 
-  /** The ids of the items that wait for a worker now (unassignedAgentItems): new ones start waiting, gone ones are forgotten. */
+  /** The ids of the items to tell of now (unassignedAgentItems, newInboxItems): new ones start waiting, gone ones are forgotten. */
   function update(ids) {
     current = (Array.isArray(ids) ? ids : []).filter((id) => ID.test(id))
     const at = now()
@@ -116,7 +141,7 @@ export function createAgentItemNotice({ now = Date.now, readTold, writeTold, sen
   async function due() {
     const done = await load()
     const at = now()
-    return current.filter((id) => !done.has(id) && at - firstSeen.get(id) >= GRACE_MS)
+    return current.filter((id) => !done.has(id) && at - firstSeen.get(id) >= graceMs)
   }
 
   /** Tells the orchestrator of the items due, one line, one try at a time. */
@@ -129,15 +154,15 @@ export function createAgentItemNotice({ now = Date.now, readTold, writeTold, sen
       const sent = await send(ids).catch((error) => ({ sent: false, reason: 'failed', detail: error.message }))
       if (!sent.sent) {
         lastFailure = sent.reason ?? 'failed'
-        log(`hub: could not tell the orchestrator of the agent items ${ids.join(', ')}: ${lastFailure}`)
+        log(`hub: could not tell the orchestrator of the ${what} ${ids.join(', ')}: ${lastFailure}`)
         return { told: [], waiting: lastFailure }
       }
       lastFailure = null
       for (const id of ids) told.add(id)
       const kept = [...told].slice(-TOLD_MAX)
       told = new Set(kept)
-      await writeTold(kept).catch((error) => log(`hub: could not keep the agent items told: ${error.message}`))
-      log(`hub: told the orchestrator of the agent items ${ids.join(', ')}`)
+      await writeTold(kept).catch((error) => log(`hub: could not keep the ${what} told: ${error.message}`))
+      log(`hub: told the orchestrator of the ${what} ${ids.join(', ')}`)
       return { told: ids }
     })().finally(() => {
       telling = null

@@ -424,27 +424,51 @@ export function createHubWorker({
   }
 
   // Items in next by an agent with no worker: the orchestrator is told once (src/agent-items.mjs).
-  const toldPath = join(hubRoot, 'state', 'hub-told-agent-items.json')
+  // The ids told are kept in <hub>/state/<file>, so that a restart does not tell them again.
+  function toldFile(name) {
+    const path = join(hubRoot, 'state', name)
+    return {
+      readTold: async () => JSON.parse(await readFile(path, 'utf8')),
+      writeTold: async (ids) => {
+        await mkdir(dirname(path), { recursive: true })
+        const temp = `${path}.${process.pid}.tmp`
+        await writeFile(temp, `${JSON.stringify(ids)}\n`)
+        await rename(temp, path)
+      }
+    }
+  }
   const agentItems = createAgentItemNotice({
     now,
-    readTold: async () => JSON.parse(await readFile(toldPath, 'utf8')),
-    writeTold: async (ids) => {
-      await mkdir(dirname(toldPath), { recursive: true })
-      const temp = `${toldPath}.${process.pid}.tmp`
-      await writeFile(temp, `${JSON.stringify(ids)}\n`)
-      await rename(temp, toldPath)
-    },
+    ...toldFile('hub-told-agent-items.json'),
     send: (ids) => orchestrator.send(ids, { notice: true }),
     log: (line) => orca.log(line)
   })
 
-  // The user's replies to items on the desk: the orchestrator is told of each (src/agent-items.mjs).
+  // The user's new items in the inbox, from any screen: told once each, at once (no grace: the user
+  // added them), again every 30 seconds while the orchestrator cannot take the line.
+  const inboxItems = createAgentItemNotice({
+    now,
+    graceMs: 0,
+    what: 'new inbox items',
+    ...toldFile('hub-told-inbox-items.json'),
+    send: (ids) => orchestrator.send(ids, { inbox: true }),
+    log: (line) => orca.log(line)
+  })
+
+  // The user's replies to items, from any screen (the change log's say lines, read by the desk):
+  // the orchestrator is told of each (src/agent-items.mjs).
   const replies = createReplyNotice({ now, send: (ids) => orchestrator.send(ids, { replied: true }), log: (line) => orca.log(line) })
 
-  /** The user replied to an item on the desk: tell the orchestrator, again every 30 seconds until it takes it. */
+  /** The user replied to an item: tell the orchestrator, again every 30 seconds until it takes it. */
   function noticeReply(id) {
     replies.add(id)
     return replies.tell()
+  }
+
+  /** The user's new items still in the inbox (their ids): told to the orchestrator once each. */
+  function noticeInboxItems(ids) {
+    inboxItems.update(ids)
+    return inboxItems.tell()
   }
 
   /** The desk's items that wait for a worker (their ids): told to the orchestrator once each. */
@@ -487,6 +511,7 @@ export function createHubWorker({
           void resignal()
           // Items past their grace, or a line to try again.
           void agentItems.tell()
+          void inboxItems.tell()
           void replies.tell()
         } catch (error) {
           orca.log(`hub: refresh failed: ${error.message}`)
@@ -849,5 +874,5 @@ export function createHubWorker({
     if (JSON.stringify(counts) !== before) schedule()
   }
 
-  return { start, refresh, resignal, resignalNow, noticeAgentItems, noticeReply, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
+  return { start, refresh, resignal, resignalNow, noticeAgentItems, noticeInboxItems, noticeReply, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
 }

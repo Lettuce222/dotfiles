@@ -75,6 +75,8 @@ export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
       worker.setDeskCounts(counts)
       // An item in next by an agent with no worker: the orchestrator starts one (told once).
       void worker.noticeAgentItems(counts.agentItems ?? [])
+      // A new item the user put in the inbox, from any screen: the orchestrator reads it (told once).
+      void worker.noticeInboxItems(counts.inboxItems ?? [])
       // The orchestrator's cards first: a permission goes back to the terminal in a few minutes.
       const waiting = counts.orchestrator ?? 0
       // Then the orchestrator's answers not read yet, in a color of their own.

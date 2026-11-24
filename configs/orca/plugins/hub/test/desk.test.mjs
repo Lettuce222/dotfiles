@@ -315,6 +315,8 @@ test('a reply goes into the item\'s body under あなたの番への返事, by u
   const id = added.json.id
   const { status } = await api('/api/reply', { id, text: 'A 案で。\n来週まで' }, { Origin: base })
   assert.equal(status, 200)
+  // Told from the say line of the change log, after the desk reads it again.
+  await new Promise((resolve) => setTimeout(resolve, 400))
   const body = readFileSync(itemFile(id), 'utf8')
   assert.match(body, /## あなたの番への返事\n\n- \d\d\/\d\d \d\d:\d\d: A 案で。 来週まで(\n|$)/)
   assert.match(body, /\nasked: \d{4}-\d\d-\d\dT\d\d:\d\d\n/, 'the user waits for the orchestrator\'s answer')
@@ -322,4 +324,30 @@ test('a reply goes into the item\'s body under あなたの番への返事, by u
   const log = readFileSync(join(hub, 'gtd', '.log', 'changes.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.equal(log.at(-1).by, 'user')
   assert.equal((await api('/api/reply', { id, text: '  ' }, { Origin: base })).status, 400)
+})
+
+test('a reply written with gtd.py by user (lazygtd, or by hand) is told once; one by an agent is not', async () => {
+  const { id } = await cli('add', '返事の試し', '--by', 'user')
+  calls = []
+  await cli('say', id, '--text=lazygtd から', '--by', 'user')
+  await cli('say', id, '--text=エージェントの書き込み')
+  assert.deepEqual(calls.filter(([kind]) => kind === 'reply'), [['reply', id]])
+  await desk.readUserChanges()
+  assert.deepEqual(calls.filter(([kind]) => kind === 'reply'), [['reply', id]], 'a line is read once')
+})
+
+test('the user\'s new items in the inbox, from any screen, are told while they are there', async () => {
+  const fromDesk = (await api('/api/add', { title: 'デスクから頼む' }, { Origin: base })).json.id
+  const fromCli = (await cli('add', 'lazygtd から頼む', '--by', 'user')).id
+  const toNext = (await cli('add', '次の行動に直接', '--list', 'next', '--by', 'user')).id
+  const byAgent = (await cli('add', 'エージェントが足した')).id
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  const told = (await desk.counts()).inboxItems
+  assert.ok(told.includes(fromDesk) && told.includes(fromCli), 'the desk and gtd.py by user')
+  assert.ok(!told.includes(toNext), 'not in the inbox')
+  assert.ok(!told.includes(byAgent), 'not by the user')
+  await cli('move', fromCli, 'someday', '--by', 'user')
+  assert.ok(!(await desk.counts()).inboxItems.includes(fromCli), 'sorted out of the inbox: not new any more')
+  await cli('move', fromCli, 'inbox', '--by', 'user')
+  assert.ok(!(await desk.counts()).inboxItems.includes(fromCli), 'even when it comes back')
 })

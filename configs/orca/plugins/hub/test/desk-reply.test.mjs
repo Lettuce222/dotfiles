@@ -13,9 +13,11 @@ import { makeHome } from './helpers.mjs'
 
 const root = join(import.meta.dirname, '..')
 
-function deskWith() {
+function deskWith(entries = []) {
   const calls = []
   const told = []
+  // The change log: the lines gtd.py adds, read by the desk after a change.
+  const changeLog = { start: async () => {}, readNew: async () => entries.splice(0) }
   const gtd = async (args) => {
     calls.push(args)
     if (args[0] === 'json') return { today: '2026-11-24', counts: {}, items: [] }
@@ -25,17 +27,22 @@ function deskWith() {
   const desk = createDesk({
     gtd, hubRoot: '/nowhere', snapshot: () => ({ workers: [], asks: [], orchestrator: [] }),
     openFile: async () => true, focusWorker: async () => ({}), answerAsk: async () => ({ ok: true }),
-    onReply: (id) => told.push(id), now: () => new Date(2026, 10, 24, 16, 40).getTime(), watchDir: () => ({ close() {} })
+    onReply: (id) => told.push(id), now: () => new Date(2026, 10, 24, 16, 40).getTime(), watchDir: () => ({ close() {} }), changeLog
   })
-  return { desk, calls, told }
+  return { desk, calls, told, entries }
 }
 
-test('a reply is one line of the item\'s body, dated, by user, and the orchestrator is told of the item', async () => {
-  const { desk, calls, told } = deskWith()
+test('a reply is one line of the item\'s body, dated, by user, and the orchestrator is told of the item once, from the change log', async () => {
+  const { desk, calls, told, entries } = deskWith()
   assert.equal(REPLY_SECTION, 'あなたの番への返事')
   assert.deepEqual(await desk.handlers.reply({ id: '20261124-a3f2', text: '方針は A 案で。\n期日は来週に --by agent' }), { id: '20261124-a3f2', hash: 'h2' })
   assert.deepEqual(calls.find((args) => args[0] === 'say'), ['say', '20261124-a3f2', '--text=方針は A 案で。 期日は来週に --by agent', '--by', 'user'], '--text=, so nothing in it is read as a flag; gtd.py dates it')
+  assert.deepEqual(told, [], 'not from the HTTP handler: the say line tells it, as from any screen')
+  entries.push({ id: '20261124-a3f2', action: 'say', by: 'user' })
+  await desk.readUserChanges()
   assert.deepEqual(told, ['20261124-a3f2'])
+  await desk.readUserChanges()
+  assert.deepEqual(told, ['20261124-a3f2'], 'once')
 })
 
 test('an empty, too long or misaddressed reply is refused and tells nobody', async () => {

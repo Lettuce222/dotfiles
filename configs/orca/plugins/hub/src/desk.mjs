@@ -4,6 +4,8 @@
 // design gives the plugin's worker for hub v2:
 // - the change log: an item saved from Orca's editor (no gtd.py line for it) gets a line in
 //   <gtd>/.log/changes.jsonl, by user, and every change tells the open desks to read again;
+// - the user's writes from any screen (the desk, lazygtd, gtd.py by hand): the new lines of the
+//   change log, by user, tell the orchestrator of a reply (say) and of a new item in the inbox (add);
 // - the recorder: once a minute, `gtd.py record --quiet 600` commits what people changed, 10 minutes
 //   after their last change (an agent's write commits at once, and first folds people's changes).
 import { appendFile, readFile, realpath, stat } from 'node:fs/promises'
@@ -11,7 +13,8 @@ import { watch } from 'node:fs'
 import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, resignalResult, waitingCount } from './desk-asks.mjs'
 import { ASK_ID } from './asks.mjs'
-import { unassignedAgentItems } from './agent-items.mjs'
+import { newInboxItems, unassignedAgentItems } from './agent-items.mjs'
+import { createChangeLogReader, userChanges } from './change-log.mjs'
 import { talkState } from '../desk/talk.mjs'
 import { DeskError } from './desk-server.mjs'
 import { EXIT_CONFLICT } from './gtd.mjs'
@@ -71,9 +74,12 @@ const ASK_MESSAGES = {
  * @param focusWorker (worker summary) => Promise<{ focused, reason? }>
  * @param answerAsk ({ id, sha, choice, text?, confirmed? }) => Promise<{ ok, reason?, message? }>
  * @param resignalNow (askId) => Promise<{ ok, reason? }>: tells the orchestrator of a kept answer now
- * @param onReply (itemId) => void: the user replied to an item; the orchestrator is told of it
+ * @param onReply (itemId) => void: the user replied to an item, from any screen (a say line of the
+ *   change log, by user); the orchestrator is told of it
+ * @param wantsInbox (item) => boolean: the user's new items in the inbox the orchestrator is told of
+ * @param changeLog the reader of the change log (src/change-log.mjs), for tests
  */
-export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, resignalNow = async () => ({ ok: false, reason: 'failed' }), onReply = () => {}, log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
+export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, resignalNow = async () => ({ ok: false, reason: 'failed' }), onReply = () => {}, wantsInbox = () => true, log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {}, changeLog = null }) {
   const gtdRoot = join(hubRoot, 'gtd')
   const itemsDir = join(gtdRoot, 'items')
   const changes = join(gtdRoot, '.log', 'changes.jsonl')
@@ -86,6 +92,9 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
   let recording = false
   const watchers = []
   const touched = new Set()
+  const userLog = changeLog ?? createChangeLogReader(changes)
+  // The items the user added (add, by user) since the desk started: told while they are in the inbox.
+  const added = new Set()
 
   async function read() {
     if (cache) return cache
@@ -242,13 +251,9 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
       const said = body.text.replace(/\s+/g, ' ').trim()
       if (!said) throw bad('返事が空')
       // --text=: gtd.py reads no flag out of the text, whatever it starts with.
-      const result = await write(['say', itemId, `--text=${said}`])
-      try {
-        onReply(itemId)
-      } catch (error) {
-        log(`desk: could not tell the orchestrator of the reply to ${itemId}: ${error.message}`)
-      }
-      return result
+      // The orchestrator is told of it from the say line in the change log, as a reply from
+      // lazygtd or gtd.py is: once, whichever screen wrote it.
+      return write(['say', itemId, `--text=${said}`])
     },
     async open(body) {
       const itemId = id(body.id)
@@ -316,8 +321,29 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
       touched.clear()
       void logEditorSaves(files).catch((error) => log(`desk: could not log a change: ${error.message}`))
       server?.notify()
-      onChange()
+      // The user's writes first: the counts read next hold the new items in the inbox.
+      void readUserChanges().finally(onChange)
     }, DEBOUNCE_MS)
+  }
+
+  /** The new lines of the change log: a reply by user tells the orchestrator; an add is kept. */
+  async function readUserChanges() {
+    let entries
+    try {
+      entries = await userLog.readNew()
+    } catch (error) {
+      log(`desk: could not read the change log: ${error.message}`)
+      return
+    }
+    const { replies, added: ids } = userChanges(entries)
+    for (const id of ids) added.add(id)
+    for (const itemId of replies) {
+      try {
+        onReply(itemId)
+      } catch (error) {
+        log(`desk: could not tell the orchestrator of the reply to ${itemId}: ${error.message}`)
+      }
+    }
   }
 
   async function logEditorSaves(files) {
@@ -352,6 +378,8 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
 
   function start(deskServer) {
     server = deskServer
+    // From the end of the log as it is now: what the user wrote before was told then, or not.
+    void userLog.start().catch((error) => log(`desk: could not read the change log: ${error.message}`))
     for (const [dir, filter] of [
       [gtdRoot, (file) => file && !file.startsWith('.git') && !file.startsWith('.log') && !file.endsWith('.lock') && !file.endsWith('.tmp')],
       [casesDir, (file) => file && file.endsWith('.md')]
@@ -365,7 +393,11 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
         log(`desk: cannot watch ${dir}: ${error.message}`)
       }
     }
-    recorder = setInterval(() => void recordOnce(), RECORD_MS)
+    // The change log is read once a minute too, in case the watcher missed a change.
+    recorder = setInterval(() => {
+      void recordOnce()
+      void readUserChanges()
+    }, RECORD_MS)
     recorder.unref?.()
   }
 
@@ -381,8 +413,13 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     // `orchestrator`: the orchestrator's cards that wait on the user (a permission lapses to the
     // terminal in a few minutes, so the status bar shows them first).
     // `agentItems`: the items in next by an agent with no worker, which the orchestrator is told of.
-    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents, orchestrator: waitingCount(snapshot()?.orchestrator ?? []), agentItems: unassignedAgentItems(shown.items) }
+    // `inboxItems`: the user's new items still in the inbox, which the orchestrator is told of.
+    const inboxItems = newInboxItems(shown.items, added, wantsInbox)
+    // An item seen out of the inbox is not new any more, even if it comes back. One not seen at all
+    // is kept: a read that started before the add may not hold it yet.
+    for (const item of shown.items) if (added.has(item.id) && item.list !== 'inbox') added.delete(item.id)
+    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents, orchestrator: waitingCount(snapshot()?.orchestrator ?? []), agentItems: unassignedAgentItems(shown.items), inboxItems }
   }
 
-  return { handlers, state, counts, start, stop, changed, recordOnce, fileOf }
+  return { handlers, state, counts, start, stop, changed, recordOnce, readUserChanges, fileOf }
 }
