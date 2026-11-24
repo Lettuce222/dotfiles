@@ -9,6 +9,7 @@
 import { appendFile, readFile, realpath, stat } from 'node:fs/promises'
 import { watch } from 'node:fs'
 import { isAbsolute, join, normalize, relative, sep } from 'node:path'
+import { deskOrchestratorCards, orchestratorAnswer, orchestratorResult, waitingCount } from './desk-asks.mjs'
 import { DeskError } from './desk-server.mjs'
 import { EXIT_CONFLICT } from './gtd.mjs'
 
@@ -23,6 +24,8 @@ const RECORD_MS = 60_000
 const QUIET_S = 600
 // A save with no gtd.py line for its item this recently is an edit from Orca's editor.
 const OWN_WRITE_MS = 5_000
+// The levels of information the desk may show, as on the panel (src/asks.mjs): Orca shows up to B.
+const SHOWABLE_LEVELS = new Set(['B', 'C'])
 
 function text(value, max = TITLE_MAX) {
   if (typeof value !== 'string') return null
@@ -54,10 +57,11 @@ const ASK_MESSAGES = {
 /**
  * @param gtd runs gtd.py (src/gtd.mjs)
  * @param snapshot () => ({ workers: [{ name, sessionId, kind, state, done, total, tasks, orcaPath }],
- *   asks: [{ id, sha, kind, worker, question, options, suggestions, recommended }] })
+ *   asks: [{ id, sha, kind, worker, question, options, suggestions, recommended }], orchestrator:
+ *   the orchestrator's cards as the panel shows them (src/desk-asks.mjs) })
  * @param openFile (absolutePath) => Promise<boolean>, in Orca's editor
  * @param focusWorker (worker summary) => Promise<{ focused, reason? }>
- * @param answerAsk ({ id, sha, choice }) => Promise<{ ok, reason? }>
+ * @param answerAsk ({ id, sha, choice, text?, confirmed? }) => Promise<{ ok, reason?, message? }>
  */
 export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
   const gtdRoot = join(hubRoot, 'gtd')
@@ -105,9 +109,13 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     }
   }
 
+  // A worker's ask that holds information above level B is asked at the orchestrator, as on the panel:
+  // the desk shows neither its text nor its buttons.
+  const showable = (ask) => SHOWABLE_LEVELS.has(ask.level ?? 'B')
+
   function askCards(asks, worker) {
     return asks
-      .filter((ask) => ask.worker === worker && (ask.kind === 'decide' || ask.kind === 'next'))
+      .filter((ask) => ask.worker === worker && (ask.kind === 'decide' || ask.kind === 'next') && showable(ask))
       .map((ask) => ({
         id: ask.id,
         // The page sends it back, so that an answer is for the ask it showed.
@@ -121,7 +129,7 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
 
   async function state() {
     const { items, cases } = await read()
-    const { workers: list = [], asks = [] } = snapshot() ?? {}
+    const { workers: list = [], asks = [], orchestrator = [] } = snapshot() ?? {}
     const workers = new Map(list.filter((worker) => worker.name).map((worker) => [worker.name, worker]))
     const shown = items.items.map((item) => {
       const agent = agentOf(item, workers)
@@ -144,6 +152,8 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
         done: live.filter((item) => item.agent.state === 'done').length,
         attention: live.filter((item) => item.mine === 'ask').length
       },
+      // The orchestrator's questions, approvals and permission dialogs: the top of あなたの番.
+      orchestrator: deskOrchestratorCards(orchestrator),
       items: shown,
       cases: cases.cases ?? [],
       broken: items.broken ?? []
@@ -240,9 +250,13 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
       return write(['case-project', body.slug])
     },
     async answer(body) {
+      // The orchestrator's card first: its question, approval or permission dialog, answered the
+      // panel's way (the answer file, then a line that tells the orchestrator of it).
+      const forOrchestrator = orchestratorAnswer(body, snapshot()?.orchestrator ?? [])
+      if (forOrchestrator) return orchestratorResult(await answerAsk(forOrchestrator))
       if (!Number.isInteger(body.choice) || body.choice < 1) throw bad('答えの番号が違う')
-      // Only a worker's question or its next steps: never the orchestrator's permission dialogs.
-      const ask = (snapshot()?.asks ?? []).find((candidate) => candidate.id === body.askId && (candidate.kind === 'decide' || candidate.kind === 'next'))
+      // A worker's question or its next steps.
+      const ask = (snapshot()?.asks ?? []).find((candidate) => candidate.id === body.askId && (candidate.kind === 'decide' || candidate.kind === 'next') && showable(candidate))
       if (!ask) throw new DeskError(409, '問いが見つからない（もう答えたか、閉じた）')
       if (body.sha !== undefined && body.sha !== ask.sha) throw new DeskError(409, ASK_MESSAGES.stale)
       const result = await answerAsk({ id: ask.id, sha: ask.sha, choice: body.choice })
@@ -323,7 +337,9 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
   /** What the panel and the status bar show: the counts, or null before the first read. */
   async function counts() {
     const shown = await state()
-    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents }
+    // `orchestrator`: the orchestrator's cards that wait on the user (a permission lapses to the
+    // terminal in a few minutes, so the status bar shows them first).
+    return { ...shown.counts, migrate: shown.migrate, agents: shown.agents, orchestrator: waitingCount(snapshot()?.orchestrator ?? []) }
   }
 
   return { handlers, state, counts, start, stop, changed, recordOnce, fileOf }

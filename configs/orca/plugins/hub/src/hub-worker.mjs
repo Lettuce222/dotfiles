@@ -73,6 +73,9 @@ export function createHubWorker({
   now = Date.now,
   watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange),
   delivery = null,
+  // Called when the orchestrator's cards change (a new one, one pressed, answered or gone), so that
+  // the desk and the status bar show them at once rather than at their next poll.
+  onOrchestratorAsks = () => {},
   readCases = () => readCasesJson(resolvePython(home), casesScriptOf(home), { AGENT_ORCHESTRATOR_HOME: hubRoot })
 }) {
   const asksDir = asksDirOf(hubRoot)
@@ -92,6 +95,10 @@ export function createHubWorker({
       readJob
     })
   let asks = []
+  // The orchestrator's cards as the panel shows them (permissions, questions, kept answers), for the
+  // desk too, and what they were the last time onOrchestratorAsks was called.
+  let orchestratorCards = []
+  let orchestratorSeen = '[]'
   // Asks being answered, with the answer pressed: their cards show it as being delivered, and a
   // second press does nothing. Asks whose answer could not be delivered, with why, until pressed again.
   const pressed = new Map()
@@ -366,6 +373,16 @@ export function createHubWorker({
       ...[...unsignaled.values()].map((entry) => ({ ...entry, kept: true })),
       ...asks.filter((ask) => ask.kind === 'question').map(shownAsk)
     ]
+    orchestratorCards = orchestratorAsks
+    const seen = JSON.stringify(orchestratorAsks.map((card) => [card.id, card.sha ?? null, card.pressed ?? null, card.failure ?? null, Boolean(card.kept), card.check?.ok ?? null]))
+    if (seen !== orchestratorSeen) {
+      orchestratorSeen = seen
+      try {
+        onOrchestratorAsks(orchestratorAsks)
+      } catch (error) {
+        orca.log(`hub: could not tell of the orchestrator's cards: ${error.message}`)
+      }
+    }
     // While the orchestrator waits on the panel, its menu is not up: no card that types into it.
     const shownOffers = permissions.length > 0 ? offers.filter((offer) => !(offer.kind === 'permission' && resolve(offer.path ?? '') === resolve(hubRoot))) : offers
     publish(renderHub(withDesk(buildHubModel(sessions, lists, agents, { home, focusedPath: workspace?.path ?? null, now: now(), cards, orchestratorAsks, focused: workspace, offers: shownOffers, orchestratorQuestion, projects: projects.map((project) => ({ ...project, sending: caseSending.get(project.slug) ?? null, failure: caseFailures.get(project.slug) ?? null })) }))))
@@ -638,9 +655,12 @@ export function createHubWorker({
     return started
   }
 
-  /** The sessions and asks the desk shows beside the items (src/desk.mjs). */
+  /**
+   * The sessions and asks the desk shows beside the items, and the orchestrator's cards it shows at
+   * the top of あなたの番 (src/desk.mjs).
+   */
   function snapshot() {
-    return { workers: summaries, asks }
+    return { workers: summaries, asks, orchestrator: orchestratorCards }
   }
 
   /** Opens a file of the hub (an item or its deliverable) in Orca's editor, in the workspace that holds it. */

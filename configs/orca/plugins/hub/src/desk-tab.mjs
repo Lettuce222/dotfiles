@@ -15,7 +15,8 @@ export function pageIdOf(tab) {
   return typeof page === 'string' && page.length > 0 ? page : null
 }
 
-const DESK_TITLE = 'デスク'
+// The desk's title, with how many cards of the orchestrator wait in front: `(2) デスク`.
+const DESK_TITLE = /^(\(\d+\) )?デスク$/
 const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d+\//
 
 /**
@@ -27,7 +28,7 @@ const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d+\//
 export function findDeskTab(tabs, origin) {
   const listed = (Array.isArray(tabs) ? tabs : []).filter((tab) => typeof tab?.url === 'string' && pageIdOf(tab))
   const pick = (desks) => desks.find((tab) => tab.active) ?? desks.at(-1) ?? null
-  return pick(listed.filter((tab) => tab.url.startsWith(`${origin}/`))) ?? pick(listed.filter((tab) => LOOPBACK.test(tab.url) && tab.title === DESK_TITLE))
+  return pick(listed.filter((tab) => tab.url.startsWith(`${origin}/`))) ?? pick(listed.filter((tab) => LOOPBACK.test(tab.url) && DESK_TITLE.test(tab.title ?? '')))
 }
 
 /** Why a CLI call failed, in one line: the CLI's own error when it printed one, else the process's. */

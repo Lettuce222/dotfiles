@@ -14,6 +14,15 @@ export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 }
 
+// Characters that do not show, or turn text around, shown by their code point so nothing in a
+// question the user approves is hidden (the panel's cards and the desk's).
+const HIDDEN = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad]/g
+
+/** HTML with every character that does not show made visible. */
+export function reveal(html) {
+  return html.replace(HIDDEN, (c) => `<span class="hidden-char">⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩</span>`)
+}
+
 const FENCE = /^ {0,3}(`{3,}|~{3,})/
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/
 const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/

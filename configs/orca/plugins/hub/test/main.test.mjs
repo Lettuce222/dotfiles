@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import activate from '../main.mjs'
+import activate, { activateHub } from '../main.mjs'
 import { createLaunchHook, withTaskInstructions } from '../src/launch-hook.mjs'
 
 const root = join(import.meta.dirname, '..')
@@ -14,18 +14,28 @@ test('registers the commands and events declared in the manifest, and starts not
   const events = []
   const handlers = []
   const hooks = []
-  activate({
+  // startAfterMs null: the start a moment later (below) is left out, so nothing runs past this test.
+  activateHub({
     host: { call: () => assert.fail('activate must not call the host') },
     events: { on: (event) => events.push(event) },
     commands: { register: (id) => commands.push(id) },
     panels: { handle: (name) => handlers.push(name), post: () => assert.fail('activate must not post') },
     hooks: { on: (hook) => hooks.push(hook) },
     log: () => {}
-  })
+  }, { startAfterMs: null })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
   assert.deepEqual(handlers, ['view.get', 'workspace.open', 'report.open', 'ask.answer', 'session.send', 'next.send', 'case.act', 'desk.open'], 'no handler that writes an approval')
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
+})
+
+test('the worker starts by itself a moment after activate, so that the panel can stay closed', () => {
+  const source = readFileSync(join(root, 'main.mjs'), 'utf8')
+  assert.equal(activate.length, 1, 'Orca calls activate(orca)')
+  assert.match(source, /export default function activate\(orca\) \{\n  return activateHub\(orca\)\n\}/)
+  assert.match(source, /const START_AFTER_MS = 2_000/)
+  assert.match(source, /if \(startAfterMs !== null\) \{\n    setTimeout\(\(\) => \{\n      start\(\)/)
+  assert.match(source, /onOrchestratorAsks: \(\) => \{\n      deskServer\?\.notify\(\)\n      void showCounts\(\)/, 'a new card reaches the desk and the status bar at once')
 })
 
 test('a Claude launch gets the task tools and the instructions, and nothing else', () => {

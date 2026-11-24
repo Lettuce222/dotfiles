@@ -6,7 +6,7 @@
 // restart card and the list of what "the rest of this turn" allowed.
 
 import { CHOICES, latestAction } from './case-actions.mjs'
-import { plainText, renderInline, renderMarkdown } from './markdown.mjs'
+import { plainText, renderInline, renderMarkdown, reveal } from './markdown.mjs'
 
 const GOAL_MAX = 160
 const DETAIL_MAX = 160
@@ -177,7 +177,7 @@ function renderGroup(title, rows, className) {
 // The cards of the asks. Each shows the whole question or prompt, never cut, so a person decides
 // from the card alone; what an option or a step makes the worker do is written under its button.
 const CARD_KINDS = { decide: '判断', next: '次へ' }
-const CHECK_NOTES = {
+export const CHECK_NOTES = {
   identity: '依頼した worker を確かめられないので、答えのボタンは出しません。窓口で確かめてください。',
   level: 'レベル B より上の情報を含む依頼です。窓口で確かめてください。'
 }
@@ -218,7 +218,7 @@ function otherAnswer(card, name) {
 
 /** The ask inside its worker's row: the question in full and its answers, as orca-milestone's cards. */
 // Why an answer did not reach the worker, said in its row.
-const FAILURES = {
+export const FAILURES = {
   busy: 'worker が作業を終えないので、届けられませんでした。もう一度押してください。',
   stale: 'この依頼は、カードを出したあとに変わりました。出し直した選択肢を見てください。',
   answered: 'ほかの場所（窓口）でもう答えています。',
@@ -275,7 +275,7 @@ function renderCards(cards) {
 }
 
 const PROMPT_LINES_MAX = 300
-const RISK_LABELS = { read: '読むだけ', write: '書き換える', outside: '外に出る' }
+export const RISK_LABELS = { read: '読むだけ', write: '書き換える', outside: '外に出る' }
 const AGENT_LABELS = { working: '作業中', waiting: '入力待ち', idle: '待機中', background: '待機中（裏で実行中）', none: '' }
 
 function renderSession(session) {
@@ -334,13 +334,6 @@ function renderNext(offer) {
   return `<div class="next ${escape(offer.kind)}" data-key="${escape(`next\n${offer.id}`)}">${heading}${body}</div>`
 }
 
-// Characters that do not show, or turn text around, shown by their code point so nothing in a
-// question the user approves is hidden.
-const HIDDEN = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad]/g
-
-function reveal(html) {
-  return html.replace(HIDDEN, (c) => `<span class="hidden-char">⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩</span>`)
-}
 
 function visible(value) {
   return reveal(escape(value))
@@ -413,7 +406,7 @@ function renderOrchestratorAsk(card) {
   return `<div class="next orchestrator-question" data-key="${key}">${head}<ol class="actions">${options}${other}</ol>${failure}</div>`
 }
 
-const PERMISSION_NOTES = {
+export const PERMISSION_NOTES = {
   identity: '窓口のセッションを確かめられないので、ボタンは出しません。窓口のターミナルで答えてください。',
   expired: '期限が過ぎました。窓口のターミナルの確認で答えてください。'
 }

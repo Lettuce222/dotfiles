@@ -4,6 +4,7 @@
 import { renderMarkdown } from './markdown.mjs'
 import { TAB_KEYS, deskKey } from './keys.mjs'
 import { isFolded, stepRow, visibleRows as openRows, withFold } from './sections.mjs'
+import { PERMISSION_ORDER, alertHtml, askChips, askDetail, askTitle, askTitleHtml, timeLeft, waits } from './asks.mjs'
 
 // ---------------------------------------------------------------- token and small helpers
 // Orca opens the desk with its token in the address (?t=). The page keeps it in localStorage and
@@ -50,7 +51,7 @@ const AGENT_STATE = { working: ['c-run', '動いている'], attention: ['c-ask'
 const MOVE_TO = [['inbox', 'inbox', 'i'], ['next', '次の行動', 'n'], ['planned', 'プロジェクトのステップ（まだ）', 't'], ['waiting', '連絡待ち', 'w'], ['someday', 'いつか／たぶん', 's'], ['reference', '資料', 'r']]
 const CASE_TO = [['inbox', 'inbox', 'i'], ['next', '次の行動', 'n'], ['step', 'ステップ', 't'], ['waiting', '連絡待ち', 'w'], ['someday', 'いつか', 's'], ['reference', '資料', 'r'], ['gcal', 'Google Calendar に入れる', 'c'], ['drop', '移さない', '-']]
 
-let S = { today: '', rev: 0, counts: {}, migrate: { done: 0, total: 0 }, agents: {}, items: [], cases: [] }
+let S = { today: '', rev: 0, counts: {}, migrate: { done: 0, total: 0 }, agents: {}, orchestrator: [], items: [], cases: [] }
 let byId = {}
 // The desk is one screen: every list is a section of the left column, one under the other, and
 // the right column shows the selected item, or the migration. `cur` is the section of the selected
@@ -81,8 +82,10 @@ function writeHash() {
 // ---------------------------------------------------------------- derived lists
 const isMine = (t) => t.mine != null
 const isAgent = (t) => t.actor === 'agent' || Boolean(t.worker)
+// The orchestrator's cards (src/desk-asks.mjs) are the first rows of あなたの番.
+const askRows = () => (S.orchestrator ?? []).map((card) => ({ id: `ask-${card.id}`, title: askTitle(card), card }))
 function inList(name) {
-  if (name === 'mine') return S.items.filter(isMine)
+  if (name === 'mine') return [...askRows(), ...S.items.filter(isMine)]
   return S.items.filter((t) => t.list === name)
 }
 function ordered(name) {
@@ -147,7 +150,15 @@ function renderNav() {
   $('agents').textContent = `エージェント: 動いている ${a.working ?? 0}・完了 ${a.done ?? 0}・あなた待ち ${a.attention ?? 0}`
 }
 
+function askRowHtml(t, sec) {
+  const on = t.id === sel && sec === cur && pane === 'list'
+  return `<div class="row ask-row ${on ? 'sel' : ''} ${waits(t.card) ? 'waits' : ''}" data-id="${esc(t.id)}" data-sec="${sec}"><span class="check"></span>
+    <div><div class="title">${askTitleHtml(t.card)}</div></div>
+    <div class="chips">${askChips(t.card, Date.now())}</div></div>`
+}
+
 function rowHtml(t, sec) {
+  if (t.card) return askRowHtml(t, sec)
   const meta = []
   if (t.list === 'waiting') {
     meta.push(`相手: ${esc(t.who ?? '')}`, `渡した日: ${esc(mmdd(t.since ?? ''))}`)
@@ -170,7 +181,11 @@ function sectionHtml(k, label, i) {
   const head = `<button class="sec-head ${shut ? 'shut' : ''} ${k === cur && pane === 'list' ? 'cur' : ''}" data-fold="${k}"><span class="tw">${n ? (shut ? '▸' : '▾') : ''}</span><kbd>${TAB_KEYS[i]}</kbd><b>${label}</b><span class="n ${k === 'mine' && n ? 'hot' : ''}">${n}</span>${n && !shut ? `<span class="hint">${HINTS[k]}</span>` : ''}</button>`
   if (shut || !n) return `<section class="sec ${n ? '' : 'is-empty'}" data-sec="${k}">${head}</section>`
   let body
-  if (k === 'next') {
+  if (k === 'mine' && rows.some((t) => t.card)) {
+    const cards = rows.filter((t) => t.card)
+    const items = rows.filter((t) => !t.card)
+    body = `<div class="group">窓口が待っている（${cards.length}）・<kbd>⇧Q</kbd>〜<kbd>⇧R</kbd> で答える</div>${cards.map((t) => rowHtml(t, k)).join('')}${items.length ? `<div class="group">項目（${items.length}）</div>${items.map((t) => rowHtml(t, k)).join('')}` : ''}`
+  } else if (k === 'next') {
     const mineRows = rows.filter((t) => !isAgent(t) || t.actor === 'me')
     const ag = rows.filter((t) => isAgent(t) && t.actor !== 'me')
     body = `${mineRows.length ? `<div class="group">自分（${mineRows.length}）</div>${mineRows.map((t) => rowHtml(t, k)).join('')}` : ''}${ag.length ? `<div class="group">エージェント（${ag.length}）・押すと Orca のエージェントの画面も切り替わる</div>${ag.map((t) => rowHtml(t, k)).join('')}` : ''}`
@@ -213,10 +228,28 @@ function askCard(a) {
   return `<div class="card ask"><h3>${esc(a.kind === 'approval' ? '承認' : '要判断')}: ${esc(a.question)}</h3>${opts}<div class="note">押した答えは worker に「承認ではありません」付きで届く。</div></div>`
 }
 
+// The id of a dangerous permission pressed once: the second press allows it.
+let armed = null
+
+function renderAskDetail(d, card) {
+  const typed = d.querySelector('[data-oa-text]')
+  const keep = typed?.dataset.oaText === card.id ? { value: typed.value, focused: document.activeElement === typed } : null
+  d.innerHTML = askDetail(card, { now: Date.now(), armed })
+  d.querySelectorAll('[data-oa]').forEach((b) => { b.onclick = () => answerCard(card, card.kind === 'permission' ? b.dataset.choice : Number(b.dataset.choice)) })
+  d.querySelectorAll('[data-oa-send]').forEach((b) => { b.onclick = () => sendWritten(card) })
+  const area = d.querySelector('[data-oa-text]')
+  if (area && keep) {
+    // A redraw while writing keeps what was written.
+    area.value = keep.value
+    if (keep.focused) area.focus()
+  }
+}
+
 function renderDetail() {
   const d = $('detail')
   const t = byId[sel]
   if (!t) { d.innerHTML = '<p class="empty">項目を選んでください</p>'; return }
+  if (t.card) { renderAskDetail(d, t.card); return }
   let left = ''
   if (t.asks?.length) left += t.asks.map((a, i) => askCard(a)).join('')
   if (t.agent) {
@@ -285,6 +318,23 @@ function renderMigrate() {
 }
 
 // ---------------------------------------------------------------- screens
+/** The tab's title and the strip at the top: how many cards of the orchestrator wait on the user. */
+function renderAlert() {
+  const waiting = (S.orchestrator ?? []).filter(waits).length
+  document.title = waiting ? `(${waiting}) デスク` : 'デスク'
+  const el = $('alert')
+  el.innerHTML = alertHtml(S.orchestrator ?? [], Date.now())
+  el.hidden = !waiting
+  el.querySelector('[data-alert]')?.addEventListener('click', () => showList('mine'))
+}
+// The time left of a permission, every second, without drawing the rest again.
+setInterval(() => {
+  const now = Date.now()
+  document.querySelectorAll('[data-expires]').forEach((el) => {
+    el.textContent = `${el.dataset.prefix ?? ''}${timeLeft(Number(el.dataset.expires), now)}${el.dataset.suffix ?? ''}`
+  })
+}, 1000)
+
 function render() {
   const migrating = pane === 'migrate'
   $('detail').classList.toggle('on', !migrating)
@@ -302,6 +352,7 @@ function render() {
     lastIdx = Math.max(0, ordered(cur).findIndex((t) => t.id === sel))
   }
   renderNav()
+  renderAlert()
   renderItems()
   if (migrating) renderMigrate()
   else renderDetail()
@@ -349,7 +400,8 @@ async function load() {
   if (r.status === 401 || r.status === 403) { toast(STALE, 1e9); return }
   if (!r.json || !Array.isArray(r.json.items)) { toast('state を読めなかった'); return }
   S = { ...S, ...r.json }
-  byId = Object.fromEntries(S.items.map((t) => [t.id, t]))
+  byId = Object.fromEntries([...S.items, ...askRows()].map((t) => [t.id, t]))
+  if (armed && !(S.orchestrator ?? []).some((card) => card.id === armed)) armed = null
   render()
 }
 
@@ -410,9 +462,40 @@ async function answer(askId, choice) {
   const j = await write('/api/answer', { askId, choice, sha: shown?.sha })
   if (j) toast('答えを worker に送った（承認ではない）')
 }
+// An answer to the orchestrator's card: an option's number, or for a permission allow, deny, a
+// reason (written below) or the terminal. A dangerous allow is pressed twice.
+async function answerCard(card, pick) {
+  if (!card.ready || card.pressed !== null) return
+  if (pick === 'reason') { $('detail').querySelector('[data-oa-text]')?.focus(); return }
+  if (card.kind === 'permission') {
+    if (!PERMISSION_ORDER.includes(pick)) return
+    if (pick === 'allow' && !card.canAllow) { toast('外に出る操作は、デスクでは許可できない。窓口のターミナルで確かめてください'); return }
+    if (pick === 'allow' && card.dangerous && armed !== card.id) {
+      armed = card.id
+      renderDetail()
+      toast('危険なコマンドです。もう一度押すと許可します')
+      return
+    }
+  } else if (!Number.isInteger(pick) || pick < 1 || pick > card.options.length) return
+  const confirmed = pick === 'allow' && card.dangerous
+  armed = null
+  const j = await write('/api/answer', { askId: card.id, sha: card.sha, choice: pick, ...(confirmed ? { confirmed: true } : {}) })
+  if (j) toast(j.kept ? esc(j.message ?? '答えは残しました') : '窓口に返した')
+}
+async function sendWritten(card) {
+  const area = $('detail').querySelector('[data-oa-text]')
+  const text = area?.value.trim()
+  if (!text) { area?.focus(); return }
+  const j = await write('/api/answer', { askId: card.id, sha: card.sha, text })
+  if (!j) return
+  if (area) area.value = ''
+  toast(j.kept ? esc(j.message ?? '答えは残しました') : card.kind === 'permission' ? '理由を添えて拒否した' : '書いた答えを窓口に返した')
+}
+
 function act(name) {
   const t = byId[sel]
   if (!t) return
+  if (t.card) { toast('窓口の問いには、<kbd>⇧Q</kbd>〜<kbd>⇧R</kbd> か <kbd>Enter</kbd>（書いて答える）を使ってください'); return }
   if (name === 'open') openItem(t.id)
   else if (name === 'deliv') { if (t.deliverables?.length) openItem(t.id, t.deliverables[0]); else toast('成果物はまだ無い') }
   else if (name === 'move') openMenu(t)
@@ -492,6 +575,10 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); addInbox() } else if (e.key === 'Escape') e.target.blur()
     return
   }
+  if (e.target.tagName === 'TEXTAREA') {
+    if (e.key === 'Escape') e.target.blur()
+    return
+  }
   const t = byId[sel]
   const hit = deskKey(e, { pane: pane === 'migrate' ? 'migrate' : 'list', gPending, menuOpen: Boolean(menuFor), hasItem: Boolean(t), lists: LISTS, moveTo: MOVE_TO, caseTo: CASE_TO })
   gPending = false
@@ -508,10 +595,14 @@ document.addEventListener('keydown', (e) => {
     case 'migMove': return migMove(hit.delta)
     case 'fromCase': if (migKey) fromCase(migKey, hit.to); return
     case 'move': return move(hit.delta)
-    case 'focus': if (isAgent(t)) focusWorker(t); return
+    case 'focus':
+      if (t.card) { e.preventDefault(); $('detail').querySelector('[data-oa-text]')?.focus(); return }
+      if (isAgent(t)) focusWorker(t)
+      return
     case 'act': return act(hit.act)
     case 'answer': {
       e.preventDefault()
+      if (t.card) { answerCard(t.card, t.card.kind === 'permission' ? PERMISSION_ORDER[hit.choice - 1] : hit.choice); return }
       const a = t.asks?.[0]
       if (a?.options?.[hit.choice - 1]) answer(a.id, hit.choice)
       return
@@ -519,6 +610,12 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName !== 'TEXTAREA' || !e.target.dataset.oaText || e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.isComposing) return
+  e.preventDefault()
+  const card = (S.orchestrator ?? []).find((c) => c.id === e.target.dataset.oaText)
+  if (card) sendWritten(card)
+})
 window.addEventListener('hashchange', () => {
   parseHash()
   render()

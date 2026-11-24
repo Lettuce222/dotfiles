@@ -143,7 +143,7 @@ test('the page and its scripts come with a strict policy and need no token, sinc
     assert.ok(!html.includes(token), 'the page never holds the token')
   }
   assert.equal((await api('/api/state', undefined, { 'X-Desk-Token': '' })).status, 403, 'the data needs it')
-  for (const path of ['/desk.mjs', '/keys.mjs', '/sections.mjs', '/desk.css', '/markdown.mjs']) {
+  for (const path of ['/desk.mjs', '/keys.mjs', '/sections.mjs', '/asks.mjs', '/desk.css', '/markdown.mjs']) {
     const res = await fetch(base + path)
     assert.equal(res.status, 200, path)
     assert.equal(res.headers.get('access-control-allow-origin'), null)

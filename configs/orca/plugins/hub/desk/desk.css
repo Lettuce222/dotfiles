@@ -154,3 +154,22 @@
   .sec-head.shut b, .sec.is-empty .sec-head b { font-weight: 500; color: var(--muted); }
   .sec.is-empty .sec-head { padding: 1px 4px; }
   .sec .row { margin-left: 10px; }
+
+  /* the orchestrator's cards: the strip at the top, their rows and the card on the right */
+  .alert { flex: none; padding: 4px 10px; background: var(--orange); }
+  .alert[hidden] { display: none; }
+  .alert-go { border: 0; background: none; color: #fff; font-weight: 600; width: 100%; text-align: left; padding: 0; }
+  .alert-go kbd { background: transparent; color: #fff; border-color: #ffffffaa; }
+  .row.ask-row.waits { border-color: var(--orange); background: #fff8f2; }
+  .row.ask-row.waits.sel { background: var(--sel); }
+  .card.ask .q { font-size: 13.5px; }
+  .card.ask .opt kbd { margin-right: 2px; }
+  .opt.armed { border-color: var(--red); background: #ffebe9; }
+  .preview { white-space: pre-wrap; word-break: break-all; font: 12px ui-monospace, Menlo, monospace; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin: 2px 0 6px; max-height: 40vh; overflow: auto; }
+  .deadline { color: var(--red); font-weight: 600; font-size: 12.5px; }
+  .status { font-size: 12px; color: var(--blue); }
+  .status.bad { color: var(--red); }
+  .written { margin-top: 6px; display: grid; gap: 4px; }
+  .written textarea { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; resize: vertical; }
+  .written .btn { justify-self: start; }
+  .hidden-char { color: var(--red); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }

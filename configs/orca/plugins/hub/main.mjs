@@ -1,11 +1,15 @@
 // Orca plugin worker entry for Hub (local). Two parts:
-// - the panel (right sidebar): the orchestrator's permission dialogs and questions as cards, the way
+// - the panel (right sidebar, optional): the orchestrator's permission dialogs and questions as cards, the way
 //   into the desk with how many items wait, and on demand the view from before hub v2 (every Claude
 //   Code session with its goal and progress, and the cases). A pressed answer, or a line written to a
 //   worker, resumes that worker with the text (src/deliver.mjs). It never answers a permission
 //   through a hook and never writes an approval;
 // - the desk (hub v2): one page served on 127.0.0.1 with a token made at each start, opened in a
 //   browser tab of Orca (src/desk-server.mjs, src/desk.mjs, desk/). Its writes are gtd.py commands.
+//   It shows the orchestrator's cards too, at the top of あなたの番, and answers them the panel's
+//   way, so that the panel can stay closed; the status bar shows how many wait.
+// Nothing here needs the panel open: Orca starts this worker with Orca and keeps it running (it has
+// a status bar item and a hook), and the worker starts watching a moment after it is activated.
 //
 // Adapted from andoshin11/orca-milestone main.mjs (MIT, see LICENSE and NOTICE.md).
 import { homedir } from 'node:os'
@@ -28,8 +32,15 @@ const COUNTS_MS = 10_000
 // The desk's port, tried first at each start: a desk tab left open (Orca keeps it across restarts
 // and plugin updates) then still reaches the server, and opening the desk again loads it anew.
 const DESK_PORT = 47615
+// How long after activate the worker starts watching by itself: activate itself only registers.
+const START_AFTER_MS = 2_000
 
 export default function activate(orca) {
+  return activateHub(orca)
+}
+
+/** @param startAfterMs when the worker starts by itself after activate; null: only on a call or an event. */
+export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
   const home = homedir()
   // The same folder the orchestrator scripts use (AGENT_ORCHESTRATOR_HOME, else ~/hub).
   const hubRoot = process.env.AGENT_ORCHESTRATOR_HOME || join(home, 'hub')
@@ -38,7 +49,12 @@ export default function activate(orca) {
     home,
     hubRoot,
     cli: resolveOrcaCli(),
-    claudeCli: resolveClaudeCli(home)
+    claudeCli: resolveClaudeCli(home),
+    // A new card of the orchestrator, or one answered: the desk and the status bar show it at once.
+    onOrchestratorAsks: () => {
+      deskServer?.notify()
+      void showCounts()
+    }
   })
 
   // The desk starts with the worker's first call, never in activate.
@@ -57,10 +73,15 @@ export default function activate(orca) {
     try {
       const counts = await desk.counts()
       worker.setDeskCounts(counts)
-      const text = `デスク あなたの番 ${counts.mine}・inbox ${counts.inbox}`
-      if (text !== lastStatus) {
-        lastStatus = text
-        await orca.host.call('statusBar.update', { id: STATUS_ID, text, tone: counts.mine ? 'warning' : 'neutral', tooltip: 'hub のデスクを開く' }).catch(() => {})
+      // The orchestrator's cards first: a permission goes back to the terminal in a few minutes.
+      const waiting = counts.orchestrator ?? 0
+      const text = waiting ? `デスク 窓口が待っている ${waiting}・あなたの番 ${counts.mine}` : `デスク あなたの番 ${counts.mine}・inbox ${counts.inbox}`
+      const tone = waiting ? 'danger' : counts.mine ? 'warning' : 'neutral'
+      const status = `${text}\n${tone}`
+      if (status !== lastStatus) {
+        lastStatus = status
+        const tooltip = waiting ? '窓口が答えを待っています。デスクで答える' : 'hub のデスクを開く'
+        await orca.host.call('statusBar.update', { id: STATUS_ID, text, tone, tooltip }).catch(() => {})
       }
     } catch (error) {
       worker.setDeskCounts({ error: error.message })
@@ -146,4 +167,11 @@ export default function activate(orca) {
     await start()
     worker.schedule(true)
   })
+  // The panel may stay closed: the worker starts watching the asks and serving the desk by itself,
+  // so a permission dialog of the orchestrator shows on the desk before any event or request.
+  if (startAfterMs !== null) {
+    setTimeout(() => {
+      start().catch((error) => orca.log(`hub: could not start: ${error.message}`))
+    }, startAfterMs).unref?.()
+  }
 }

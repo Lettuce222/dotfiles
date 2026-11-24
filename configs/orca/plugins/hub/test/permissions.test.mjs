@@ -98,7 +98,7 @@ test('pressing sends the word; allowing a dangerous command takes a second press
   assert.deepEqual(press(danger, pick('allow'), 2).calls, [['ask.answer', { id: '20261120-153012-1a2b3c4d', sha: 'a'.repeat(64), choice: 'allow', confirmed: true }]])
 })
 
-async function hubWith(raw, { offers = [] } = {}) {
+async function hubWith(raw, { offers = [], onOrchestratorAsks = () => {} } = {}) {
   const home = await makeHome()
   const hubRoot = join(home, 'hub')
   const dir = join(hubRoot, 'state', 'asks')
@@ -119,7 +119,7 @@ async function hubWith(raw, { offers = [] } = {}) {
     home, hubRoot, cli: 'orca', now: () => NOW * 1000 + 1000,
     runCli: async () => assert.fail('nothing is typed into the orchestrator'),
     readOrca: async () => ({ active: { path: hubRoot, displayName: 'hub', agentStates: ['waiting'], background: false }, agents: [], offers: offers.map((offer) => ({ ...offer, path: offer.path ?? hubRoot })) }),
-    readClaude: async () => [ORCH], watchDir: () => {}, delivery, readCases: async () => []
+    readClaude: async () => [ORCH], watchDir: () => {}, delivery, readCases: async () => [], onOrchestratorAsks
   })
   return { hub, calls, sha: sha256(Buffer.from(bytes)), dir, posted }
 }
@@ -159,4 +159,19 @@ test("while a permission waits on the panel, the orchestrator's menu gets no car
   const before = await hubWith(permission({ expires_at: NOW }), { offers: [offer] })
   await before.hub.refresh(true)
   assert.ok(before.posted.at(-1).html.includes('data-next="o1"'))
+})
+
+test('the desk gets the orchestrator\'s cards and is told at once when they change, with no panel open', async () => {
+  const told = []
+  const { hub, sha, dir } = await hubWith(permission(), { onOrchestratorAsks: (cards) => told.push(cards.map((c) => [c.kind, c.pressed])) })
+  await hub.refresh(true)
+  assert.deepEqual(told, [[['permission', null]]], 'a new card')
+  assert.deepEqual(hub.snapshot().orchestrator.map((c) => [c.id, c.sha]), [[permission().id, sha]])
+  await hub.refresh(true)
+  assert.equal(told.length, 1, 'nothing new: not told again')
+  assert.deepEqual(await hub.answerAsk({ id: permission().id, sha, choice: 'deny' }), { ok: true })
+  // asks.py writes the answer file (faked here), and the card goes.
+  await writeFile(join(dir, `${permission().id}.answer.json`), '{}')
+  await hub.refresh(true)
+  assert.deepEqual(told.at(-1), [], 'the answered card is gone, and the desk is told')
 })
