@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""窓口（orchestrator）の案件の一覧（ケースボード）を扱うスクリプト。
+"""窓口（orchestrator）の案件の一覧を扱うスクリプト。
 
 案件は 1 件 1 ファイルの Markdown で、案件のディレクトリ（既定は
 ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）に置く。
@@ -34,13 +34,6 @@ ${AGENT_ORCHESTRATOR_HOME:-~/hub}/state/cases、AGENT_CASES_DIR で変える）�
 - 資料以外の 4 つの節に項目が無くなった案件は done/ に移す（sweep）。
 
 Usage:
-  cases.py board [--once] [--width N] [--height N] [--by-case]
-      worker の節（下の「worker の節」を参照）と、その下に全案件の TODO を急ぐ順に並べた一覧
-      （下の「TODO の一覧」を参照）と、案件の索引を描く。--by-case なら、TODO の一覧の代わりに
-      案件ごとに全部の節を描く（前の表示）。--once が無ければ、
-      ファイルの変化と端末の大きさの変化と worker の変化（WORKER_POLL 秒ごと）を見て描き直し続ける。
-      リンクは OSC 8 で出す（tmux の open-link.sh でクリックして開ける）。
-      このスクリプト自身が書き換わったら、自分を起動し直して新しいコードで描く。
   cases.py sweep [--dry-run]
       Waiting の項目のうち、GitHub の PR のリンクがすべて merge・close 済みのものと、
       予定の項目のうち、日付が今日より前のものを消す。
@@ -70,28 +63,7 @@ json の出力:
   workers は、案件のファイルにリンクのある作業場所（~/hub/workers/<名前>/、.claude/worktrees/<名前>）の名前。
   案件は、期日のある TODO・! の TODO・TODO・Waiting だけ、の順に並べる（同じならファイル名の順）。
 
-TODO の一覧:
-  全案件の TODO を 1 つの一覧にし、上から番号を付ける。並びは、期日のあるもの（早い順。期日が同じなら
-  `!` が先）→ `!` のもの → ほか。同じ順位なら案件のファイル名の順、案件の中は書いた順。
-  期日は、過ぎたもの・今日・明日をその言葉と色で目立たせ、ほかは `11/18（水）` の形で出す。
-  各項目に案件の印（略称、無ければ見出しを縮めたもの）を添え、案件のファイルへのリンクにする。
-  一覧の下の「案件」の節に、全案件を 1 行ずつ（見出しと、Waiting・Later・予定の件数）出す。見出しは
-  案件のファイルへのリンクで、クリックすると Waiting・Later・資料を含む全文が開く。
-  一覧の下の「予定」の節に、全案件の予定を日付の順に 1 行ずつ、薄い色で出す（番号は付けない）。
-  入りきらなければ、完了の worker、予定（1 行にまとめる）、案件の索引（1 行にまとめる）、
-  TODO の 2 行目から先（1 行で切る）、の順に畳み、それでも入らなければ末尾を切る。
-
-worker の節:
-  `claude agents --json --all` の background の worker を、1 つ 1〜2 行で出す（状態の印と名前・いまの作業）。
-  出すのは、確認ダイアログ・窓口の番・動いている・完了の worker だけ。stopped・failed などは出さず、出すものが無ければ節ごと出さない。
-  状態は名前の左の印と色だけで表し、状態の名前は出さない。
-  完了の worker は名前だけを出し、ペインに入りきらなければ最初に畳む。
-  窓口（AGENT_ORCHESTRATOR_NAME、既定は orchestrator）と見張り（chore-hub-watch）は出さない。
-  作業の説明は、ジョブの状態ファイル（${CLAUDE_CONFIG_DIR:-~/.claude}/jobs/<id>/state.json）の
-  needs（止まったとき）・detail を使い、無ければ起動時の依頼の先頭にする。
-  claude agents が失敗しても、案件の一覧はそのまま描く。
-
-gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh・claude だけで動かす。
+gh が失敗したら標準エラーに理由を出して終了コード 2 で終わる。Python の標準ライブラリと gh だけで動かす。
 """
 
 from __future__ import annotations
@@ -101,11 +73,8 @@ import datetime as dt
 import json
 import os
 import re
-import shutil
-import signal
 import subprocess
 import sys
-import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -299,13 +268,6 @@ def guess_date(month: int, day: int, today: dt.date) -> dt.date | None:
     return best
 
 
-@dataclass
-class Todo:
-    case: Case
-    text: str  # 期日と印を外した本文
-    due: dt.date | None
-    bang: bool
-    index: int  # 案件の中での順
 
 
 def todo_marks(text: str, today: dt.date) -> tuple[dt.date | None, bool, str]:
@@ -328,36 +290,10 @@ def todo_marks(text: str, today: dt.date) -> tuple[dt.date | None, bool, str]:
     return due, bang, rest
 
 
-def todos(cases: list[Case], today: dt.date) -> list[Todo]:
-    """全案件の TODO を急ぐ順に並べる。"""
-    out = []
-    for c in cases:
-        for i, it in enumerate(c.items(MINE)):
-            due, bang, text = todo_marks(it.text, today)
-            out.append(Todo(c, text, due, bang, i))
-
-    def key(t: Todo):
-        tier = 0 if t.due else 1 if t.bang else 2
-        return (tier, t.due or dt.date.max, not t.bang, t.case.slug, t.index)
-
-    return sorted(out, key=key)
 
 
-@dataclass
-class Event:
-    case: Case
-    text: str  # 日付を外した本文（` → ` のあとは外す）
-    date: dt.date | None
 
 
-def events(cases: list[Case], today: dt.date) -> list[Event]:
-    """全案件の予定を日付の順に並べる。日付の無いものは最後。"""
-    out = []
-    for c in cases:
-        for it in c.items(SCHEDULE):
-            date, _, rest = todo_marks(it.text, today)
-            out.append(Event(c, split_next(rest)[0], date))
-    return sorted(out, key=lambda e: (e.date or dt.date.max, e.case.slug))
 
 
 def event_date(text: str, today: dt.date) -> dt.date | None:
@@ -565,86 +501,14 @@ def resolve(d: Path, slug: str, needle: str, section: str = WAITING) -> dict:
 
 # ---------------------------------------------------------------- board
 
-RESET = "\x1b[0m"
-BOLD = "\x1b[1m"
-STYLE = {
-    "title": "\x1b[1;38;2;192;202;245m",  # fg
-    MINE: "\x1b[1;38;2;224;175;104m",  # yellow
-    WAITING: "\x1b[1;38;2;125;207;255m",  # cyan
-    LATER: "\x1b[1;38;2;158;206;106m",  # green
-    SCHEDULE: "\x1b[3;38;2;86;95;137m",  # comment の斜体（こちらですることは無いので目立たせない）
-    REFS: "\x1b[38;2;86;95;137m",  # comment
-    "other": "\x1b[1;38;2;169;177;214m",
-    "text": "\x1b[38;2;169;177;214m",
-    "dim": "\x1b[38;2;86;95;137m",
-    "link": "\x1b[4;38;2;122;162;247m",
-    "code": "\x1b[38;2;187;154;247m",
-    "urgent": "\x1b[1;38;2;247;118;142m",  # red
-    "case": "\x1b[38;2;125;207;255m",  # cyan
-}
-LABEL = {MINE: "▶ TODO", WAITING: "◇ Waiting", LATER: "・Later", SCHEDULE: "◷ 予定", REFS: "資料"}
-
-# worker の状態ごとの (印, 色)。状態の名前は出さず、印と色だけで見分ける。
-# 答えを待って止まっている（確認ダイアログ・窓口の番）は TODO と、動いているは Waiting と、完了は Later の緑とそろえる。
-WORKER_STATE = {
-    "blocked": ("⏸", STYLE[MINE]),
-    "dialog": ("⏸", STYLE[MINE]),
-    "working": ("⟳", STYLE[WAITING]),
-    "done": ("✔", STYLE[LATER]),
-}
-WORKER_ORDER = ("dialog", "blocked", "working", "done")  # これ以外（stopped、failed など）は出さない
-WORKERS_TITLE = "worker"
-
-INLINE_RE = re.compile(
-    r"\[(?P<lt>[^\]]+)\]\((?P<lu>[^)\s]+)\)"  # [text](url)
-    r"|`(?P<code>[^`]+)`"
-    r"|\*\*(?P<bold>[^*]+)\*\*"
-    r"|(?P<url>https?://[^\s)]+)"
-    r"|(?P<ticket>\b[A-Z][A-Z0-9]+-\d+\b)"
-)
 
 
-def jira_base() -> str | None:
-    try:
-        conf = json.loads((home() / "pane.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    base = conf.get("jira") if isinstance(conf, dict) else None
-    return base if isinstance(base, str) and base else None
 
 
-def inline(text: str, style: str, jira: str | None) -> list[tuple[str, str, str | None]]:
-    """Markdown の行内を (文字列, 色, リンク先) の並びにする。"""
-    out: list[tuple[str, str, str | None]] = []
-    pos = 0
-    for m in INLINE_RE.finditer(text):
-        if m.start() > pos:
-            out.append((text[pos : m.start()], style, None))
-        if m.group("lt") is not None:
-            out.append((m.group("lt"), STYLE["link"], m.group("lu")))
-        elif m.group("code") is not None:
-            out.append((m.group("code"), STYLE["code"], None))
-        elif m.group("bold") is not None:
-            out.append((m.group("bold"), style + BOLD, None))
-        elif m.group("url") is not None:
-            url = m.group("url")
-            out.append((short_url(url), STYLE["link"], url))
-        elif jira:
-            out.append((m.group("ticket"), STYLE["link"], jira + m.group("ticket")))
-        else:
-            out.append((m.group("ticket"), style, None))
-        pos = m.end()
-    if pos < len(text):
-        out.append((text[pos:], style, None))
-    return out
 
 
-def short_url(url: str) -> str:
-    m = PR_RE.match(url)
-    if m:
-        return f"{m.group(2)}#{m.group(3)}"
-    rest = re.sub(r"^\w+://", "", url)
-    return rest if len(rest) <= 40 else rest[:39] + "…"
+
+
 
 
 def char_width(ch: str) -> int:
@@ -657,234 +521,41 @@ def text_width(s: str) -> int:
     return sum(char_width(c) for c in s)
 
 
-def wrap(segs, width: int, indent: int, hang: int) -> list[list[tuple[str, str, str | None]]]:
-    """文字単位で折り返す。1 行目は indent、2 行目からは hang だけ字下げする。"""
-    lines: list[list[tuple[str, str, str | None]]] = [[(" " * indent, "", None)]]
-    col = indent
-    for text, style, url in segs:
-        buf = ""
-        for ch in text:
-            w = char_width(ch)
-            if col + w > width and col > hang:
-                if buf:
-                    lines[-1].append((buf, style, url))
-                    buf = ""
-                lines.append([(" " * hang, "", None)])
-                col = hang
-                if ch == " ":
-                    continue
-            buf += ch
-            col += w
-        if buf:
-            lines[-1].append((buf, style, url))
-    return lines
 
 
-def paint(line: list[tuple[str, str, str | None]]) -> str:
-    out = []
-    for text, style, url in line:
-        if not text:
-            continue
-        s = f"{style}{text}{RESET}" if style else text
-        if url:
-            s = f"\x1b]8;;{url}\x1b\\{s}\x1b]8;;\x1b\\"
-        out.append(s)
-    return "".join(out)
 
 
-def sort_key(case: Case):
-    try:
-        mtime = case.path.stat().st_mtime
-    except OSError:
-        mtime = 0
-    return (0 if case.items(MINE) else 1, -mtime)
 
 
-def case_rows(cases: list[Case], width: int, jira: str | None, level: int):
-    """案件の部分の行。level が上がるほど畳む。
-    1: 資料を出さない  2: Later を件数だけにする  3: Waiting の ` → ` のあとを出さない
-    """
-    rows: list[list[tuple[str, str, str | None]]] = []
-    for i, c in enumerate(cases):
-        if i:
-            rows.append([])
-        rows.extend(wrap([(c.title, STYLE["title"], c.path.as_uri())], width, 0, 2))
-        for s in c.sections[1:]:
-            items = s.items
-            if not items:
-                continue
-            if s.name == REFS:
-                if level >= 1:
-                    continue
-                segs = [(LABEL[REFS] + ": ", STYLE[REFS], None)]
-                for j, it in enumerate(items):
-                    if j:
-                        segs.append((" / ", STYLE["dim"], None))
-                    segs.extend(inline(it.text, STYLE["dim"], jira))
-                rows.extend(wrap(segs, width, 1, 3))
-                continue
-            label = LABEL.get(s.name, s.name)
-            style = STYLE.get(s.name, STYLE["other"])
-            if s.name == LATER and level >= 2:
-                rows.append([(" ", "", None), (f"{label} {len(items)} 件", style, c.path.as_uri())])
-                continue
-            rows.append([(" ", "", None), (label, style, None)])
-            for it in items:
-                segs = [("• ", STYLE["dim"], None)]
-                text = it.text
-                wait, nxt = split_next(text) if s.name in NEXT_SECTIONS else (text, None)
-                segs.extend(inline(wait, STYLE["text"], jira))
-                if nxt and level < 3:
-                    segs.append((ARROW, STYLE["dim"], None))
-                    segs.extend(inline(nxt, STYLE["dim"], jira))
-                rows.extend(wrap(segs, width, 3, 5))
-    return rows
 
 
 # ---------------------------------------------------------------- worker
 
-WORKER_POLL = 5  # 秒。claude agents は 0.2 秒ほどで返るが、毎秒は呼ばない
-HIDDEN_WORKERS = ("chore-hub-watch",)
 
 
-@dataclass(frozen=True)
-class Worker:
-    name: str
-    state: str  # WORKER_STATE のキー
-    summary: str
-    cwd: str | None = None
-    started: int = 0
 
 
-def claude_dir() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
-def job_state(job_id: str | None) -> dict:
-    """ジョブの状態ファイル。Claude Code の内部のファイルなので、読めなければ空にする。"""
-    if not job_id or "/" in job_id:
-        return {}
-    try:
-        data = json.loads((claude_dir() / "jobs" / job_id / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
-def one_line(text) -> str:
-    return " ".join(text.split()) if isinstance(text, str) else ""
 
 
-def worker_summary(state: str, job: dict) -> str:
-    if state == "done":  # 完了は名前だけを出す
-        return ""
-    for key in ("needs", "detail") if state == "blocked" else ("detail",):
-        text = one_line(job.get(key))
-        if text:
-            return text
-    intent = one_line(job.get("intent"))
-    if intent.startswith("/"):  # 先頭のスキル（/agents-worker）は飛ばす
-        intent = intent.partition(" ")[2]
-    return intent
 
 
-def parse_workers(agents, job_state_fn=job_state) -> list[Worker]:
-    """`claude agents --json --all` の出力から、出す worker（WORKER_ORDER の状態のもの）を並べる。"""
-    hidden = {os.environ.get("AGENT_ORCHESTRATOR_NAME") or "orchestrator", *HIDDEN_WORKERS}
-    workers = []
-    for a in agents if isinstance(agents, list) else []:
-        if not isinstance(a, dict) or a.get("kind") != "background":
-            continue
-        name = a.get("name") or a.get("id") or "?"
-        if name in hidden:
-            continue
-        state = a.get("state") or a.get("status") or "?"
-        job = job_state_fn(a.get("id"))
-        summary = worker_summary(state, job)
-        if a.get("waitingFor"):
-            state = "dialog"
-            summary = f"{a['waitingFor']}: {summary}" if summary else a["waitingFor"]
-        if state not in WORKER_ORDER:
-            continue
-        started = a.get("startedAt")
-        workers.append(
-            Worker(name, state, summary, a.get("cwd"), started if isinstance(started, int) else 0)
-        )
-    rank = {s: i for i, s in enumerate(WORKER_ORDER)}
-    workers.sort(key=lambda t: (rank.get(t.state, len(rank)), -t.started))
-    return workers
 
 
-def fetch_workers() -> list[Worker] | None:
-    """いまの worker。claude agents が呼べなければ None。"""
-    claude = shutil.which("claude")
-    if not claude:
-        return None
-    try:
-        proc = subprocess.run(
-            [claude, "agents", "--json", "--all"], capture_output=True, text=True, timeout=10, check=False
-        )
-        if proc.returncode != 0:
-            return None
-        return parse_workers(json.loads(proc.stdout))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
 
 
-def clip(segs, width: int, indent: int) -> list[tuple[str, str, str | None]]:
-    """1 行に収まらなければ、末尾を「…」にして切る。"""
-    lines = wrap(segs, width, indent, indent)
-    if len(lines) == 1:
-        return lines[0]
-    line, col = [], 0
-    for text, style, url in lines[0]:
-        buf = ""
-        for ch in text:
-            if col + char_width(ch) > width - 1:
-                break
-            buf += ch
-            col += char_width(ch)
-        if buf:
-            line.append((buf, style, url))
-        if col >= width - 1 or len(buf) < len(text):
-            break
-    line.append(("…", STYLE["dim"], None))
-    return line
 
 
-def worker_rows(workers: list[Worker] | None, width: int, jira: str | None):
-    """worker の節の行。"""
-    if workers is None:
-        return [[(f"{WORKERS_TITLE}: claude agents を読めませんでした", STYLE["dim"], None)]]
-    if not workers:
-        return []
-    rows = [[(WORKERS_TITLE, STYLE["title"], None)]]
-    for t in workers:
-        mark, style = WORKER_STATE[t.state]
-        url = Path(t.cwd).as_uri() if t.cwd and t.cwd.startswith("/") else None
-        rows.append(
-            clip(
-                [
-                    (f"{mark} ", style, None),
-                    (t.name, STYLE["text"], url),
-                ],
-                width,
-                1,
-            )
-        )
-        if t.summary:
-            rows.append(clip(inline(t.summary, STYLE["dim"], jira), width, 3))
-    rows.append([])
-    return rows
 
 
-WEEKDAYS = "月火水木金土日"
 
 
 def current_date() -> dt.date:
     return dt.date.today()
 
-INDEX_TITLE = "案件"
 
 
 def shorten(text: str, width: int) -> str:
@@ -900,204 +571,22 @@ def shorten(text: str, width: int) -> str:
     return out.rstrip() + "…"
 
 
-def due_label(due: dt.date, today: dt.date) -> tuple[str, str]:
-    """期日の (出す文字列, 色)。過ぎたもの・今日・明日は言葉で出す。"""
-    days = (due - today).days
-    if days < 0:
-        return f"{due.month}/{due.day:02d} 過ぎ", STYLE["urgent"]
-    if days == 0:
-        return "今日", STYLE["urgent"]
-    if days == 1:
-        return "明日", STYLE[MINE]
-    return f"{due.month}/{due.day:02d}（{WEEKDAYS[due.weekday()]}）", STYLE["text"]
 
 
-def todo_rows(items: list[Todo], width: int, jira: str | None, today: dt.date, clipped: bool):
-    """TODO の一覧の行。clipped なら 1 項目を 1 行に切る。"""
-    rows = [[(LABEL[MINE], STYLE[MINE], None)]]
-    if not items:
-        rows.append([(" TODO はありません", STYLE["dim"], None)])
-        return rows
-    num_w = len(str(len(items)))
-    for n, t in enumerate(items, 1):
-        segs = [(f"{n:>{num_w}}. ", STYLE["dim"], None)]
-        if t.due:
-            label, style = due_label(t.due, today)
-            segs.append((label + " ", style, None))
-        if t.bang:
-            segs.append(("! ", STYLE["urgent"], None))
-        segs.append((f"[{t.case.short}]", STYLE["case"], t.case.path.as_uri()))
-        segs.append((" ", "", None))
-        segs.extend(inline(t.text, STYLE["text"], jira))
-        if clipped:
-            rows.append(clip(segs, width, 1))
-        else:
-            rows.extend(wrap(segs, width, 1, num_w + 3))
-    return rows
 
 
-def event_rows(items: list[Event], width: int, jira: str | None, today: dt.date, folded: bool):
-    """予定の行。目立たないよう薄い色で 1 行ずつ出す。folded なら件数と次の日付の 1 行にまとめる。"""
-    if not items:
-        return []
-    style = STYLE[SCHEDULE]
-    if folded:
-        nxt = next((e.date for e in items if e.date and e.date >= today), None)
-        tail = f"（次は {due_label(nxt, today)[0]}）" if nxt else ""
-        return [[(f"{LABEL[SCHEDULE]} {len(items)} 件{tail}", style, None)]]
-    rows = [[(LABEL[SCHEDULE], style, None)]]
-    for e in items:
-        segs = []
-        if e.date:
-            segs.append((due_label(e.date, today)[0] + " ", style, None))
-        segs.append((f"[{e.case.short}]", style, e.case.path.as_uri()))
-        segs.append((" ", "", None))
-        segs.extend(inline(e.text, style, jira))
-        rows.append(clip(segs, width, 1))
-    return rows
 
 
-def index_rows(cases: list[Case], d: Path, width: int, folded: bool):
-    """案件の索引。見出しは案件のファイルへのリンク。folded なら 1 行にまとめる。"""
-    if not cases:
-        return []
-    if folded:
-        return [[(f"{INDEX_TITLE} {len(cases)} 件", STYLE["title"], d.as_uri() if d.is_dir() else None)]]
-    rows = [[(INDEX_TITLE, STYLE["title"], None)]]
-    for c in sorted(cases, key=lambda c: c.slug):
-        counts = []
-        for name, mark in ((WAITING, "◇"), (LATER, "・"), (SCHEDULE, "◷")):
-            k = len(c.items(name))
-            if k:
-                counts.append((f" {mark}{k}", STYLE[name], None))
-        rows.append(clip([(c.title, STYLE["text"], c.path.as_uri()), *counts], width, 1))
-    return rows
 
 
-def render(
-    d: Path,
-    width: int,
-    height: int,
-    workers: list[Worker] | None = (),
-    by_case: bool = False,
-    today: dt.date | None = None,
-) -> list[str]:
-    """worker の節と、TODO の一覧と案件の索引（by_case なら案件ごとの一覧）を描く。区切り線は出さない。
-    出す worker が無ければ worker の節を出さない。workers が None なのは読めなかったとき。"""
-    width = max(width, 20)
-    jira = jira_base()
-    today = today or current_date()
-    cases = load_cases(d)
-    empty = [[("案件はありません", STYLE["dim"], None)]] if not cases else []
-    active = None if workers is None else [t for t in workers if t.state != "done"]
-
-    if by_case:
-        cases.sort(key=sort_key)
-        # 入りきらなければ、完了の worker、資料、Later、Waiting の次の手、の順に畳む。
-        layouts = [(workers, 0), *((active, level) for level in range(4))]
-
-        def build(level):
-            return case_rows(cases, width, jira, level)
-
-    else:
-        items = todos(cases, today)
-        sched = events(cases, today)
-        # 入りきらなければ、完了の worker、予定、案件の索引、TODO の 2 行目から先、の順に畳む。
-        layouts = [(workers, 0), (active, 0), (active, 1), (active, 2), (active, 3)]
-
-        def build(level):
-            if not cases:
-                return []
-            body = todo_rows(items, width, jira, today, clipped=level >= 3)
-            ev = event_rows(sched, width, jira, today, folded=level >= 1)
-            if ev:
-                body += [[]] + ev
-            return body + [[]] + index_rows(cases, d, width, folded=level >= 2)
-
-    for shown, level in layouts:
-        head = worker_rows(shown, width, jira) + empty
-        body = build(level)
-        if len(head) + len(body) <= height:
-            break
-    rows = head + body
-
-    if len(rows) > height:
-        hidden = len(rows) - (height - 1)
-        rows = rows[: height - 1]
-        rows.append([(f"… ほか {hidden} 行", STYLE["dim"], d.as_uri() if d.is_dir() else None)])
-    return [paint(r) for r in rows]
 
 
-def screen(lines: list[str]) -> str:
-    """画面全体を描く文字列。先に消さず行ごとに上書きして、ちらつかないようにする。"""
-    return "\x1b[H" + "\r\n".join(f"{line}\x1b[K" for line in lines) + "\x1b[J"
 
 
-def signature(d: Path) -> tuple:
-    sig = []
-    for p in [home() / "pane.json", *(sorted(d.glob("*.md")) if d.is_dir() else [])]:
-        try:
-            st = p.stat()
-            sig.append((str(p), st.st_mtime_ns, st.st_size))
-        except OSError:
-            pass
-    return tuple(sig)
 
 
-def code_signature() -> tuple | None:
-    """このスクリプト自身の状態。動いている board が古いコードのまま描き続けないように見る。"""
-    try:
-        st = Path(__file__).resolve().stat()
-    except OSError:
-        return None
-    return (st.st_mtime_ns, st.st_size)
 
 
-def board(d: Path, once: bool, width: int | None, height: int | None, by_case: bool = False, *, show_workers: bool = True) -> int:
-    def size():
-        ts = shutil.get_terminal_size((60, 30))
-        return width or ts.columns, height or ts.lines
-
-    if once:
-        w, h = size()
-        sys.stdout.write("\n".join(render(d, w, h, fetch_workers() if show_workers else [], by_case)) + "\n")
-        return 0
-
-    resized = [True]
-    signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
-    out = sys.stdout
-    out.write("\x1b[?25l")  # カーソルを隠す
-    last = None
-    code = seen = code_signature()
-    workers, polled = [], None
-    try:
-        while True:
-            now_code = code_signature()
-            # 書き換えの途中で読まないよう、変わったあと 1 秒落ち着いてから起動し直す。
-            if now_code is not None and now_code != code and now_code == seen:
-                out.write("\x1b[?25h")
-                out.flush()
-                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
-            seen = now_code
-            w, h = size()
-            if show_workers and (polled is None or time.monotonic() - polled >= WORKER_POLL):
-                workers, polled = fetch_workers(), time.monotonic()
-            key = (signature(d), w, h, workers, current_date())  # 日付が変わると期日の出し方が変わる
-            if key != last or resized[0]:
-                resized[0] = False
-                last = key
-                try:
-                    lines = render(d, w, h, workers, by_case)
-                except Exception as e:  # 描けなくてもペインは閉じない
-                    lines = [f"cases: 描けませんでした: {e}"]
-                out.write(screen(lines))
-                out.flush()
-            time.sleep(1)
-    except KeyboardInterrupt:
-        return 0
-    finally:
-        out.write("\x1b[?25h")
-        out.flush()
 
 
 # ---------------------------------------------------------------- main
@@ -1106,12 +595,6 @@ def board(d: Path, once: bool, width: int | None, height: int | None, by_case: b
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cases.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("board")
-    b.add_argument("--once", action="store_true")
-    b.add_argument("--width", type=int)
-    b.add_argument("--height", type=int)
-    b.add_argument("--by-case", action="store_true")
-    b.add_argument("--no-workers", action="store_true", help="Claude の worker 一覧を省く")
     s = sub.add_parser("sweep")
     s.add_argument("--dry-run", action="store_true")
     r = sub.add_parser("resolve")
@@ -1125,8 +608,6 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     d = cases_dir()
-    if args.cmd == "board":
-        return board(d, args.once, args.width, args.height, args.by_case, show_workers=not args.no_workers)
     if args.cmd == "sweep":
         try:
             actions = sweep(d, dry_run=args.dry_run)

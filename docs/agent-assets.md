@@ -195,19 +195,15 @@ Claude Code（2.1.322で確認）は、AskUserQuestionの選択肢のpreviewを�
 - 置き場所: `~/hub/state/cases/<案件>.md`（`AGENT_ORCHESTRATOR_HOME`か`AGENT_CASES_DIR`で変わる）。1案件1ファイルのMarkdown。中身は社内の文脈なのでdotfilesには置かない。dotfilesにあるのは形の決まり（`agents-orchestrator`の「案件の一覧」）とスクリプトだけ
 - 書く人: 窓口が、依頼を受けたとき、ユーザーの番やWaitingが生まれたとき、workerを片付ける前に書く。見張りは解けたWaitingを消すだけ
 - Waitingの項目は` → `のあとに、待ちが解けたらやることを書ける。解けると、そこが「TODO」に移る
-- 「TODO」の項目は、先頭に期日`[11/11]`と優先の印`!`を書ける。右のペインはこれで全案件のTODOを急ぐ順に並べる。見出しの次の行の`略称: <短い名前>`は、その一覧で添える案件の印になる
+- 「TODO」の項目は、先頭に期日`[11/11]`と優先の印`!`を書ける。`cases.py json`はこれでTODOを急ぐ順に並べる。見出しの次の行の`略称: <短い名前>`は、案件の短い名前（jsonの`short`）になる
 - 3つの節が空になった案件は`done/`に移す（消さない）
 
-`agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`・`claude`だけで動く。サブコマンドは次の3つ。
+`agents-orchestrator`の`scripts/cases.py`は、Pythonの標準ライブラリと`gh`だけで動く。案件の一覧を描く`board`は、hub v2でデスクに移ったので消した。サブコマンドは次の4つ。
 
-- `board`: workerの節の下に、全案件の「TODO」を1つにして急ぐ順に番号を付けた一覧と、案件の索引（1案件1行で、見出しとWaiting・Laterの件数）を描く。TODOの項目は先頭の期日（`[11/11]`、年は今日にいちばん近い年とみなす）と優先の印（`!`）で並べ、期日のあるもの（早い順、同じ日なら`!`が先）→`!`のもの→ほか（案件のファイル名の順、案件の中は書いた順）にする。期日は、過ぎたもの・今日・明日を言葉と色で出し、ほかは`11/18（水）`の形で出す。各項目の前に案件の印（見出しの次の行の`略称:`、無ければ見出しを縮めたもの）を出し、案件のファイルへのリンクにする。Waiting・Later・資料は、印か索引の見出しをクリックして開く案件のファイルで見る。入りきらないときは、完了のworker、索引（`案件 N 件`の1行にまとめる）、TODOの2行目から先（1項目1行に切る）、の順に畳み、それでも入らなければ末尾を切る。日付が変わったら描き直す。`--by-case`を付けると、前の表示（案件ごとに全部の節を描く）になる。前の表示は次のとおり。案件の一覧を描き（見出しや区切り線は出さず、workerの節が無ければ1行目から案件を並べる）、ファイルの変化（1秒ごとにmtimeを見る）と端末の大きさの変化で描き直す。fswatchなどに頼らないのでUbuntuでも同じに動く。リンクはOSC 8で出すので、tmuxの`open-link.sh`でクリックして開ける（`file://`のMarkdownはpopupのleaf、ほかのテキストはpopupのnvim、フォルダはFinder）。チケットID（`ABC-123`）は`~/hub/pane.json`の`jira`があればリンクにする。入りきらないときは、資料、Later、待ちが解けたあとの手、の順に畳み、それでも入らなければ末尾を切る。TODOがある案件を上に出す。案件の上に、workerの節（`worker`の1行のあと、1workerを状態の印と名前の1行と、いまの作業の1行で出す）を置く
-  - データは5秒ごとの`claude agents --json --all`。backgroundのworkerのうち、確認ダイアログ・窓口の番・動いている・完了のものだけを出す。`stopped`・`failed`などは出さず、出すものが1つも無ければ節ごと出さない。窓口（`AGENT_ORCHESTRATOR_NAME`、既定は`orchestrator`）と見張り（`chore-hub-watch`）は出さない。`claude rm`したworkerは出ない
-  - 状態は、確認ダイアログ（`waitingFor`がある）・窓口の番（`state`が`blocked`）・動いている・完了の順に並べる。状態の名前は出さず、名前の左の印と色だけで表す（確認ダイアログと窓口の番はTODOと同じ黄の`⏸`、動いているはWaitingと同じ水色の`⟳`、完了は緑の`✔`）。内容が変わったときだけ、画面を消さず上書きで描き直す。完了のworkerは名前だけを出す。印の凡例は出さない。名前は作業場所（`cwd`）のフォルダへのリンク
-  - いまの作業は、`claude agents`に要約の欄が無いので、ジョブの状態ファイル（`~/.claude/jobs/<id>/state.json`、`CLAUDE_CONFIG_DIR`で変わる）から取る。止まったときは`needs`、それ以外は`detail`（Claude Codeが付ける短い要約）。どれも無ければ起動時の依頼（`intent`）の先頭。Claude Codeの内部のファイルなので、読めなければ説明を出さないだけにする
-  - 1行に入らなければ末尾を`…`で切る。ペインに入りきらなければ完了のworkerを最初に畳み、それ以外のworkerの節は畳まない
-  - `claude agents`が失敗したら、workerの節を「claude agents を読めませんでした」の1行にして、案件はそのまま描く
 - `sweep`: Waitingのうち、` → `の前のPRがすべてmerge・close済みの項目を消し、` → `のあとを「TODO」に移す。したことと、残ったPR付きの項目の状態（`reviewDecision`など）をJSON Linesで出す。見張りが30分ごとに実行し、レビュー待ちが解けたかなどの判断は見張りがする
 - `resolve <案件> <行の一部>`: 1つの項目を消す。Waitingなら` → `のあとを「TODO」に移す
+- `json`: 全案件をJSONで出す。Hub (local)と`gtd.py`の移し替えが読む
+- `log <案件> <1行>`: 「資料」の節に1行足す。Hub (local)で答えたことを残す
 
 テストは`python3 -m unittest configs/agent/tests/test_cases.py`で実行する。
 

@@ -54,7 +54,7 @@ dotfiles/
 | --- | --- | --- |
 | 基本 | `mise`、`fish`、`git`、`gh` | ツールを入れ、シェルとGitの動きを決める |
 | 画面 | `ghostty`、`tmux`、`nvim`、`lazygit`、`hammerspoon`、`karabiner` | ターミナル、エディタ、ウィンドウ、キー |
-| AIエージェント | `agent`、`claude`、`textlint`、`orca` | Claude CodeとCodexの指示、案件ボード、Claudeの文面確認・worker |
+| AIエージェント | `agent`、`claude`、`textlint`、`orca` | Claude CodeとCodexの指示、案件の一覧、Claudeの文面確認・worker |
 
 最近の変更の大半はAIエージェントの層に入っている（2026年10月20日以降のコミットで変わったファイルの数は、`configs/agent`と`configs/tmux`がそれぞれ100前後、`docs/agent-assets.md`が47、ほかは1桁から十数）。`configs/tmux`の多くは、のちに消した前の窓口（hub）の分。
 
@@ -102,7 +102,7 @@ dotfiles/
 2. tmux（`configs/tmux/`）はprefixが`Ctrl-Space`。Ghosttyで押すとKarabiner（`configs/karabiner/`）が英数キーも送り、IMEをオフにする。`prefix g`でlazygit、`prefix e`でnvim、`prefix p`でPRのURLからworktreeを開く。
 3. Claude Codeは`configs/claude/settings.json`で動きが決まる。tmuxのウィンドウ名に状態の印（🟡作業中、🔴確認待ち、🟢終わった）を付けるhook、外に出る文面を止めるhook、textlintのhookがここで配線される。hookの本体は`configs/agent/hooks/`にある。
 4. `orchestrator`コマンド（`configs/fish/functions/orchestrator.fish`）で、今のターミナルに窓口（`claude -n orchestrator`）を開く。窓口は依頼ごとにbackgroundのworker（`claude --bg`）を起こし、見張りのworker`chore-hub-watch`が30分ごとにGitHubとSlackを読む。リポジトリを変えるworkerはそのリポジトリのworktreeで、ほかは`~/hub/workers/<worker名>/`で動く。決まりは`configs/agent/skills/`の`agents-orchestrator`・`agents-worker`・`agents-watch`の3つのskill。
-   Codexを選んだマシンでは`orchestrator-codex`にCodexと同じ案件ボードが開く。委任はCodexのサブエージェントを使う。
+   Codexを選んだマシンでは、`orchestrator`がCodexを窓口として開く。委任はCodexのサブエージェントを使う。
 5. 画面に出たリンク（OSC 8）をtmuxでクリックすると`configs/tmux/scripts/open-link.sh`が開く。`.md`はpopupのleaf、ほかのテキストはpopupのnvim、フォルダはFinder。
 6. ウィンドウの配置はHammerspoon（`configs/hammerspoon/`）が`Alt`系のキーで行う。
 
@@ -133,7 +133,7 @@ Claude CodeとCodexに読ませる指示・skill、Claude専用hook。配線と�
 
 | skill | いつ使うか | 付属のスクリプト |
 | --- | --- | --- |
-| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 案件の一覧の描画（`board`）、解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`）、資料に1行足す（`log`）、全案件のJSON（`json`、Hub (local)が読む）。`scripts/gtd.py`: hub v2の項目（`~/hub/gtd/items/<id>.md`、1項目1ファイルのfrontmatter付きMarkdown）の読み書き。`add`・`move`・`done`・`set`（読んだときのhash付き）・`assign`・`handback`・`note`・`step`（プロジェクトのステップと、済んだら次のplannedをnextにする繰り上げ）・`json`（デスクが読む）・`cases`と`from-case`・`case-project`（旧案件の1行を項目にし、元の行に「〔移した→id〕」を足す）・`sweep`・`lint`（本文の正規形）・`record`（記録係。人の変更は10分静かになってからまとめてコミットし、エージェントの書き込みは書く前に人の変更をまとめてからすぐコミットする） |
+| `configs/agent/skills/agents-orchestrator/` | 窓口が起動時に読む。依頼を自分で作業せずゴール単位でworkerに任せる、急ぎでない知らせを案件にためて聞かれたときにまとめて渡す、承認の要る操作、案件の一覧の書き方、用が済んだworkerを聞かずに`claude rm`で片付けて続きは新しいworkerに案件の資料から始めさせること | `scripts/cases.py`: 解けたWaitingの片付け（`sweep`）、1項目の解決（`resolve`）、資料に1行足す（`log`）、全案件のJSON（`json`、Hub (local)が読む）。`scripts/gtd.py`: hub v2の項目（`~/hub/gtd/items/<id>.md`、1項目1ファイルのfrontmatter付きMarkdown）の読み書き。`add`・`move`・`done`・`set`（読んだときのhash付き）・`assign`・`handback`・`note`・`step`（プロジェクトのステップと、済んだら次のplannedをnextにする繰り上げ）・`json`（デスクが読む）・`cases`と`from-case`・`case-project`（旧案件の1行を項目にし、元の行に「〔移した→id〕」を足す）・`sweep`・`lint`（本文の正規形）・`record`（記録係。人の変更は10分静かになってからまとめてコミットし、エージェントの書き込みは書く前に人の変更をまとめてからすぐコミットする） |
 | `configs/agent/skills/agents-worker/` | 窓口が起こしたworkerが読む。ゴールを通しで進め、取り消せる判断は推奨で決めて「決めたこと」にまとめること、報告の形（完了・要判断・送信の確認待ち・ブロック）、AskUserQuestionを使わないこと、署名つきのコミットの決まり（署名を外さず、止まったら報告する）、すぐ片付けられても続けられるよう報告と成果物を`~/hub/workers/<worker名>/report.md`に残すこと | なし |
 | `configs/agent/skills/agents-thread/` | `agents-worker`の古い名前。名前を変える前に起動したworkerや古い依頼の`/agents-thread`のために互換の別名として残し、読み込むと`agents-worker`に従わせる。動いているworkerが片付いたら消す | なし |
 | `configs/agent/skills/agents-watch/` | 見張りのworkerが30分ごとに読む。GitHubのレビュー依頼・自分のPRの動き、Slackのメンションを、急ぎかどうかを付けて窓口へ知らせる | `scripts/watch.py`: `gh api graphql`で読むだけ。知らせ済みの記録 |
