@@ -273,3 +273,49 @@
   .filterbar[hidden] { display: none; }
   .filterbar input { background: var(--soft); color: var(--fg); border: 1px solid var(--yellow); font: inherit; width: 40%; }
   .toast { background: var(--soft); color: var(--fg); border: 1px solid var(--line); }
+
+  /* ---------------------------------------------------------------- colors of the user's terminal
+     Ghostty's TokyoNight Storm, given out the way lazygit's default theme uses the terminal's
+     colors: the active frame green (palette 2) and bold, the other frames the default text color,
+     the selected line reversed (selectedLineBgColor: [reverse]), the key line blue (palette 4), a
+     search frame cyan (palette 6). The orchestrator's cards are yellow (palette 3), its answers blue.
+     No text is small or in palette 8. */
+  :root {
+    --bg: #24283b; --fg: #c0caf5; --muted: #a9b1d6; --line: #c0caf5; --rule: #414868; --soft: #1d202f; --sel: #364a82;
+    --focus: #9ece6a; --blue: #7aa2f7; --green: #9ece6a; --orange: #e0af68; --purple: #bb9af7; --red: #f7768e; --yellow: #e0af68; --cyan: #7dcfff;
+  }
+  body { font-size: 13px; }
+  .note, .hint, .meta, .group, .box-hint, .more, .empty-row, footer, footer .keys kbd, .fm td, .fm td:first-child, .opt small, .movedto, .mb, .case .sec, .steps { font-size: 13px; }
+  .chip, kbd { font-size: 12.5px; }
+  .note, .hint, .meta, .group, .box-hint, .more, .empty-row, .opt small, .fm td:first-child { color: var(--muted); }
+  .box { border-color: var(--line); }
+  .box legend { color: var(--fg); }
+  .box.focused legend { color: var(--focus); }
+  .row.picked { background: var(--sel); }
+  .row.sel .meta, .row.sel .goto, .row.sel code, .row.sel .group { color: var(--bg); }
+  #detail.pane, #migrate.pane { border-color: var(--line); }
+  #detail::before, #migrate::before { color: var(--fg); }
+  .fm td { border-bottom-color: var(--rule); }
+  .mline { border-top-color: var(--rule); }
+  #detail .box, .card, .case { border-color: var(--rule); background: var(--soft); }
+  .opt, .btn, .mb, .written textarea, .preview, .add, .filterbar input { border-color: var(--rule); }
+  .opt, .preview, .written textarea, .mb { background: var(--soft); }
+  .add { background: var(--soft); }
+  .c-me, .c-proj { color: var(--fg); border-color: var(--muted); }
+  .bar { background: var(--rule); }
+  .row .check { border-color: var(--fg); }
+  .row.sel .check { border-color: var(--bg); }
+  footer { border-top-color: var(--rule); color: var(--fg); }
+  footer .keys kbd { color: var(--blue); }
+  .filterbar { color: var(--cyan); }
+  .filterbar input { border-color: var(--cyan); }
+  .box .filter-on { color: var(--cyan); }
+  header { border-bottom-color: var(--rule); }
+  .menu { border-color: var(--focus); }
+  .toast { border-color: var(--rule); background: var(--soft); }
+  /* the orchestrator's cards: yellow (palette 3), loud */
+  .alert-go, .alert-go kbd { color: var(--bg); }
+  .row.ask-row.waits { background: #3d3a35; box-shadow: inset 3px 0 0 var(--yellow); }
+  .row.ask-row.waits.sel { background: var(--yellow); color: var(--bg); }
+  .card.ask { border-color: var(--yellow); background: #2e2c2f; }
+  .c-ask { color: var(--bg); background: var(--yellow); border-color: var(--yellow); }
