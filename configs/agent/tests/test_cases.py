@@ -536,7 +536,7 @@ class WorkersTest(Base):
     def test_state_colors_and_cwd_link(self):
         out = "\n".join(cases.render(self.dir, 60, 100, self.parse()))
         self.assertIn(f"{cases.STYLE[cases.MINE]}⏸ {cases.RESET}", out)
-        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.WORKER_STATE["working"][0]} {cases.RESET}", out)
+        self.assertIn(f"{cases.STYLE[cases.WAITING]}{cases.WORKER_STATE['working'][0]} {cases.RESET}", out)
         self.assertIn(f"{cases.STYLE[cases.LATER]}✔ {cases.RESET}", out)
         for word in ("確認ダイアログ", "窓口の番", "動いている", "終わった"):
             self.assertNotIn(word, out)

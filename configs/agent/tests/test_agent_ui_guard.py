@@ -263,6 +263,7 @@ class PanelFirstTest(unittest.TestCase):
         )
         proc.stdin.write(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "session_id": session}))
         proc.stdin.close()
+        proc.stdin = None  # Python 3.9 などの古い communicate() は閉じた stdin を flush して ValueError になる
         return proc
 
     def written(self, proc):
