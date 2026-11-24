@@ -315,9 +315,9 @@ func (a *App) submit(bool) error {
 		}
 		id := a.inputFor
 		a.mode = mList
-		// The Hub tells the orchestrator of the desk's replies only (its HTTP handler calls
-		// noticeReply), not of a gtd.py say from elsewhere: say so until the Hub reads the change log.
-		a.write(id, "返事を書いた。今の Hub は lazygtd の返事を窓口に知らせないので、急ぐなら窓口に一言", func() error { return a.gtd.Say(id, said) })
+		// The Hub tells the orchestrator of the reply from the change log (src/change-log.mjs of the
+		// Hub (local) plugin), whichever screen wrote it, while Orca runs.
+		a.write(id, "返事を書いた（Orca の Hub が動いていれば窓口に知らせる）", func() error { return a.gtd.Say(id, said) })
 	}
 	return nil
 }
