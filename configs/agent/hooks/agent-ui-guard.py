@@ -326,7 +326,7 @@ def main(argv=None):
     )
     decision = ask_panel(data) if "--panel" in argv else None
     if decision and decision["behavior"] == "allow":
-        decide("allow", "Hub パネルでユーザーが許可しました（今回だけ）。")
+        decide("allow", "Hub (local) のデスクでユーザーが許可しました（今回だけ）。")
         return 0
     if decision:
         decide("deny", decision["message"])

@@ -189,7 +189,7 @@ class OrchestratorQuestionTest(AsksTest):
         shown = hashlib.sha256(path.read_bytes()).hexdigest()
         r = self.run_asks("answer", path.stem, "--by", "panel", "--choice", "1", "--shown", shown, session=None)
         self.assertEqual(r.returncode, 2, "not run from Orca's plugin host")
-        self.assertIn("Hub パネルだけ", r.stderr)
+        self.assertIn("（デスクかパネル）だけ", r.stderr)
         self.assertEqual(self.run_asks("verify", path.stem).returncode, 4, "no answer yet")
 
         sys.path.insert(0, str(SCRIPT.parent))
@@ -211,7 +211,7 @@ class OrchestratorQuestionTest(AsksTest):
         self.assertEqual(self.run_asks("claim", path.stem, session=ORCH).returncode, 0)
         r = self.run_asks("verify", path.stem)
         self.assertEqual(r.returncode, 4)
-        self.assertIn("パネルの答えではありません", r.stderr)
+        self.assertIn("（デスクかパネル）の答えではありません", r.stderr)
 
     def test_from_panel_reads_the_parent_chain(self):
         sys.path.insert(0, str(SCRIPT.parent))

@@ -194,7 +194,7 @@ def on_pre(data):
             "PreToolUse",
             {
                 "permissionDecision": "deny",
-                "permissionDecisionReason": "依頼に答えられるのは、人（Hub パネル）と窓口（orchestrator）だけです。"
+                "permissionDecisionReason": "依頼に答えられるのは、人（Hub (local) のデスクかパネル）と窓口（orchestrator）だけです。"
                 "答えが要るときは、窓口に報告して待ってください。",
             },
         )
@@ -205,7 +205,7 @@ def on_pre(data):
             "PreToolUse",
             {
                 "permissionDecision": "deny",
-                "permissionDecisionReason": "パネルの答え（--by panel、答えのファイル）を書けるのは Hub パネルだけです。"
+                "permissionDecisionReason": "Hub の答え（--by panel、答えのファイル）を書けるのは Hub (local)（デスクかパネル）だけです。"
                 "窓口が依頼を取るときは asks.py claim、窓口の答えは --by orchestrator を使ってください。"
                 "許可の確認には、窓口からは答えられません。",
             },

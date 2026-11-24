@@ -307,7 +307,7 @@ def answer(ask_id, by, choice, shown=None, directory=None, text=None, panel_chec
         if not shown:
             raise AskError("窓口の問いには、カードに出した中身の hash（--shown）が要ります")
         if not panel_check():
-            raise AskError("窓口の問いにパネルとして答えられるのは、Orca の Hub パネルだけです")
+            raise AskError("窓口の問いに Hub として答えられるのは、Orca の Hub (local)（デスクかパネル）だけです")
     record = {"by": by, "at": time.time(), "choice": choice, "shown_sha256": shown}
     if text is not None:
         record["text"] = check_text(text, 2000, "書いた答え", multiline=True)
@@ -322,7 +322,7 @@ def answer(ask_id, by, choice, shown=None, directory=None, text=None, panel_chec
 
 def check_permission_answer(ask, by, choice, shown, text, panel_check):
     if by != "panel":
-        raise AskError("許可の確認に答えられるのは Hub パネルだけです")
+        raise AskError("許可の確認に答えられるのは Hub (local)（デスクかパネル）だけです")
     if not shown:
         raise AskError("許可の確認には、カードに出した中身の hash（--shown）が要ります")
     if choice not in PERMISSION_CHOICES:
@@ -332,7 +332,7 @@ def check_permission_answer(ask, by, choice, shown, text, panel_check):
     if (ask.get("expires_at") or 0) < time.time():
         raise AskError("許可の確認の期限が過ぎました（ターミナルで答えてください）")
     if not panel_check():
-        raise AskError("許可の確認に答えられるのは、Orca の Hub パネルだけです")
+        raise AskError("許可の確認に答えられるのは、Orca の Hub (local)（デスクかパネル）だけです")
 
 
 def new_permission(entry, tool_name, tool_input, wait, agent_type=None, permission_mode=None, directory=None):
@@ -400,7 +400,7 @@ def permission_wait():
 
 def denied_in_panel(reason):
     lines = [
-        "Hub パネルでユーザーがこの操作を拒否しました。",
+        "Hub (local) のデスクでユーザーがこの操作を拒否しました。",
         "別の手で回り込まずに、必要なら窓口でユーザーに聞いてください。",
     ]
     if reason:
@@ -513,9 +513,9 @@ def verify(ask_id, directory=None):
     if not record:
         return EXIT_GONE, "まだ答えがありません"
     if record.get("by") != "panel":
-        return EXIT_GONE, "パネルの答えではありません"
+        return EXIT_GONE, "Hub（デスクかパネル）の答えではありません"
     if record.get("shown_sha256") != sha_file(path):
-        return EXIT_GONE, "パネルに出したあとに問いが変わりました"
+        return EXIT_GONE, "デスクに出したあとに問いが変わりました"
     out = {"id": ask_id, "approval": bool(ask.get("approval")), "choice": None, "label": None, "description": None, "text": record.get("text")}
     if record.get("text") is None:
         try:

@@ -441,7 +441,7 @@ class PanelPermissionTest(ApprovalTest):
         self.answer(path, "deny", text="まだ消さないで")
         decision = self.finish(proc)
         self.assertEqual(decision["behavior"], "deny")
-        self.assertIn("Hub パネル", decision["message"])
+        self.assertIn("Hub (local) のデスク", decision["message"])
         self.assertIn("まだ消さないで", decision["message"])
         self.assertNotIn("interrupt", decision)
 
