@@ -248,6 +248,76 @@ class NoteAssignTest(Base):
             gtd.assign(self.root, item.id, "bad name", "agent")
 
 
+class TalkTest(Base):
+    """The talk with the orchestrator on an item: its answers, the user's replies, and what is unread."""
+
+    def test_reply_writes_a_dated_block_and_marks_it_unread_until_read(self):
+        item = gtd.add(self.root, "題", "user", body="前置き\n\n## メモ\n\n- x")
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T16:52"}):
+            gtd.reply(self.root, item.id, "1 つ目の答え", "agent:orchestrator")
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T17:05"}):
+            gtd.reply(self.root, item.id, "2 つ目は\n\n- 箇条\n- **太字**\n\n```sh\n# コードの中の見出しは見出しでない\n```", "agent:orchestrator")
+        loaded = gtd.load(item.id, self.root)
+        self.assertEqual(loaded.body, "前置き\n\n## メモ\n\n- x\n\n## 窓口の返事\n\n### 11/24 16:52\n\n1 つ目の答え\n\n### 11/24 17:05\n\n2 つ目は\n\n- 箇条\n- **太字**\n\n```sh\n# コードの中の見出しは見出しでない\n```")
+        self.assertEqual(loaded.fm["answered"], "2026-11-24T17:05")
+        self.assertTrue(gtd.unread(loaded))
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T17:10"}):
+            self.assertEqual(gtd.read_reply(self.root, item.id, "user")["changed"], True)
+            self.assertEqual(gtd.read_reply(self.root, item.id, "user")["changed"], False, "nothing unread: nothing written")
+        self.assertFalse(gtd.unread(gtd.load(item.id, self.root)))
+        self.assertEqual(gtd.lint(self.root), {})
+
+    def test_reply_goes_into_its_section_before_the_next_one(self):
+        item = gtd.add(self.root, "題", "user", body="## 窓口の返事\n\n### 11/24 09:00\n\nはじめ\n\n## メモ\n\n- x")
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T10:00"}):
+            gtd.reply(self.root, item.id, "つぎ", "agent")
+        self.assertEqual(gtd.load(item.id, self.root).body, "## 窓口の返事\n\n### 11/24 09:00\n\nはじめ\n\n### 11/24 10:00\n\nつぎ\n\n## メモ\n\n- x")
+
+    def test_a_reply_cannot_break_the_sections(self):
+        item = gtd.add(self.root, "題", "user")
+        for bad in ("## 見出し", "### 見出し", "   \n"):
+            with self.assertRaises(gtd.Invalid):
+                gtd.reply(self.root, item.id, bad, "agent")
+
+    def test_say_writes_the_users_line_and_waits_for_an_answer(self):
+        item = gtd.add(self.root, "題", "user")
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T16:40"}):
+            gtd.say(self.root, item.id, "A 案で。\n来週まで", "user")
+        loaded = gtd.load(item.id, self.root)
+        self.assertIn("## あなたの番への返事\n\n- 11/24 16:40: A 案で。 来週まで", loaded.body)
+        self.assertEqual(loaded.fm["asked"], "2026-11-24T16:40")
+        with mock.patch.dict(os.environ, {"GTD_NOW": "2026-11-24T16:50"}):
+            gtd.reply(self.root, item.id, "了解", "agent")
+        loaded = gtd.load(item.id, self.root)
+        self.assertGreater(loaded.fm["answered"], loaded.fm["asked"])
+
+    def test_the_cli_reads_the_body_from_a_file_or_stdin(self):
+        item = gtd.add(self.root, "題", "user")
+        body = Path(self.tmp.name) / "answer.md"
+        body.write_text("ファイルの答え\n\n- 1\n", encoding="utf-8")
+        env = {**os.environ, "GTD_NOW": "2026-11-24T18:00"}
+        res = subprocess.run([sys.executable, str(SCRIPT), "reply", item.id, "--body-file", str(body)], capture_output=True, text=True, env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        res = subprocess.run([sys.executable, str(SCRIPT), "reply", item.id, "--body-file", "-"], input="標準入力の答え\n", capture_output=True, text=True, env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        res = subprocess.run([sys.executable, str(SCRIPT), "say", item.id, "了解", "--by", "user"], capture_output=True, text=True, env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        res = subprocess.run([sys.executable, str(SCRIPT), "read", item.id, "--by", "user"], capture_output=True, text=True, env=env)
+        self.assertEqual(json.loads(res.stdout)["changed"], True)
+        text = self.read(item.id)
+        self.assertIn("### 11/24 18:00\n\nファイルの答え\n\n- 1\n\n### 11/24 18:00\n\n標準入力の答え", text)
+        self.assertIn("answered: 2026-11-24T18:00\nread: 2026-11-24T18:00", text)
+        state = json.loads(self.run_cli("json").stdout)
+        shown = next(i for i in state["items"] if i["id"] == item.id)
+        self.assertEqual((shown["asked"], shown["answered"], shown["read"]), ("2026-11-24T18:00", "2026-11-24T18:00", "2026-11-24T18:00"))
+
+    def test_lint_checks_the_times(self):
+        path = self.root / "items" / "x1.md"
+        path.write_text("---\nid: x1\ntitle: 題\nlist: next\nanswered: 11/24\n---\n", encoding="utf-8")
+        found = gtd.lint(self.root)
+        self.assertIn("answered が時刻", " ".join(f.message for fs in found.values() for f in fs))
+
+
 class ProjectStepsTest(Base):
     def make_project(self):
         proj = gtd.add(self.root, "プロジェクト", "agent", list_="project", item_id="proj", outcome="できている")

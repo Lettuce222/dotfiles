@@ -52,6 +52,11 @@ Usage:
   gtd.py assign <id> <worker>     actor: agent にして worker を結ぶ
   gtd.py handback <id> <text>     actor: me に戻し、本文の「あなたの番」に何をしてほしいかを書く
   gtd.py note <id> <section> <text>   本文の節（「メモ」「メモへの返事」など）に 1 行足す
+  gtd.py reply <id> (<text> | --body-file F)   窓口の答えを本文の「窓口の返事」に足す（### MM/DD HH:MM
+             の下に Markdown。F が - なら標準入力）。answered に時刻を入れ、まだ読んでいない印にする
+  gtd.py say <id> (<text> | --text=T)   ユーザーの返事を本文の「あなたの番への返事」に 1 行足し、asked に時刻を入れる
+             （デスクが --by user で書く。窓口に頼んで、まだ答えの無い印になる）
+  gtd.py read <id>                窓口の返事を読んだ（read に時刻を入れる。読んでいない返事が無ければ書かない）
   gtd.py step add <project> (--id ID | --title T) [--at N]
   gtd.py step move <project> <id> <N>
   gtd.py step remove <project> <id>
@@ -92,13 +97,23 @@ ACTORS = ("me", "agent")
 STEP_LISTS = ("next", "planned", "waiting")
 # frontmatter のキーの並び（書くときの順）。知らないキーは、そのあとに元の順で残す。
 KEYS = ("id", "title", "list", "project", "actor", "worker", "due", "since", "done", "who",
-        "follow_up", "then", "watch", "outcome", "short", "steps", "links", "from", "source")
+        "follow_up", "then", "watch", "outcome", "short", "steps", "links", "from", "source",
+        "asked", "answered", "read")
 LIST_KEYS = ("watch", "steps", "links")
 DATE_KEYS = ("due", "since", "done", "follow_up")
 REQUIRED = ("id", "title", "list")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# The talk with the orchestrator, on the item: when the user last wrote to it (asked), when it last
+# answered (answered), and when the user read that (read). The marks are times, not flags: an
+# answer is unread while answered is later than read, and a question waits while asked is later
+# than answered. Comparing the times needs nothing outside the item, and reading writes only when
+# an answer is unread.
+TIME_KEYS = ("asked", "answered", "read")
+TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+REPLY_SECTION = "窓口の返事"
+SAY_SECTION = "あなたの番への返事"
 KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*?))?[ \t]*$")
 MOVED_RE = re.compile(r"〔移した→([a-z0-9][a-z0-9-]*)〕")
 DROPPED = "〔移さない〕"
@@ -156,6 +171,15 @@ def log_path(r: Path | None = None) -> Path:
 def today() -> dt.date:
     env = os.environ.get("GTD_TODAY")
     return dt.date.fromisoformat(env) if env else dt.date.today()
+
+
+def now() -> dt.datetime:
+    env = os.environ.get("GTD_NOW")
+    return dt.datetime.fromisoformat(env) if env else dt.datetime.now()
+
+
+def time_mark(t: dt.datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M")
 
 
 def default_by() -> str:
@@ -726,6 +750,73 @@ def add_note(item: Item, section: str, text: str) -> None:
     else:
         lines.insert(at, f"- {text}")
     item.body = fix_body("\n".join(lines))
+
+
+def add_block(item: Item, section: str, head: str, text: str) -> None:
+    """本文の「## <section>」の末尾に「### <head>」と Markdown の text を足す。節が無ければ本文の末尾に作る。"""
+    text = "\n".join(line.rstrip() for line in text.strip("\n").split("\n"))
+    if not text.strip():
+        raise Invalid("足す文が空")
+    for _i, line, in_code, is_fence in _lines_outside_code(text.split("\n")):
+        if not in_code and not is_fence and re.match(r"^#{1,3} ", line):
+            raise Invalid("返事の中の見出しは #### から使う（### までは返事の区切りに使う）")
+    block = [f"### {head}", "", *text.split("\n")]
+    lines = item.body.split("\n")
+    title = f"## {section}"
+    try:
+        start = next(i for i, l, in_code, is_fence in _lines_outside_code(lines) if not in_code and l.strip() == title)
+    except StopIteration:
+        body = item.body.rstrip("\n")
+        joined = "\n".join(block)
+        item.body = fix_body(f"{body}\n\n{title}\n\n{joined}" if body.strip() else f"{title}\n\n{joined}")
+        return
+    end = next((i for i, l, in_code, is_fence in _lines_outside_code(lines)
+                if i > start and not in_code and not is_fence and re.match(r"^#{1,2} ", l)), len(lines))
+    at = end
+    while at > start + 1 and not lines[at - 1].strip():
+        at -= 1
+    tail = [""] if at < len(lines) else []
+    lines[at:at] = ["", *block, *tail]
+    item.body = fix_body("\n".join(lines))
+
+
+def reply(r: Path, item_id: str, text: str, by: str) -> dict:
+    """窓口の答えを項目に書く。まだ読んでいない印（answered が read より新しい）になる。"""
+    with writing(r, by) as messages:
+        item = load(item_id, r)
+        t = now()
+        add_block(item, REPLY_SECTION, t.strftime("%m/%d %H:%M"), text)
+        item.fm["answered"] = time_mark(t)
+        _save(r, item, by, "reply", messages)
+        return {"id": item.id, "hash": item.hash, "answered": item.fm["answered"]}
+
+
+def say(r: Path, item_id: str, text: str, by: str) -> dict:
+    """ユーザーの返事を項目に書く。窓口に頼んで、まだ答えの無い印（asked が answered より新しい）になる。"""
+    with writing(r, by) as messages:
+        item = load(item_id, r)
+        t = now()
+        add_note(item, SAY_SECTION, f"{t.strftime('%m/%d %H:%M')}: {text}")
+        item.fm["asked"] = time_mark(t)
+        _save(r, item, by, "say", messages)
+        return {"id": item.id, "hash": item.hash, "asked": item.fm["asked"]}
+
+
+def unread(item: Item) -> bool:
+    answered = str(item.fm.get("answered") or "")
+    return bool(answered) and str(item.fm.get("read") or "") < answered
+
+
+def read_reply(r: Path, item_id: str, by: str) -> dict:
+    """窓口の返事を読んだ。読んでいない返事が無ければ、何も書かない。"""
+    item = load(item_id, r)
+    if not unread(item):
+        return {"id": item.id, "hash": item.hash, "changed": False}
+    with writing(r, by) as messages:
+        item = load(item_id, r)
+        item.fm["read"] = time_mark(now())
+        _save(r, item, by, "read", messages)
+        return {"id": item.id, "hash": item.hash, "changed": True}
 
 
 def note(r: Path, item_id: str, section: str, text: str, by: str) -> dict:
@@ -1319,6 +1410,9 @@ def item_findings(path: Path, known: dict[str, Item] | None = None) -> list[Find
     for key in DATE_KEYS:
         if fm.get(key) is not None and not _is_date(fm[key]):
             out.append(Finding(1, "date", f"{key} が日付（YYYY-MM-DD）でない: {fm[key]}"))
+    for key in TIME_KEYS:
+        if fm.get(key) is not None and not TIME_RE.match(str(fm[key])):
+            out.append(Finding(1, "date", f"{key} が時刻（YYYY-MM-DDTHH:MM）でない: {fm[key]}"))
     if fm.get("list") == "done" and not fm.get("done"):
         out.append(Finding(1, "required", "list: done には done（済んだ日）が要る"))
     if fm.get("worker") and not WORKER_RE.match(str(fm["worker"])):
@@ -1459,6 +1553,21 @@ def main(argv: list[str]) -> int:
             _print(handback(r, args[0], " ".join(args[1:]), by))
         elif cmd == "note":
             _print(note(r, args[0], args[1], " ".join(args[2:]), by))
+        elif cmd == "reply":
+            body_file = _take(args, "--body-file")
+            if body_file == "-":
+                text = sys.stdin.read()
+            elif body_file:
+                text = Path(body_file).read_text(encoding="utf-8")
+            else:
+                text = " ".join(args[1:])
+            _print(reply(r, args[0], text, by))
+        elif cmd == "say":
+            # --text=<text> takes any text, also one that starts with --by=.
+            text = _take(args, "--text")
+            _print(say(r, args[0], text if text is not None else " ".join(args[1:]), by))
+        elif cmd == "read":
+            _print(read_reply(r, args[0], by))
         elif cmd == "step":
             sub = args.pop(0) if args else ""
             if sub == "add":
