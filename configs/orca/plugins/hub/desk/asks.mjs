@@ -73,7 +73,7 @@ function button(card, choice, index, label, detail, extra = '') {
 }
 
 const written = (card, label, hint) =>
-  `<div class="written"><label class="note" for="oa-text">${esc(label)}（<kbd>Enter</kbd> で書く欄へ、<kbd>⌘</kbd>+<kbd>Enter</kbd> で送る）</label><textarea id="oa-text" data-oa-text="${esc(card.id)}" rows="3" placeholder="${esc(hint)}"></textarea><button class="btn" data-oa-send="${esc(card.id)}">送る</button></div>`
+  `<div class="written"><label class="note" for="oa-text">${esc(label)}（<kbd>Enter</kbd> で書く欄へ移り、欄の中の <kbd>Enter</kbd> で送る。<kbd>⇧</kbd>+<kbd>Enter</kbd> で改行）</label><textarea id="oa-text" data-oa-text="${esc(card.id)}" rows="3" placeholder="${esc(hint)}"></textarea><button class="btn" data-oa-send="${esc(card.id)}">送る</button></div>`
 
 /**
  * The card in the right column.

@@ -107,6 +107,7 @@ export function activateHub(orca, { startAfterMs = START_AFTER_MS } = {}) {
         focusWorker: (summary) => worker.focusWorker(summary),
         answerAsk: (request) => worker.answerAsk(request),
         resignalNow: (id) => worker.resignalNow(id),
+        onReply: (id) => void worker.noticeReply(id),
         log: (line) => orca.log(line),
         onChange: () => void showCounts()
       })

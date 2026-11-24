@@ -247,11 +247,41 @@ function renderAskDetail(d, card) {
   }
 }
 
+// The reply to an item, under its detail: a line of its body in 「あなたの番への返事」, and the
+// orchestrator is told there is one. What is being written stays through a redraw.
+function replyBox(t) {
+  if (t.list === 'done') return ''
+  return `<div class="reply written"><label class="note" for="reply-text">返事（本文の「あなたの番への返事」に足し、窓口に知らせます。<kbd>Enter</kbd> で送る、<kbd>⇧</kbd>+<kbd>Enter</kbd> で改行、<kbd>Esc</kbd> で抜ける）</label><textarea id="reply-text" data-reply="${esc(t.id)}" rows="3" placeholder="この項目への返事"></textarea><button class="btn" data-reply-send>送る</button></div>`
+}
+function keptReply(d) {
+  const area = d.querySelector('[data-reply]')
+  return area ? { id: area.dataset.reply, value: area.value, focused: document.activeElement === area } : null
+}
+function restoreReply(d, t, kept) {
+  const area = d.querySelector('[data-reply]')
+  if (!area || !kept || kept.id !== t.id) return
+  area.value = kept.value
+  if (kept.focused) area.focus()
+}
+async function sendReply(t) {
+  const area = $('detail').querySelector('[data-reply]')
+  const text = area?.value.trim()
+  if (!text) { area?.focus(); return }
+  if (area) area.disabled = true
+  const j = await write('/api/reply', { id: t.id, text })
+  const now = $('detail').querySelector('[data-reply]')
+  if (now) now.disabled = false
+  if (!j) return
+  if (now) { now.value = ''; now.blur() }
+  toast('返事を書いた。窓口に知らせます')
+}
+
 function renderDetail() {
   const d = $('detail')
   const t = byId[sel]
   if (!t) { d.innerHTML = '<p class="empty">項目を選んでください</p>'; return }
   if (t.card) { renderAskDetail(d, t.card); return }
+  const kept = keptReply(d)
   let left = ''
   if (t.asks?.length) left += t.asks.map((a, i) => askCard(a)).join('')
   if (t.agent) {
@@ -271,7 +301,9 @@ function renderDetail() {
     <div>${actorChips(t, cur)} ${dueChip(t.due)} <span class="chip c-proj">${esc(t.list)}</span>${t.project && t.list !== 'project' ? ` <span class="chip c-proj">${esc(projShort(t.project))}</span>` : ''}</div>
     <div class="actions"><button class="btn primary" data-act="open">Orca のエディタで開く <kbd>s</kbd></button>${t.deliverables?.length ? '<button class="btn" data-act="deliv">成果物を開く <kbd>d</kbd></button>' : ''}<button class="btn" data-act="move">移す <kbd>f</kbd></button><button class="btn" data-act="done">完了 <kbd>x</kbd></button></div>
     <div class="cols"><div>${left}</div><div style="margin-top:8px"><table class="fm">${fmRows(t)}</table>
-    ${t.path ? `<p class="note">ファイル: <code class="path">${esc(t.path)}</code></p>` : ''}</div></div>`
+    ${t.path ? `<p class="note">ファイル: <code class="path">${esc(t.path)}</code></p>` : ''}</div></div>${replyBox(t)}`
+  restoreReply(d, t, kept)
+  d.querySelectorAll('[data-reply-send]').forEach((b) => { b.onclick = () => sendReply(t) })
   d.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => act(b.dataset.act) })
   d.querySelectorAll('[data-deliv]').forEach((a) => { a.onclick = () => openItem(t.id, t.deliverables[Number(a.dataset.deliv)]) })
   d.querySelectorAll('[data-ask]').forEach((b) => { b.onclick = () => answer(b.dataset.ask, Number(b.dataset.choice)) })
@@ -616,9 +648,13 @@ document.addEventListener('keydown', (e) => {
     case 'migMove': return migMove(hit.delta)
     case 'fromCase': if (migKey) fromCase(migKey, hit.to); return
     case 'move': return move(hit.delta)
-    case 'focus':
-      if (t.card) { e.preventDefault(); $('detail').querySelector('[data-oa-text]')?.focus(); return }
-      if (isAgent(t)) focusWorker(t)
+    case 'write':
+      // Enter: into the box under the item, the reply or the written answer to the orchestrator.
+      e.preventDefault()
+      $('detail').querySelector(t.card ? '[data-oa-text]' : '[data-reply]')?.focus()
+      return
+    case 'agent':
+      if (!t.card && isAgent(t)) focusWorker(t)
       return
     case 'act': return act(hit.act)
     case 'answer': {
@@ -631,10 +667,20 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
+// In the reply box and the written answer: Enter sends, Shift+Enter starts a new line. Not while
+// a Japanese word is being converted (isComposing, keyCode 229), and not when the box is empty.
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName !== 'TEXTAREA' || !e.target.dataset.oaText || e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.isComposing) return
+  const box = e.target
+  if (box.tagName !== 'TEXTAREA' || !(box.dataset.oaText || box.dataset.reply) || e.key !== 'Enter') return
+  if (e.isComposing || e.keyCode === 229 || e.shiftKey || e.altKey) return
   e.preventDefault()
-  const card = (S.orchestrator ?? []).find((c) => c.id === e.target.dataset.oaText)
+  if (!box.value.trim()) return
+  if (box.dataset.reply) {
+    const t = byId[box.dataset.reply]
+    if (t) sendReply(t)
+    return
+  }
+  const card = (S.orchestrator ?? []).find((c) => c.id === box.dataset.oaText)
   if (card) sendWritten(card)
 })
 window.addEventListener('hashchange', () => {

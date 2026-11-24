@@ -26,6 +26,10 @@ const RECORD_MS = 60_000
 const QUIET_S = 600
 // A save with no gtd.py line for its item this recently is an edit from Orca's editor.
 const OWN_WRITE_MS = 5_000
+// A reply to an item goes into this section of its body, next to 「あなたの番」 that gtd.py handback
+// writes (and to 「メモ」 and 「メモへの返事」): one line, `MM/DD: <text>`, by user.
+export const REPLY_SECTION = 'あなたの番への返事'
+const REPLY_MAX = 2000
 // The levels of information the desk may show, as on the panel (src/asks.mjs): Orca shows up to B.
 const SHOWABLE_LEVELS = new Set(['B', 'C'])
 
@@ -65,8 +69,9 @@ const ASK_MESSAGES = {
  * @param focusWorker (worker summary) => Promise<{ focused, reason? }>
  * @param answerAsk ({ id, sha, choice, text?, confirmed? }) => Promise<{ ok, reason?, message? }>
  * @param resignalNow (askId) => Promise<{ ok, reason? }>: tells the orchestrator of a kept answer now
+ * @param onReply (itemId) => void: the user replied to an item; the orchestrator is told of it
  */
-export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, resignalNow = async () => ({ ok: false, reason: 'failed' }), log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
+export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answerAsk, resignalNow = async () => ({ ok: false, reason: 'failed' }), onReply = () => {}, log = () => {}, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), now = Date.now, onChange = () => {} }) {
   const gtdRoot = join(hubRoot, 'gtd')
   const itemsDir = join(gtdRoot, 'items')
   const changes = join(gtdRoot, '.log', 'changes.jsonl')
@@ -217,6 +222,24 @@ export function createDesk({ gtd, hubRoot, snapshot, openFile, focusWorker, answ
     },
     async done(body) {
       return write(['done', id(body.id), ...hash(body.hash)])
+    },
+    // The user's reply to an item (what it asks in 「あなたの番」): a line of its body, and the
+    // orchestrator is told that there is one, never what it says.
+    async reply(body) {
+      const itemId = id(body.id)
+      if (typeof body.text !== 'string' || body.text.length > REPLY_MAX) throw bad(`返事は ${REPLY_MAX} 字まで`)
+      const said = body.text.replace(/\s+/g, ' ').trim()
+      if (!said) throw bad('返事が空')
+      const day = new Date(now())
+      const stamp = `${String(day.getMonth() + 1).padStart(2, '0')}/${String(day.getDate()).padStart(2, '0')}`
+      // One argument that starts with the date: gtd.py reads no flag out of it.
+      const result = await write(['note', itemId, REPLY_SECTION, `${stamp}: ${said}`])
+      try {
+        onReply(itemId)
+      } catch (error) {
+        log(`desk: could not tell the orchestrator of the reply to ${itemId}: ${error.message}`)
+      }
+      return result
     },
     async open(body) {
       const itemId = id(body.id)

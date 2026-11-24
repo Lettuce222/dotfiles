@@ -37,7 +37,7 @@ import { actionText, latestAction } from './case-actions.mjs'
 import { createOrchestratorChannel } from './orchestrator.mjs'
 import { buildHubModel, isInside, sessionSummaries } from './hub-model.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
-import { createAgentItemNotice } from './agent-items.mjs'
+import { createAgentItemNotice, createReplyNotice } from './agent-items.mjs'
 import { deskMessage, failureOf, findDeskTab, pageIdOf, redact } from './desk-tab.mjs'
 import { ORCHESTRATOR_FAILURES, renderHub, renderLoading } from './hub-render.mjs'
 
@@ -438,6 +438,15 @@ export function createHubWorker({
     log: (line) => orca.log(line)
   })
 
+  // The user's replies to items on the desk: the orchestrator is told of each (src/agent-items.mjs).
+  const replies = createReplyNotice({ now, send: (ids) => orchestrator.send(ids, { replied: true }), log: (line) => orca.log(line) })
+
+  /** The user replied to an item on the desk: tell the orchestrator, again every 30 seconds until it takes it. */
+  function noticeReply(id) {
+    replies.add(id)
+    return replies.tell()
+  }
+
   /** The desk's items that wait for a worker (their ids): told to the orchestrator once each. */
   function noticeAgentItems(ids) {
     agentItems.update(ids)
@@ -478,6 +487,7 @@ export function createHubWorker({
           void resignal()
           // Items past their grace, or a line to try again.
           void agentItems.tell()
+          void replies.tell()
         } catch (error) {
           orca.log(`hub: refresh failed: ${error.message}`)
         }
@@ -838,5 +848,5 @@ export function createHubWorker({
     if (JSON.stringify(counts) !== before) schedule()
   }
 
-  return { start, refresh, resignal, resignalNow, noticeAgentItems, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
+  return { start, refresh, resignal, resignalNow, noticeAgentItems, noticeReply, schedule, agentChanged, view, openWorkspace, openReport, answerAsk, sendToSession, sendNext, actOnCase, snapshot, openFile, focusWorker, openDesk, setDeskCounts }
 }

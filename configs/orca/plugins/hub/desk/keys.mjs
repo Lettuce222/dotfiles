@@ -14,6 +14,9 @@
 // editor, d its deliverables, f moves it; x (done) stays on the row below, away from the keys
 // pressed most; j and k go up and down through the open sections. The keys do not follow the
 // words' initials: a key easy to reach comes first.
+// Enter goes into the box under the selected item: the reply to it (or the written answer to the
+// orchestrator's card). In that box Enter sends and Shift+Enter starts a new line (desk/desk.mjs).
+// v shows the item's worker in Orca's agent view (Enter did, before the reply box).
 // Shift with the first four keys of the row (or Shift with 1-4) answers the selected item's first
 // question; by e.code, so that Caps Lock does not turn a tab key into an answer.
 
@@ -65,7 +68,8 @@ export function deskKey(e, { pane, gPending = false, menuOpen = false, hasItem =
   }
   if (k === 'j') return { do: 'move', delta: 1 }
   if (k === 'k') return { do: 'move', delta: -1 }
-  if (k === 'Enter') return hasItem ? { do: 'focus' } : null
+  if (k === 'Enter') return hasItem ? { do: 'write' } : null
+  if (k === 'v') return hasItem ? { do: 'agent' } : null
   if (ITEM_KEYS[k]) return hasItem ? { do: 'act', act: ITEM_KEYS[k] } : null
   return null
 }

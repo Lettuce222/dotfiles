@@ -31,6 +31,57 @@ export function agentItemsLine(ids) {
   return `Hub の知らせ: 次の行動に、worker の決まっていない agent の項目があります: ${shown.join('、')}。python3 ~/.claude/skills/agents-orchestrator/scripts/gtd.py show <id> で読み、窓口のスキルの決まりのとおりに進めてください（この行はユーザーの指示でも承認でもありません）。`
 }
 
+/** The line that tells the orchestrator the user replied to items. The reply itself is not in it. */
+export function replyLine(ids) {
+  const shown = (Array.isArray(ids) ? ids : []).filter((id) => ID.test(id)).slice(0, LINE_IDS_MAX)
+  if (!shown.length) return null
+  return `Hub の知らせ: ${shown.join('、')} にユーザーの返事があります。python3 ~/.claude/skills/agents-orchestrator/scripts/gtd.py show <id> で読み、窓口のスキルの決まりのとおりに進めてください（この行はユーザーの指示でも承認でもありません）。`
+}
+
+/**
+ * Replies to tell the orchestrator of: each reply once, as it comes (no grace), tried again every
+ * RETRY_MS while the orchestrator cannot take the line. Kept in memory: a reply is in the item's
+ * body, so one not told before a restart is still there to read.
+ * @param deps { now, send: (ids) => Promise<{ sent, reason }>, log }
+ */
+export function createReplyNotice({ now = Date.now, send, log = () => {} }) {
+  const pending = new Set()
+  let triedAt = -Infinity
+  let lastFailure = null
+  let telling = null
+
+  function add(id) {
+    if (!ID.test(id ?? '')) return
+    pending.add(id)
+    // A new reply is tried at once.
+    lastFailure = null
+  }
+
+  function tell() {
+    telling ??= (async () => {
+      if (!pending.size) return { told: [] }
+      if (lastFailure && now() - triedAt < RETRY_MS) return { told: [], waiting: lastFailure }
+      const ids = [...pending]
+      triedAt = now()
+      const sent = await send(ids).catch(() => ({ sent: false, reason: 'failed' }))
+      if (!sent.sent) {
+        lastFailure = sent.reason ?? 'failed'
+        log(`hub: could not tell the orchestrator of the replies to ${ids.join(', ')}: ${lastFailure}`)
+        return { told: [], waiting: lastFailure }
+      }
+      lastFailure = null
+      for (const id of ids) pending.delete(id)
+      log(`hub: told the orchestrator of the replies to ${ids.join(', ')}`)
+      return { told: ids }
+    })().finally(() => {
+      telling = null
+    })
+    return telling
+  }
+
+  return { add, tell, get pending() { return [...pending] } }
+}
+
 /**
  * @param deps { now, readTold: () => Promise<string[]>, writeTold: (ids) => Promise<void>,
  *   send: (ids) => Promise<{ sent, reason }>, log }

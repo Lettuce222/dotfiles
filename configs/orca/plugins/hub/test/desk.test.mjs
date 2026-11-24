@@ -78,6 +78,7 @@ before(async () => {
       calls.push(['answer', answer])
       return { ok: true }
     },
+    onReply: (id) => calls.push(['reply', id]),
     watchDir: () => ({ close() {} })
   })
   server = createDeskServer({ pluginDir: plugin, handlers: desk.handlers, token: 'test-token-123' })
@@ -307,4 +308,17 @@ test('a save from the editor is logged by the user, and the recorder waits ten m
   const status = execFileSync('git', ['-C', join(hub, 'gtd'), 'status', '--porcelain']).toString()
   assert.match(status, new RegExp(`items/${id}\\.md`), 'not committed yet: the editor shows it in file diff')
   assert.ok(existsSync(join(hub, 'gtd', '.git')))
+})
+
+test('a reply goes into the item\'s body under あなたの番への返事, by user, and the orchestrator is told', async () => {
+  const added = await api('/api/add', { title: '方針を決める' }, { Origin: base })
+  const id = added.json.id
+  const { status } = await api('/api/reply', { id, text: 'A 案で。\n来週まで' }, { Origin: base })
+  assert.equal(status, 200)
+  const body = readFileSync(itemFile(id), 'utf8')
+  assert.match(body, /## あなたの番への返事\n\n- \d\d\/\d\d: A 案で。 来週まで(\n|$)/)
+  assert.deepEqual(calls.filter(([kind]) => kind === 'reply'), [['reply', id]])
+  const log = readFileSync(join(hub, 'gtd', '.log', 'changes.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(log.at(-1).by, 'user')
+  assert.equal((await api('/api/reply', { id, text: '  ' }, { Origin: base })).status, 400)
 })
