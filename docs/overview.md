@@ -350,8 +350,8 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 ### `tools/`
 
 [lazygtd の旧 Hub 版仕様](../tools/lazygtd/SPEC.md) を参照資料として置く。実装は別リポジトリ。`tools/install-lazygtd.sh` は通常セットアップで公式の配布バイナリだけを取得する。
-Windowsネイティブは `tools/install-lazygtd.ps1` を個別に実行する。取得するバージョンと
-チェックサム一覧のSHA-256は `tools/lazygtd-release.lock` に固定する。
+Windowsネイティブは `tools/install-lazygtd.ps1` を個別に実行する。公開済みの最新版（プレビュー版も対象）を選び、
+チェックサム一覧のSHA-256を GitHub Releases API のダイジェストと照合する。
 
 ### `docs/`
 

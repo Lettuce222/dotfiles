@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the pinned standalone release. Do not pass credentials to GitHub.
+# Install the latest published standalone release. Do not pass credentials to GitHub.
 set -u
 
 repo=https://github.com/Lettuce222/lazygtd
@@ -29,37 +29,26 @@ case "$(uname -s):$(uname -m)" in
     *) fail "no release asset for $(uname -s)/$(uname -m); skipped" ;;
 esac
 [ "$#" -eq 0 ] || fail "usage: tools/install-lazygtd.sh"
-lock=$(dirname "$0")/lazygtd-release.lock
-release=$(LC_ALL=C awk '
-    NR == 1 && NF == 2 &&
-    $1 ~ /^v[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$/ &&
-    length($2) == 64 && $2 !~ /[^0-9a-f]/ { ref=$1; digest=$2 }
-    END { if (NR != 1 || !ref) exit 1; print ref, digest }
-' "$lock") || fail "release checksum is not pinned in lazygtd-release.lock; existing install unchanged"
-tag=${release% *}
-sums_sha256=${release##* }
 [ -n "${HOME:-}" ] || fail "HOME is not set"
 case "$HOME" in /*) ;; *) fail "HOME must be absolute" ;; esac
 bin="$HOME/.local/bin"
 destination="$bin/lazygtd"
 
-command -v curl >/dev/null 2>&1 || fail "curl is needed to fetch $tag"
-command -v tar >/dev/null 2>&1 || fail "tar is needed to unpack $tag"
+command -v curl >/dev/null 2>&1 || fail "curl is needed to fetch the release"
+command -v python3 >/dev/null 2>&1 || fail "python3 is needed to read release metadata"
+command -v tar >/dev/null 2>&1 || fail "tar is needed to unpack the release"
 if command -v sha256sum >/dev/null 2>&1; then
     checksum_command=sha256sum
 elif command -v shasum >/dev/null 2>&1; then
     checksum_command=shasum
 else
-    fail "sha256sum or shasum is needed to verify $tag"
+    fail "sha256sum or shasum is needed to verify the release"
 fi
 if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
     fail "$destination is not a regular file; left it alone"
 fi
 mkdir -p -- "$bin" || fail "could not create $bin"
 tmp=$(mktemp -d "$bin/.lazygtd-install.XXXXXXXX") || fail "could not create a staging directory"
-archive="lazygtd-$tag-$platform.tar.gz"
-download="$repo/releases/download/$tag"
-
 fetch() {
     # -q as the first option disables local .curlrc settings (including
     # settings that could disable TLS checks or add credentials).
@@ -76,9 +65,62 @@ digest() {
     printf '%s\n' "${output%% *}"
 }
 
+# The /releases/latest endpoint ignores prereleases. Pick the highest published
+# version from the list instead, so preview.10 sorts after preview.9.
+release=$(python3 -I - <<'PY_RELEASE'
+import json
+import re
+import subprocess
+import sys
+
+pattern = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-preview\.(0|[1-9][0-9]{0,8}))?")
+api = "https://api.github.com/repos/Lettuce222/lazygtd/releases"
+try:
+    best = None
+    version = (-1,)
+    for page in range(1, 21):
+        body = subprocess.check_output([
+            "curl", "-q", "--proto", "=https", "--fail", "--silent", "--show-error",
+            "--connect-timeout", "8", "--max-time", "30", "--max-filesize", "10000000",
+            "--header", "Accept: application/vnd.github+json",
+            f"{api}?per_page=100&page={page}",
+        ])
+        releases = json.loads(body)
+        if not isinstance(releases, list):
+            raise ValueError("unexpected releases response")
+        for entry in releases:
+            match = pattern.fullmatch(entry["tag_name"])
+            if not match or entry.get("draft") is not False or not entry.get("published_at"):
+                continue
+            major, minor, patch, preview = match.groups()
+            key = (int(major), int(minor), int(patch), preview is None, int(preview or 0))
+            if key > version:
+                best, version = entry, key
+        if len(releases) < 100:
+            break
+    else:
+        raise ValueError("release list exceeds lookup limit")
+    if best is None:
+        raise ValueError("no published lazygtd release")
+    assets = [a for a in best["assets"] if a["name"] == "SHA256SUMS"]
+    if len(assets) != 1 or assets[0].get("state") != "uploaded":
+        raise ValueError("latest release lacks a unique SHA256SUMS")
+    digest = re.fullmatch(r"sha256:([0-9a-f]{64})", assets[0].get("digest") or "")
+    if not digest:
+        raise ValueError("latest release lacks a SHA256SUMS digest")
+    print(best["tag_name"], digest[1])
+except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+    sys.exit(f"lazygtd release lookup: {exc}")
+PY_RELEASE
+) || fail "could not verify latest published release metadata; existing install unchanged"
+tag=${release% *}
+sums_sha256=${release##* }
+archive="lazygtd-$tag-$platform.tar.gz"
+download="$repo/releases/download/$tag"
+
 fetch "$download/SHA256SUMS" "$tmp/SHA256SUMS" || fail "checksum list unavailable for $tag; existing install unchanged"
 actual_sums=$(digest "$tmp/SHA256SUMS") || fail "could not calculate SHA-256 for checksum list"
-[ "$actual_sums" = "$sums_sha256" ] || fail "checksum list digest does not match the pinned release; existing install unchanged"
+[ "$actual_sums" = "$sums_sha256" ] || fail "checksum list digest does not match GitHub release metadata; existing install unchanged"
 expected=$(LC_ALL=C awk -v asset="$archive" '
     $2 == asset || $2 == "*" asset {
         count++

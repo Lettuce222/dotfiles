@@ -45,4 +45,4 @@ fish で `agent` を実行すると起動し、`agent --which` で選択を確�
 - mise: ランタイムマネージャー
 - nvim: エディタ
 - tmux: 明示的に起動する予備のターミナルマルチプレクサ
-- lazygtd: 実装は [別リポジトリ](https://github.com/Lettuce222/lazygtd)。通常の `./install.sh` は検証した配布バイナリを導入する。[インストールの詳細](docs/configuration.md#lazygtd)。
+- lazygtd: 実装は [別リポジトリ](https://github.com/Lettuce222/lazygtd)。通常の `./install.sh` は最新版の配布バイナリを検証して導入する。[インストールの詳細](docs/configuration.md#lazygtd)。

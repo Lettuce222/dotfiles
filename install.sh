@@ -109,7 +109,7 @@ usage() {
 Usage: ./install.sh [--links-only] [--dry-run]
 
   (no options)  Full setup: Homebrew, fish, login shell, symlinks, mise, apps,
-                macOS defaults and the pinned lazygtd release.
+                macOS defaults and the latest published lazygtd release.
   --links-only  Place symlinks for the selected agent and generate settings.
                 Never installs anything or asks for a password.
                 Prints one line per change.
