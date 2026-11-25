@@ -100,11 +100,16 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
   `./install.sh` が [lazygtdのGitHub Releases](https://github.com/Lettuce222/lazygtd/releases)
   から公開済みの最新版を取得する。プレビュー版も対象。タグがない main のビルドは対象外。
   Go・Rust・SQLiteの別途インストールは不要。
+- リリースは認証なしの `releases.atom` から探し、GitHub API は使わない（認証なしの API は
+  IP ごとに 1 時間 60 回までで、超えると 403 になるため）。atom には公開済みのリリースだけが出て、
+  プレビュー版の印はないので、タグ `vX.Y.Z` と `vX.Y.Z-preview.N` の版を比べていちばん新しいものを選ぶ
+  （`preview.10` は `preview.9` より新しく、正式版は同じ版のプレビュー版より新しい）。
+  atom に出るのは最近のリリースだけなので、古い日付のまま版が高いリリースは選ばれない。
 - HTTPSのリリースから該当アーカイブと `SHA256SUMS` を取得し、アーカイブの
-  SHA-256とバイナリのバージョンを照合してから `~/.local/bin/lazygtd` に置く。
-  `SHA256SUMS` 自体も GitHub Releases API が返すダイジェストと照合する。信頼元はこの公開リポジトリ。
+  SHA-256とバイナリのバージョンを確かめてから `~/.local/bin/lazygtd` に置く。
+  信頼元はこの公開リポジトリと github.com の HTTPS。
   `curl`、`python3`、`tar`、`sha256sum` または `shasum` が必要。
-- API接続・レート制限、配布ファイルがない、もしくは検証失敗の場合、既存の
+- atom を読めない、配布ファイルがない、もしくは検証失敗の場合、既存の
   lazygtdを上書きしない。ほかのセットアップは続く。
 - lazygtdだけ再試行するには `sh tools/install-lazygtd.sh`。
   `--links-only` と `--dry-run` ではlazygtdのダウンロードを行わない。
@@ -116,7 +121,7 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
   `& "$env:LOCALAPPDATA\Programs\lazygtd\lazygtd.exe" --demo`。
   スクリプトの実行が許可されていないWindowsでは、実行ポリシーは変更せず
   Releasesから対象のZIPと `SHA256SUMS` を取得する。`Get-FileHash -Algorithm SHA256`
-  で一覧を GitHub Releases API が返す SHA-256 と、ZIPを一覧の同名エントリとそれぞれ照合し、解凍先で
+  で一覧を GitHub Releases API が返す SHA-256 と、ZIPを一覧の同名エントリとそれぞれ比べ、解凍先で
   `.\lazygtd.exe --demo` を実行する。
   WSLで使う場合はPowerShellではなく、上のLinux用 `./install.sh` を実行する。
 

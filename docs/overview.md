@@ -349,9 +349,9 @@ Orca（エージェントを並べて動かすアプリ）の自前plugin。`~/.
 
 ### `tools/`
 
-[lazygtd の旧 Hub 版仕様](../tools/lazygtd/SPEC.md) を参照資料として置く。実装は別リポジトリ。`tools/install-lazygtd.sh` は通常セットアップで公式の配布バイナリだけを取得する。
+[lazygtd の旧 Hub 版仕様](../tools/lazygtd/SPEC.md) を参照資料として置く。実装は別リポジトリ。`tools/install-lazygtd.sh` は通常セットアップで公式の配布バイナリだけを取得する。リリースは GitHub API でなく `releases.atom` から探し、タグの版がいちばん高いものを選ぶ。
 Windowsネイティブは `tools/install-lazygtd.ps1` を個別に実行する。公開済みの最新版（プレビュー版も対象）を選び、
-チェックサム一覧のSHA-256を GitHub Releases API のダイジェストと照合する。
+チェックサム一覧のSHA-256を GitHub Releases API のダイジェストと比べる。
 
 ### `docs/`
 
@@ -368,7 +368,7 @@ Windowsネイティブは `tools/install-lazygtd.ps1` を個別に実行する�
 | ファイル | 確かめるもの |
 | --- | --- |
 | `tests/test_install_links_only.py` | `install.sh --links-only`と`--dry-run`。一時ディレクトリを`HOME`にし、brewなどは偽物に差し替える |
-| `tests/test_lazygtd_install.py` | 配布バイナリの取得、検証、失敗時に既存のインストールが残ること（Unix） |
+| `tests/test_lazygtd_install.py` | 配布バイナリの取得、検証、atom からのリリースの選び方、失敗時に既存のインストールが残ること（Unix） |
 | `tests/test_lazygtd_install_windows.ps1` | Windows PowerShell 5.1で同じインストールの検証（通信なし） |
 | `tests/test_open_link.py` | `open-link.sh`がリンクの種類ごとに正しいもので開くこと |
 | `tests/test_overview.py` | 追跡しているファイルがすべてこのページに載っていること、このページに載っているパスが実在すること |

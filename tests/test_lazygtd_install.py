@@ -1,7 +1,7 @@
 """Exercise the production install command with a local fixture for curl."""
 import hashlib
 import io
-import json
+from xml.sax.saxutils import quoteattr
 import os
 from pathlib import Path
 import subprocess
@@ -12,7 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "tools" / "install-lazygtd.sh"
 TAG = "v0.1.0-preview.10"
-API = "https://api.github.com/repos/Lettuce222/lazygtd/releases?per_page=100&page=1"
+FEED = "https://github.com/Lettuce222/lazygtd/releases.atom"
 RELEASE = f"https://github.com/Lettuce222/lazygtd/releases/download/{TAG}"
 
 
@@ -29,7 +29,7 @@ class InstallTest(unittest.TestCase):
         self.destination = self.bin / "lazygtd"
         self.fixtures = self.root / "release"
         self.fixtures.mkdir()
-        self.metadata("0" * 64)
+        self.feed([TAG])
         self.calls = self.root / "calls"
         self.shims = self.root / "shims"
         self.shims.mkdir()
@@ -41,8 +41,8 @@ while [ "$#" -gt 1 ]; do
 done
 printf '%s\n' "$1" >> "$CALLS"
 case "$1" in
-    'https://api.github.com/repos/Lettuce222/lazygtd/releases?'*)
-        cat "$FIXTURES/page-${1##*=}.json"; exit ;;
+    'https://github.com/Lettuce222/lazygtd/releases.atom')
+        cat "$FIXTURES/releases.atom"; exit ;;
 esac
 test -f "$FIXTURES/${1##*/}" || exit 22
 cp "$FIXTURES/${1##*/}" "$destination"
@@ -58,18 +58,22 @@ cp "$FIXTURES/${1##*/}" "$destination"
             "ARCH": "x86_64",
         }
 
-    @staticmethod
-    def record(tag, digest, draft=False):
-        return {
-            "tag_name": tag, "draft": draft, "published_at": "2026-01-01T00:00:00Z",
-            "assets": [{"name": "SHA256SUMS", "state": "uploaded", "digest": f"sha256:{digest}"}],
-        }
-
-    def page(self, entries, number=1):
-        (self.fixtures / f"page-{number}.json").write_text(json.dumps(entries))
-
-    def metadata(self, digest):
-        self.page([self.record(TAG, digest)])
+    def feed(self, tags, header='<?xml version="1.0" encoding="UTF-8"?>\n'):
+        """Write a feed shaped like GitHub's releases.atom, newest entry first."""
+        entries = "".join(
+            "<entry>"
+            f"<id>tag:github.com,2008:Repository/1/{tag}</id>"
+            "<link rel=\"alternate\" type=\"text/html\" "
+            f"href={quoteattr('https://github.com/Lettuce222/lazygtd/releases/tag/' + tag)}/>"
+            f"<title>lazygtd {tag}</title>"
+            "</entry>"
+            for tag in tags
+        )
+        (self.fixtures / "releases.atom").write_text(
+            header + '<feed xmlns="http://www.w3.org/2005/Atom">'
+            '<link type="text/html" rel="alternate" href="https://github.com/Lettuce222/lazygtd/releases"/>'
+            f"{entries}</feed>"
+        )
 
     def shim(self, name, contents):
         script = self.shims / name
@@ -92,7 +96,6 @@ cp "$FIXTURES/${1##*/}" "$destination"
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         sums = self.fixtures / "SHA256SUMS"
         sums.write_text(f"{digest}  {name}\n")
-        self.metadata(hashlib.sha256(sums.read_bytes()).hexdigest())
         return name, archive, sums, binary
 
     def invoke(self):
@@ -113,7 +116,7 @@ cp "$FIXTURES/${1##*/}" "$destination"
         self.assertEqual(self.destination.read_bytes(), binary)
         self.assertTrue(os.access(self.destination, os.X_OK))
         self.assertEqual(self.calls.read_text().splitlines(),
-                         [API, f"{RELEASE}/SHA256SUMS", f"{RELEASE}/{name}"])
+                         [FEED, f"{RELEASE}/SHA256SUMS", f"{RELEASE}/{name}"])
         before = self.destination.stat().st_ino
         out = self.invoke()
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -127,13 +130,12 @@ cp "$FIXTURES/${1##*/}" "$destination"
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("checksum list unavailable", out.stderr)
         self.assertEqual(self.destination.read_bytes(), b"previous binary")
-        self.assertEqual(self.calls.read_text().splitlines(), [API, f"{RELEASE}/SHA256SUMS"])
+        self.assertEqual(self.calls.read_text().splitlines(), [FEED, f"{RELEASE}/SHA256SUMS"])
 
     def test_wrong_digest_or_duplicate_never_replaces_previous_binary(self):
         self.existing()
         _, archive, sums, _ = self.release()
         sums.write_text(sums.read_text() * 2)
-        self.metadata(hashlib.sha256(sums.read_bytes()).hexdigest())
         out = self.invoke()
         self.assertIn("no unique valid entry", out.stderr)
         self.assertEqual(self.destination.read_bytes(), b"previous binary")
@@ -143,21 +145,20 @@ cp "$FIXTURES/${1##*/}" "$destination"
         self.assertIn("checksum mismatch", out.stderr)
         self.assertEqual(self.destination.read_bytes(), b"previous binary")
 
-    def test_missing_or_replaced_checksum_manifest_fails_before_asset(self):
+    def test_unreadable_feed_keeps_previous_install(self):
         self.existing()
-        _, _, sums, _ = self.release()
-        previous_manifest = sums.read_bytes()
-        self.release(version="1.2.3")
-        self.metadata(hashlib.sha256(previous_manifest).hexdigest())
+        self.release()
+        for feed in ("not xml", "<rss/>", '<feed xmlns="http://www.w3.org/2005/Atom"/>'):
+            (self.fixtures / "releases.atom").write_text(feed)
+            out = self.invoke()
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("could not find the latest published release", out.stderr)
+            self.assertEqual(self.destination.read_bytes(), b"previous binary")
+        self.feed([TAG], header='<!DOCTYPE feed [<!ENTITY x "y">]>')
         out = self.invoke()
-        self.assertIn("does not match GitHub release metadata", out.stderr)
-        self.assertEqual(self.calls.read_text().splitlines(), [API, f"{RELEASE}/SHA256SUMS"])
+        self.assertIn("contains a DTD", out.stderr)
+        self.assertEqual(set(self.calls.read_text().splitlines()), {FEED})
         self.assertEqual(self.destination.read_bytes(), b"previous binary")
-        self.calls.unlink()
-        self.metadata("pending")
-        out = self.invoke()
-        self.assertIn("lacks a SHA256SUMS digest", out.stderr)
-        self.assertEqual(self.calls.read_text().splitlines(), [API])
 
     def test_unexpected_archive_member_and_version_are_refused(self):
         self.existing()
@@ -189,32 +190,44 @@ cp "$FIXTURES/${1##*/}" "$destination"
         self.assertIn("no release asset", out.stderr)
         self.assertFalse(self.calls.exists())
 
-    def test_selects_highest_release_from_all_pages_including_previews(self):
-        _, _, sums, _ = self.release()
-        digest = hashlib.sha256(sums.read_bytes()).hexdigest()
-        old_preview = self.record("v0.1.0-preview.9", digest)
-        self.page([old_preview] * 98 + [
-            self.record("v9.0.0", digest, draft=True), self.record("v0.0.9", digest),
-        ])
-        self.page([self.record(TAG, digest)], number=2)
+    def test_selects_highest_version_in_feed_including_previews(self):
+        self.release()
+        # Feed order is by update time; a later-edited old release must not win.
+        self.feed(["v0.1.0-preview.9", TAG, "v0.0.9", "v0.1.0-preview.2", "latest", "v9.0.0-rc.1"])
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.calls.read_text().splitlines()[:2],
-                         [API, API[:-1] + "2"])
+        self.assertEqual(self.calls.read_text().splitlines()[:2], [FEED, f"{RELEASE}/SHA256SUMS"])
         self.assertIn(TAG, result.stdout)
 
-    def test_does_not_fall_back_to_older_release_if_latest_has_no_digest(self):
-        self.existing()
-        _, _, sums, _ = self.release()
-        self.page([
-            self.record(TAG, hashlib.sha256(sums.read_bytes()).hexdigest()),
-            self.record("v0.1.0", "missing"),
-        ])
+    def test_final_release_outranks_its_previews(self):
+        self.feed(["v0.1.0-preview.11", "v0.1.0", "v0.0.10"])
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("lacks a SHA256SUMS digest", result.stderr)
-        self.assertEqual(self.calls.read_text().splitlines(), [API])
+        self.assertIn("checksum list unavailable for v0.1.0;", result.stderr)
+
+    def test_does_not_fall_back_to_older_release_if_latest_is_incomplete(self):
+        self.existing()
+        self.feed(["v0.1.0", TAG])
+        result = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum list unavailable for v0.1.0;", result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(),
+                         [FEED, "https://github.com/Lettuce222/lazygtd/releases/download/v0.1.0/SHA256SUMS"])
         self.assertEqual(self.destination.read_bytes(), b"previous binary")
+
+    def test_feed_without_releases_keeps_previous_install(self):
+        self.existing()
+        self.feed(["nightly"])
+        result = self.invoke()
+        self.assertIn("no published lazygtd release", result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), [FEED])
+        self.assertEqual(self.destination.read_bytes(), b"previous binary")
+
+    def test_no_api_or_credentials_are_used(self):
+        text = INSTALLER.read_text()
+        self.assertNotIn("api.github.com", text)
+        for word in ("GITHUB_TOKEN", "GH_TOKEN", "Authorization", "--user", "netrc"):
+            self.assertNotIn(word, text)
 
     def test_existing_symlink_is_not_followed_or_overwritten(self):
         self.existing()

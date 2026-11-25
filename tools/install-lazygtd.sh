@@ -35,7 +35,7 @@ bin="$HOME/.local/bin"
 destination="$bin/lazygtd"
 
 command -v curl >/dev/null 2>&1 || fail "curl is needed to fetch the release"
-command -v python3 >/dev/null 2>&1 || fail "python3 is needed to read release metadata"
+command -v python3 >/dev/null 2>&1 || fail "python3 is needed to read the release feed"
 command -v tar >/dev/null 2>&1 || fail "tar is needed to unpack the release"
 if command -v sha256sum >/dev/null 2>&1; then
     checksum_command=sha256sum
@@ -65,62 +65,59 @@ digest() {
     printf '%s\n' "${output%% *}"
 }
 
-# The /releases/latest endpoint ignores prereleases. Pick the highest published
-# version from the list instead, so preview.10 sorts after preview.9.
-release=$(python3 -I - <<'PY_RELEASE'
-import json
+# Read the public Atom feed instead of the REST API: unauthenticated API
+# calls share a 60/hour per-IP limit. The feed lists published releases only
+# (no drafts) but does not mark prereleases, so pick the highest version by
+# tag, which also ranks preview.10 after preview.9 and a final release after
+# its previews.
+tag=$(python3 -I - <<'PY_RELEASE'
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 pattern = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-preview\.(0|[1-9][0-9]{0,8}))?")
-api = "https://api.github.com/repos/Lettuce222/lazygtd/releases"
+feed = "https://github.com/Lettuce222/lazygtd/releases.atom"
+prefix = "https://github.com/Lettuce222/lazygtd/releases/tag/"
+atom = "{http://www.w3.org/2005/Atom}"
 try:
+    body = subprocess.check_output([
+        "curl", "-q", "--proto", "=https", "--fail", "--silent", "--show-error",
+        "--connect-timeout", "8", "--max-time", "30", "--max-filesize", "10000000",
+        "--header", "Accept: application/atom+xml",
+        feed,
+    ])
+    # The feed never needs a DTD; refusing one rules out entity expansion.
+    if b"<!DOCTYPE" in body.upper():
+        raise ValueError("release feed contains a DTD")
+    root = ET.fromstring(body)
+    if root.tag != f"{atom}feed":
+        raise ValueError("unexpected release feed")
     best = None
     version = (-1,)
-    for page in range(1, 21):
-        body = subprocess.check_output([
-            "curl", "-q", "--proto", "=https", "--fail", "--silent", "--show-error",
-            "--connect-timeout", "8", "--max-time", "30", "--max-filesize", "10000000",
-            "--header", "Accept: application/vnd.github+json",
-            f"{api}?per_page=100&page={page}",
-        ])
-        releases = json.loads(body)
-        if not isinstance(releases, list):
-            raise ValueError("unexpected releases response")
-        for entry in releases:
-            match = pattern.fullmatch(entry["tag_name"])
-            if not match or entry.get("draft") is not False or not entry.get("published_at"):
+    for entry in root.iter(f"{atom}entry"):
+        for link in entry.iter(f"{atom}link"):
+            href = link.get("href") or ""
+            if link.get("rel", "alternate") != "alternate" or not href.startswith(prefix):
+                continue
+            match = pattern.fullmatch(href[len(prefix):])
+            if not match:
                 continue
             major, minor, patch, preview = match.groups()
             key = (int(major), int(minor), int(patch), preview is None, int(preview or 0))
             if key > version:
-                best, version = entry, key
-        if len(releases) < 100:
-            break
-    else:
-        raise ValueError("release list exceeds lookup limit")
+                best, version = match.group(0), key
     if best is None:
         raise ValueError("no published lazygtd release")
-    assets = [a for a in best["assets"] if a["name"] == "SHA256SUMS"]
-    if len(assets) != 1 or assets[0].get("state") != "uploaded":
-        raise ValueError("latest release lacks a unique SHA256SUMS")
-    digest = re.fullmatch(r"sha256:([0-9a-f]{64})", assets[0].get("digest") or "")
-    if not digest:
-        raise ValueError("latest release lacks a SHA256SUMS digest")
-    print(best["tag_name"], digest[1])
-except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+    print(best)
+except (OSError, subprocess.SubprocessError, ValueError, ET.ParseError) as exc:
     sys.exit(f"lazygtd release lookup: {exc}")
 PY_RELEASE
-) || fail "could not verify latest published release metadata; existing install unchanged"
-tag=${release% *}
-sums_sha256=${release##* }
+) || fail "could not find the latest published release; existing install unchanged"
 archive="lazygtd-$tag-$platform.tar.gz"
 download="$repo/releases/download/$tag"
 
 fetch "$download/SHA256SUMS" "$tmp/SHA256SUMS" || fail "checksum list unavailable for $tag; existing install unchanged"
-actual_sums=$(digest "$tmp/SHA256SUMS") || fail "could not calculate SHA-256 for checksum list"
-[ "$actual_sums" = "$sums_sha256" ] || fail "checksum list digest does not match GitHub release metadata; existing install unchanged"
 expected=$(LC_ALL=C awk -v asset="$archive" '
     $2 == asset || $2 == "*" asset {
         count++
