@@ -23,9 +23,9 @@ public static class FakeCurl {
         int output = Array.IndexOf(args, "--output");
         string url = args[args.Length - 1];
         File.AppendAllText(Environment.GetEnvironmentVariable("LAZY_TEST_CALLS"), url + "\n");
-        if (url == "https://api.github.com/repos/Lettuce222/lazygtd/releases?per_page=100&page=1") {
-            Console.Write(File.ReadAllText(Path.Combine(Environment.GetEnvironmentVariable("LAZY_TEST_FILES"), "releases.json")));
-            return 0;
+        if (!url.StartsWith("https://github.com/Lettuce222/lazygtd/releases", StringComparison.Ordinal)) return 40;
+        foreach (string arg in args) {
+            if (arg.IndexOf("Authorization", StringComparison.OrdinalIgnoreCase) >= 0) return 41;
         }
         if (output < 0 || output + 1 >= args.Length) return 31;
         string name = new Uri(url).Segments[new Uri(url).Segments.Length - 1];
@@ -61,14 +61,20 @@ public static class FakeRelease {
     $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     $sums = Join-Path $files 'SHA256SUMS'
     [IO.File]::WriteAllText($sums, "$sha  $asset`n")
-    $digest = (Get-FileHash -LiteralPath $sums -Algorithm SHA256).Hash.ToLowerInvariant()
-    $records = @(
-        @{tag_name='v0.1.0-preview.9'; draft=$false; published_at='2026-01-01T00:00:00Z'; assets=@()},
-        @{tag_name='v2.0.0'; draft=$true; published_at='2026-01-01T00:00:00Z'; assets=@()},
-        @{tag_name=$tag; draft=$false; published_at='2026-01-01T00:00:00Z';
-          assets=@(@{name='SHA256SUMS'; state='uploaded'; digest="sha256:${digest}"})}
-    )
-    [IO.File]::WriteAllText((Join-Path $files 'releases.json'), (ConvertTo-Json -InputObject $records -Depth 5))
+    $writeFeed = {
+        param([string[]] $Tags, [string] $Header = '<?xml version="1.0" encoding="UTF-8"?>')
+        $entries = foreach ($name in $Tags) {
+            "<entry><id>tag:github.com,2008:Repository/1/$name</id>" +
+            "<link rel=`"alternate`" type=`"text/html`" href=`"https://github.com/Lettuce222/lazygtd/releases/tag/$name`"/>" +
+            "<title>lazygtd $name</title></entry>"
+        }
+        [IO.File]::WriteAllText((Join-Path $files 'releases.atom'),
+            $Header + '<feed xmlns="http://www.w3.org/2005/Atom">' +
+            '<link type="text/html" rel="alternate" href="https://github.com/Lettuce222/lazygtd/releases"/>' +
+            ($entries -join '') + '</feed>')
+    }
+    # Feed order follows update time; the highest version must still win.
+    & $writeFeed @('v0.1.0-preview.9', $tag, 'v0.0.9', 'latest', 'v9.0.0-rc.1')
     $env:LOCALAPPDATA = Join-Path $work 'local-app-data'
     $env:LAZY_TEST_FILES = $files
     $env:LAZY_TEST_CALLS = Join-Path $work 'calls'
@@ -76,25 +82,46 @@ public static class FakeRelease {
     Copy-Item -LiteralPath (Join-Path $repo 'tools\install-lazygtd.ps1') -Destination $work
     $script = Join-Path $work 'install-lazygtd.ps1'
     $exe = Join-Path $env:LOCALAPPDATA 'Programs\lazygtd\lazygtd.exe'
+    $expectFailure = {
+        param([string] $Pattern)
+        try {
+            & $script
+            throw "unexpected success; expected $Pattern"
+        } catch {
+            if ($_.Exception.Message -notmatch $Pattern) { throw }
+        }
+    }
 
     if ((& $script) -notmatch '^lazygtd: installed ') { throw 'expected first install' }
     if ((& $exe --version) -cne "lazygtd $version") { throw 'unexpected installed binary version' }
     if ((& $script) -notmatch '^lazygtd: .+ already verified ') { throw 'expected repeat install to be idempotent' }
     $original = (Get-FileHash -LiteralPath $exe).Hash
-    [IO.File]::AppendAllText($sums, "# changed`n")
-    try {
-        & $script
-        throw 'unexpected success with modified manifest'
-    } catch {
-        if ($_.Exception.Message -notmatch 'does not match GitHub release metadata') { throw }
-    }
-    if ((Get-FileHash -LiteralPath $exe).Hash -cne $original) { throw 'existing binary changed' }
+    $pristine = [IO.File]::ReadAllBytes($archive)
+    [IO.File]::AppendAllText($archive, 'tampered')
+    & $expectFailure 'checksum mismatch'
+    [IO.File]::WriteAllBytes($archive, $pristine)
     $urls = @(Get-Content -LiteralPath $env:LAZY_TEST_CALLS)
     $prefix = "https://github.com/Lettuce222/lazygtd/releases/download/$tag"
-    $api = 'https://api.github.com/repos/Lettuce222/lazygtd/releases?per_page=100&page=1'
-    $expected = @($api,"$prefix/SHA256SUMS","$prefix/$asset",$api,"$prefix/SHA256SUMS","$prefix/$asset",$api,"$prefix/SHA256SUMS")
+    $feed = 'https://github.com/Lettuce222/lazygtd/releases.atom'
+    $expected = @($feed,"$prefix/SHA256SUMS","$prefix/$asset",$feed,"$prefix/SHA256SUMS","$prefix/$asset",$feed,"$prefix/SHA256SUMS","$prefix/$asset")
     if (($urls -join '|') -cne ($expected -join '|')) { throw 'unexpected download URLs' }
-    Write-Output 'Native Windows install + repeated install + manifest tampering checks passed.'
+
+    # A final release outranks its previews, and an incomplete latest release never falls back.
+    & $writeFeed @('v0.1.0-preview.11', 'v0.1.0', $tag)
+    & $expectFailure 'no unique valid entry for lazygtd-v0\.1\.0-windows'
+    # Unreadable feeds and DTDs stop before any release download.
+    [IO.File]::Delete($env:LAZY_TEST_CALLS)
+    & $writeFeed @($tag) '<!DOCTYPE feed [<!ENTITY x "y">]>'
+    & $expectFailure 'could not find the latest published release'
+    foreach ($body in @('not xml', '<rss/>', '<feed xmlns="http://www.w3.org/2005/Atom"/>')) {
+        [IO.File]::WriteAllText((Join-Path $files 'releases.atom'), $body)
+        & $expectFailure 'could not find the latest published release'
+    }
+    [IO.File]::Delete((Join-Path $files 'releases.atom'))
+    & $expectFailure 'release feed unavailable'
+    if ((@(Get-Content -LiteralPath $env:LAZY_TEST_CALLS) | Sort-Object -Unique) -cne $feed) { throw 'feed failure downloaded a release file' }
+    if ((Get-FileHash -LiteralPath $exe).Hash -cne $original) { throw 'existing binary changed' }
+    Write-Output 'Native Windows install + repeated install + feed selection + tampering checks passed.'
 } finally {
     foreach ($name in $oldEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $oldEnv[$name], 'Process') }
     $resolved = [IO.Path]::GetFullPath($work)

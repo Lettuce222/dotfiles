@@ -16,44 +16,57 @@ if (-not $env:LOCALAPPDATA -or $env:LOCALAPPDATA -notmatch '^[A-Za-z]:\\') {
 $curl = Get-Command -Name curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $directory = Join-Path $env:LOCALAPPDATA 'Programs\lazygtd'
 $destination = Join-Path $directory 'lazygtd.exe'
-# Include published previews. A stable tag wins over previews of the same version.
-$api = 'https://api.github.com/repos/Lettuce222/lazygtd/releases'
+# Read the public Atom feed instead of the REST API: unauthenticated API calls
+# share a 60/hour per-IP limit. The feed lists published releases only (no
+# drafts) but does not mark previews, so pick the highest tag. A stable tag
+# wins over previews of the same version.
+$feedUrl = 'https://github.com/Lettuce222/lazygtd/releases.atom'
+$tagPrefix = 'https://github.com/Lettuce222/lazygtd/releases/tag/'
 $tagPattern = '^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-preview\.(0|[1-9][0-9]{0,8}))?$'
-$best = $null
-$bestVersion = [version]'0.0.0.0'
-for ($page = 1; $page -le 20; $page++) {
-    $json = (& $curl.Source -q --proto '=https' --fail --silent --show-error `
-        --connect-timeout 8 --max-time 30 --max-filesize 10000000 `
-        --header 'Accept: application/vnd.github+json' "${api}?per_page=100&page=$page") -join "`n"
-    if ($LASTEXITCODE -ne 0 -or -not $json.TrimStart().StartsWith('[')) {
-        throw 'lazygtd: release metadata unavailable; existing install unchanged'
+
+function Get-LatestTag([string] $Path) {
+    $settings = [Xml.XmlReaderSettings]::new()
+    # The feed never needs a DTD; refusing one rules out entity expansion.
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $reader = [Xml.XmlReader]::Create($stream, $settings)
+        try {
+            $document = [Xml.XmlDocument]::new()
+            $document.XmlResolver = $null
+            $document.Load($reader)
+        } finally { $reader.Dispose() }
+    } finally { $stream.Dispose() }
+    $namespaces = [Xml.XmlNamespaceManager]::new($document.NameTable)
+    $namespaces.AddNamespace('atom', 'http://www.w3.org/2005/Atom')
+    if (-not $document.SelectSingleNode('/atom:feed', $namespaces)) {
+        throw 'unexpected release feed'
     }
-    $rows = @((ConvertFrom-Json -InputObject $json) | ForEach-Object { $_ })
-    foreach ($row in $rows) {
-        if ($row.draft -ne $false -or -not $row.published_at -or $row.tag_name -cnotmatch $tagPattern) {
+    $best = $null
+    $bestVersion = [version]'0.0.0.0'
+    foreach ($link in $document.SelectNodes('/atom:feed/atom:entry/atom:link', $namespaces)) {
+        $rel = $link.GetAttribute('rel')
+        $href = $link.GetAttribute('href')
+        if (($rel -and $rel -cne 'alternate') -or -not $href.StartsWith($tagPrefix, [StringComparison]::Ordinal)) {
+            continue
+        }
+        $candidate = $href.Substring($tagPrefix.Length)
+        if ($candidate -cnotmatch $tagPattern) {
             continue
         }
         $revision = if ($Matches[4]) { [int]$Matches[4] } else { [int]::MaxValue }
         $version = [version]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $revision)
         if (-not $best -or $version -gt $bestVersion) {
-            $best = $row
+            $best = $candidate
             $bestVersion = $version
         }
     }
-    if ($rows.Count -lt 100) { break }
+    if (-not $best) {
+        throw 'no published lazygtd release'
+    }
+    return $best
 }
-if ($page -gt 20 -or -not $best) {
-    throw 'lazygtd: could not find the latest published release; existing install unchanged'
-}
-$manifests = @($best.assets | Where-Object { $_.name -ceq 'SHA256SUMS' })
-if ($manifests.Count -ne 1 -or $manifests[0].state -cne 'uploaded' -or
-    $manifests[0].digest -cnotmatch '^sha256:([0-9a-f]{64})$') {
-    throw 'lazygtd: latest release has no verifiable SHA256SUMS; existing install unchanged'
-}
-$sumsDigest = $Matches[1]
-$tag = $best.tag_name
-$asset = "lazygtd-$tag-$platform.zip"
-$download = "https://github.com/Lettuce222/lazygtd/releases/download/$tag"
 
 function Confirm-PlainPath([string] $Path, [bool] $Directory) {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
@@ -83,11 +96,23 @@ $archive = Join-Path $scratch 'release.zip'
 $sums = Join-Path $scratch 'SHA256SUMS'
 $executable = Join-Path $scratch 'lazygtd.exe'
 $backup = Join-Path $scratch 'previous.exe'
+$feed = Join-Path $scratch 'releases.atom'
 try {
-    Get-ReleaseFile 'SHA256SUMS' $sums
-    if ((Get-Digest $sums) -cne $sumsDigest) {
-        throw 'lazygtd: checksum list digest does not match GitHub release metadata; existing install unchanged'
+    & $curl.Source -q --proto '=https' --fail --silent --show-error `
+        --connect-timeout 8 --max-time 30 --max-filesize 10000000 `
+        --header 'Accept: application/atom+xml' --output $feed $feedUrl
+    if ($LASTEXITCODE -ne 0) {
+        throw 'lazygtd: release feed unavailable; existing install unchanged'
     }
+    try {
+        $tag = Get-LatestTag $feed
+    } catch {
+        throw "lazygtd: could not find the latest published release ($($_.Exception.Message)); existing install unchanged"
+    }
+    $asset = "lazygtd-$tag-$platform.zip"
+    $download = "https://github.com/Lettuce222/lazygtd/releases/download/$tag"
+
+    Get-ReleaseFile 'SHA256SUMS' $sums
     $hashes = @(
         foreach ($line in Get-Content -LiteralPath $sums -Encoding UTF8) {
             if ($line -cmatch ('^([A-Fa-f0-9]{64})\s+\*?' + [regex]::Escape($asset) + '$')) {
@@ -144,7 +169,7 @@ try {
     }
     Write-Output "lazygtd: installed $tag to $destination"
 } finally {
-    foreach ($file in @($archive, $sums, $executable, $backup)) {
+    foreach ($file in @($feed, $archive, $sums, $executable, $backup)) {
         if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
     }
     [IO.Directory]::Delete($scratch)

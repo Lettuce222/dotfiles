@@ -115,13 +115,13 @@ tmuxの中でOSC 8のリンクをクリックすると、`configs/tmux/scripts/o
   `--links-only` と `--dry-run` ではlazygtdのダウンロードを行わない。
 - 動作確認は `~/.local/bin/lazygtd --demo`。
 - Windowsネイティブ（x64 / ARM64）は PowerShell で
-  `& .\tools\install-lazygtd.ps1`。同じリリースとチェックサムを
+  `& .\tools\install-lazygtd.ps1`。同じく `releases.atom` からリリースを選び、チェックサムを
   検証して、`$env:LOCALAPPDATA\Programs\lazygtd\lazygtd.exe` に置く。
   `curl.exe` が必要。PATHや実行ポリシーは変えない。動作確認は
   `& "$env:LOCALAPPDATA\Programs\lazygtd\lazygtd.exe" --demo`。
   スクリプトの実行が許可されていないWindowsでは、実行ポリシーは変更せず
   Releasesから対象のZIPと `SHA256SUMS` を取得する。`Get-FileHash -Algorithm SHA256`
-  で一覧を GitHub Releases API が返す SHA-256 と、ZIPを一覧の同名エントリとそれぞれ比べ、解凍先で
+  でZIPのSHA-256を一覧の同名エントリと比べ、解凍先で
   `.\lazygtd.exe --demo` を実行する。
   WSLで使う場合はPowerShellではなく、上のLinux用 `./install.sh` を実行する。
 
