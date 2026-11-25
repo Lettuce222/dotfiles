@@ -3,18 +3,6 @@
 param()
 $ErrorActionPreference = 'Stop'
 
-$lockFile = Join-Path $PSScriptRoot 'lazygtd-release.lock'
-$lockLines = @(Get-Content -LiteralPath $lockFile -Encoding UTF8)
-if ($lockLines.Count -ne 1) {
-    throw 'lazygtd: release checksum is not pinned in lazygtd-release.lock; existing install unchanged'
-}
-$release = [regex]::Match($lockLines[0], '^(v[0-9]+\.[0-9]+\.[0-9]+(?:-preview\.[0-9]+)?) ([a-f0-9]{64})$')
-if (-not $release.Success) {
-    throw 'lazygtd: release checksum is not pinned in lazygtd-release.lock; existing install unchanged'
-}
-$tag = $release.Groups[1].Value
-$sumsDigest = $release.Groups[2].Value
-
 $arch = $env:PROCESSOR_ARCHITEW6432
 if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
 $platform = switch ($arch) {
@@ -28,6 +16,42 @@ if (-not $env:LOCALAPPDATA -or $env:LOCALAPPDATA -notmatch '^[A-Za-z]:\\') {
 $curl = Get-Command -Name curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $directory = Join-Path $env:LOCALAPPDATA 'Programs\lazygtd'
 $destination = Join-Path $directory 'lazygtd.exe'
+# Include published previews. A stable tag wins over previews of the same version.
+$api = 'https://api.github.com/repos/Lettuce222/lazygtd/releases'
+$tagPattern = '^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-preview\.(0|[1-9][0-9]{0,8}))?$'
+$best = $null
+$bestVersion = [version]'0.0.0.0'
+for ($page = 1; $page -le 20; $page++) {
+    $json = (& $curl.Source -q --proto '=https' --fail --silent --show-error `
+        --connect-timeout 8 --max-time 30 --max-filesize 10000000 `
+        --header 'Accept: application/vnd.github+json' "${api}?per_page=100&page=$page") -join "`n"
+    if ($LASTEXITCODE -ne 0 -or -not $json.TrimStart().StartsWith('[')) {
+        throw 'lazygtd: release metadata unavailable; existing install unchanged'
+    }
+    $rows = @((ConvertFrom-Json -InputObject $json) | ForEach-Object { $_ })
+    foreach ($row in $rows) {
+        if ($row.draft -ne $false -or -not $row.published_at -or $row.tag_name -cnotmatch $tagPattern) {
+            continue
+        }
+        $revision = if ($Matches[4]) { [int]$Matches[4] } else { [int]::MaxValue }
+        $version = [version]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $revision)
+        if (-not $best -or $version -gt $bestVersion) {
+            $best = $row
+            $bestVersion = $version
+        }
+    }
+    if ($rows.Count -lt 100) { break }
+}
+if ($page -gt 20 -or -not $best) {
+    throw 'lazygtd: could not find the latest published release; existing install unchanged'
+}
+$manifests = @($best.assets | Where-Object { $_.name -ceq 'SHA256SUMS' })
+if ($manifests.Count -ne 1 -or $manifests[0].state -cne 'uploaded' -or
+    $manifests[0].digest -cnotmatch '^sha256:([0-9a-f]{64})$') {
+    throw 'lazygtd: latest release has no verifiable SHA256SUMS; existing install unchanged'
+}
+$sumsDigest = $Matches[1]
+$tag = $best.tag_name
 $asset = "lazygtd-$tag-$platform.zip"
 $download = "https://github.com/Lettuce222/lazygtd/releases/download/$tag"
 
@@ -62,7 +86,7 @@ $backup = Join-Path $scratch 'previous.exe'
 try {
     Get-ReleaseFile 'SHA256SUMS' $sums
     if ((Get-Digest $sums) -cne $sumsDigest) {
-        throw 'lazygtd: checksum list digest does not match the pinned release; existing install unchanged'
+        throw 'lazygtd: checksum list digest does not match GitHub release metadata; existing install unchanged'
     }
     $hashes = @(
         foreach ($line in Get-Content -LiteralPath $sums -Encoding UTF8) {
