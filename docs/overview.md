@@ -20,6 +20,8 @@ dotfilesに何があり、どこへ置かれ、何をしているかを、全体
    - [`configs/textlint/`](#configstextlint): AIが書く日本語のlint
    - [`configs/hammerspoon/`](#configshammerspoon): ウィンドウの配置
    - [`configs/karabiner/`](#configskarabiner): キーの割り当て
+   - [`configs/wezterm/`](#configswezterm): ターミナル（macOS・Windows）
+   - [`configs/windows/`](#configswindows): Windowsのキーとウィンドウ
    - [`configs/orca/`](#configsorca): Orcaの自前plugin
    - [`tools/`](#tools): lazygtdの旧仕様
    - [`docs/`](#docs)、[`tests/`](#tests)、[`hooks/`](#hooks)
@@ -43,6 +45,8 @@ dotfiles/
 │   ├── textlint/         agent の hook が使う textlint のルールと npm 依存
 │   ├── hammerspoon/      ウィンドウ配置（macOS）
 │   ├── karabiner/        キー配置（macOS）
+│   ├── wezterm/          ターミナル（macOS・Windows）
+│   ├── windows/          Kanata と AutoHotkey（Windows）
 │   └── orca/             Orca の自前 plugin（全部のセッションと、タスクの進み具合のパネル）
 ├── tools/lazygtd/        lazygtd の旧仕様書（実装なし）
 ├── docs/                 決まりの文書（このページ、agent-assets.md、configuration.md）
@@ -337,6 +341,23 @@ macOSのキー配置。`~/.config/karabiner`へsymlink。
 | --- | --- |
 | `configs/karabiner/karabiner.json` | 有効な設定。Caps LockをControlに、OptionとCommandの単体押しで英数・かな、GhosttyでCtrl-Space（tmuxのprefix）を押すとIMEをオフ、Emacs風のキー、ChromeのCtrl-Tabを拡張機能へ |
 | `configs/karabiner/assets/complex_modifications/` | Karabinerの画面から読み込むルールの元（Emacs風のキー、日本語環境向け、ChromeのCtrl-Tab、全角スペースを半角に） |
+
+### `configs/wezterm/`
+
+macOSとWindowsで使うターミナル。`~/.config/wezterm`へsymlink。
+
+| ファイル | 役割 |
+| --- | --- |
+| `configs/wezterm/wezterm.lua` | 配色、フォント、`Ctrl+\`と`Ctrl+-`での分割。WindowsではWSLのUbuntuでfishを開く。URLは修飾キー付きのクリックで、`http`と`https`だけを開く |
+
+### `configs/windows/`
+
+Windowsネイティブで使うキーとウィンドウの設定。`install.sh`は`~/.config/windows`へsymlinkするだけで、Windowsでは手で読み込ませる。
+
+| ファイル | 役割 |
+| --- | --- |
+| `configs/windows/kanata.kbd` | Kanataの設定。Ctrlなどの単体押しでIMEのオン・オフ、F13をCmd（左Ctrl）に、F14でEmacs風のキー |
+| `configs/windows/mac-window-keys.ahk` | AutoHotkey v2。Hammerspoonと同じ`Alt+U/I/O`と`Alt+H/J/K/L`で、ウィンドウの配置とフォーカスを動かす |
 
 ### `configs/orca/`
 

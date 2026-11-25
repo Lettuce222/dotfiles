@@ -32,8 +32,10 @@ class OpenLinkTest(unittest.TestCase):
         path.write_text(f"#!/bin/sh\n{body}\n")
         path.chmod(0o755)
 
-    def run_open_link(self, url, path=None):
+    def run_open_link(self, url, path=None, home=None):
         env = dict(os.environ, PATH=path or f"{self.bin}:{os.environ['PATH']}")
+        if home is not None:
+            env["HOME"] = str(home)
         subprocess.run(["bash", str(OPEN_LINK), "client0", url], env=env, check=True)
 
     def calls(self, wait=False):
@@ -81,9 +83,12 @@ class OpenLinkTest(unittest.TestCase):
 
     def test_markdown_without_leaf_falls_back_to_nvim(self):
         # PATH から leaf を外す。偽物の bin と、tmux などが要る標準のディレクトリだけにする。
+        # HOME も空のディレクトリにし、~/.local/bin/mise 経由で leaf が見つからないようにする。
         text = self.tmp / "note.md"
         text.write_text("# hello\n")
-        self.run_open_link(f"file://{text}#L3", path=f"{self.bin}:/usr/bin:/bin")
+        home = self.tmp / "home"
+        home.mkdir()
+        self.run_open_link(f"file://{text}#L3", path=f"{self.bin}:/usr/bin:/bin", home=home)
         call = self.popup_call()
         self.assertTrue(call.endswith(f"nvim +3 -- {text}"), call)
 
