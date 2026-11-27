@@ -739,9 +739,9 @@ fish -c '
         # Packages for the agent textlint hook (configs/agent/hooks/textlint-markdown.sh)
         echo "Installing textlint packages..."
         # npm ci --prefix misreads the lockfile, so run it inside the directory.
-        pushd ~/.config/textlint
-        mise exec -- npm ci
-        popd
+        # Skip the audit and funding notices: the remaining advisories wait on
+        # textlint upstream, and `npm audit` in that directory still shows them.
+        mise exec -C ~/.config/textlint -- npm ci --no-audit --no-fund
     end
 
     function install_agent_cli
